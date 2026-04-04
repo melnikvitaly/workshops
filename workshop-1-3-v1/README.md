@@ -1,0 +1,7 @@
+- Homework-1-3
+  - [Traffic Lights](./src/main.cpp#L21) - the [loop()](./src/main.cpp#loop) method calls both the version with delay and the version without delay
+    - For the sync version: [runAllStates()](./src/TrafficLights.cpp#runAllStates)
+    - For the tick version: [processStateOnTick()](./src/TrafficLights.cpp#processStateOnTick)
+  - [Configuration of timings for each state](./src/TrafficLights.h#L27)
+  - [Using two LEDs on the same GPIO](./images/homework-1-3-two-leds-single-gpio.gif) (Done in simulator)
+    - For more LEDs, it seems [Addressable LEDs](https://www.youtube.com/watch?v=Z78IOExkrTc) are needed
