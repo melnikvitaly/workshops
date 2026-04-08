@@ -10,5 +10,8 @@ public:
     void print(const String &debugStr);
     DebugOut& Scoped(const String &scope);
     void print(const int value);
-    void append(const String &str);
+    template <typename T>
+    void append(const T &str) {
+        Serial.print(str);
+    }
 };

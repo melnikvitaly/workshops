@@ -1,0 +1,10 @@
+- Homework-1-4
+  - [main.cpp](./src/main.cpp) - main file
+  - [Button.h](./src/hardware/Button.h) - button impl
+  - Blue button controls TrafficLights and TestLed
+    - Click (On release) switch TrafficLight to next speed, also turns on/off testLed
+    - Long Press pauses/resumes TrafficLight (works only with ```buttonsTick()```). Also long delay skips Released event on button
+  - methods:
+    - [buttonsSyncProcess()](./src/main.cpp) - implements sync button read with delay + one more read
+      - [buttonsUpdateSyncWithEvents](./src/main.cpp) - same but based on events
+    - [buttonsTick()](./src/main.cpp) - implements async button that do not stops TrafficLight by delays 

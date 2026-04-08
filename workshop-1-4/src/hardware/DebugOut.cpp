@@ -1,5 +1,5 @@
 #include "DebugOut.h"
-static String DELIM = String("|");
+constexpr char* DELIM = "|";
 DebugOut::DebugOut(const String &scope) : scope(scope + DELIM) {}
 
 void DebugOut::print(const String &str)
@@ -10,14 +10,9 @@ void DebugOut::print(const String &str)
     Serial.println(str);
 }
 
-void DebugOut::append(const String &str)
-{
-    Serial.print(str);
-}
-
 void DebugOut::print(const int value)
 {
-    Serial.println(value);
+   print(String(value));
 }
 
 DebugOut &DebugOut::Scoped(const String &scope)
