@@ -1,7 +1,7 @@
 - Homework-1-5
   
-1. Images:
-2. Tries:
+1. using build-in INPUTPULLUP with prev homework codes
+2. Process:
    1. [1 spike 0.260ms](./images/1-spike-260-microsec.png)
    2. [1 spike 0.330ms](./images/1-spike-330-microsec.png)
    3. [1-2 extra calls](./images/1-extra-click-by-isrpng.png)
