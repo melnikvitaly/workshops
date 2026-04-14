@@ -1,1 +1,2 @@
 - [Homework-1-6](./src/main.cpp)
+  - ![Output](./images/output.png)
