@@ -8,8 +8,6 @@ TrafficLights::TrafficLights(LEDs &leds, BoardLED &additionalLed, DebugOut &debu
 
 void TrafficLights::init()
 {
-  leds.init();
-  additionalLed.init();
   enterState(State::RED);
 }
 
@@ -48,6 +46,11 @@ void TrafficLights::enterState(State newState)
     leds.upYellow();
     additionalLed.yellow();
     break;
+  }
+
+  if (newStateEvent)
+  {
+    newStateEvent(newState);
   }
 }
 
@@ -92,12 +95,32 @@ void TrafficLights::runAllStates()
   delay(YELLOW_MS);
 }
 
+void TrafficLights::forceNextState()
+{
+  if (isPaused)
+  {
+    togglePause();
+  }
+  processStateOnTick(UINT32_MAX);
+}
+
 #pragma endregion
+
+const uint32_t TrafficLights::adjustElapsedTimeAccordingToSpeed(uint32_t ms)
+{
+  return ms * speedMultiplier;
+}
+
+void TrafficLights::setSpeedMultiplier(float value)
+{
+  speedMultiplier = value;
+}
 
 #pragma region Async Ticks Processing
 
 void TrafficLights::processStateOnTick(uint32_t elapsedInState)
 {
+  elapsedInState = adjustElapsedTimeAccordingToSpeed(elapsedInState);
   switch (state)
   {
   case State::RED:
@@ -140,8 +163,25 @@ void TrafficLights::processStateOnTick(uint32_t elapsedInState)
   }
 }
 
+void TrafficLights::togglePause()
+{
+  isPaused = !isPaused;
+  if (!isPaused)
+  {
+    enterState(state); // Continue from last state from state begining
+  }
+
+  debug.print("Paused:" + String(isPaused));
+}
+
 void TrafficLights::tick()
 {
+  if (isPaused)
+  {
+    leds.upAll();
+    additionalLed.blue();
+    return;
+  }
   uint32_t elapsed = millis() - stateStartMs;
   processStateOnTick(elapsed);
 }

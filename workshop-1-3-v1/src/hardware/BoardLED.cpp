@@ -1,4 +1,4 @@
-#include "AdditionalLED.h"
+#include "BoardLED.h"
 
 BoardLED::BoardLED(uint8_t pin, uint16_t count)
     : neoPixel(count, pin, NEO_GRB + NEO_KHZ800) {}

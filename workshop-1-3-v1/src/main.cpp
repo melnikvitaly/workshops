@@ -1,5 +1,5 @@
 #include <Arduino.h>
-#include "hardware/AdditionalLED.h"
+#include "hardware/BoardLED.h"
 #include "hardware/LEDs.h"
 #include "hardware/DebugOut.h"
 #include "TrafficLights.h"
@@ -8,15 +8,15 @@
 
 constexpr ulong LEDS_RED = 17;
 constexpr ulong LEDS_YELLOW = 16;
-constexpr ulong LEDS_GREED = 15;
+constexpr ulong LEDS_GREEN = 15;
 constexpr ulong LEDS_BUILDIN = 48;
 constexpr ulong BAUD = 115200;
 
 #pragma endregion
 
 static DebugOut debug("APP");
-static std::array<uint8_t, 3> ledPins = {LEDS_RED, LEDS_YELLOW, LEDS_GREED};
-static AdditionalLED additionalLed(LEDS_BUILDIN);
+static std::array<uint8_t, 3> ledPins = {LEDS_RED, LEDS_YELLOW, LEDS_GREEN};
+static BoardLED additionalLed(LEDS_BUILDIN);
 static LEDs leds(ledPins.data(), ledPins.size());
 static TrafficLights trafficLights(leds, additionalLed, debug.Scoped("TL"));
 

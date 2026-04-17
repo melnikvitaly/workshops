@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -n \"^class \" c:/Projects/embedded/workshops/workshop-1-3-v1/src/hardware/*.h c:/Projects/embedded/workshops/workshop-1-3-v1/src/hardware/*.cpp)"
+    ]
+  }
+}

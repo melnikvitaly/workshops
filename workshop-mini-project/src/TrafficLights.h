@@ -16,27 +16,27 @@ public:
     YELLOW
   };
 
+  using NewStateCallback = std::function<void(State)>;
+
 private:
   BoardLED &additionalLed;
   LEDs &leds;
   DebugOut &debug;
 
   State state;
-  bool isPaused;
+  NewStateCallback newStateEvent;
   uint32_t stateStartMs;
   bool currentGreenLedState;
-  std::array<float, 5> speedMultipliers = {.5f, 1.0f, 3.0f, 10.0f, 20.0f};
-  uint8_t speedIndex = 1;
-  uint8_t maxSpeedIndex = speedMultipliers.size() - 1;
-
-  static constexpr uint32_t RED_MS = 3000;
+  float speedMultiplier = 1.0;
+  bool isPaused;
+  static constexpr uint32_t RED_MS = 2000;
   static constexpr uint32_t RED_YELLOW_MS = 1500;
   static constexpr uint32_t GREEN_MS = 3000;
   static constexpr size_t BLINKS_COUNT = 3;
-  static constexpr uint32_t BLINK_PERIOD_MS = 1000;                              // on, off period (separately)
+  static constexpr uint32_t BLINK_PERIOD_MS = 500;                              // on, off period (separately)
   static constexpr uint32_t GREEN_BLINK_MS = BLINKS_COUNT * 2 * BLINK_PERIOD_MS; // total green blinking duration
 
-  static constexpr uint32_t YELLOW_MS = 1500;
+  static constexpr uint32_t YELLOW_MS = 1000;
 
   void enterState(State next);
   void processStateOnTick(uint32_t elapsed);
@@ -47,11 +47,14 @@ private:
   const uint32_t adjustElapsedTimeAccordingToSpeed(uint32_t ms);
 
 public:
+  void togglePause();
+  void setSpeedMultiplier(float value);
   TrafficLights(LEDs &leds, BoardLED &additionalLed, DebugOut &debug);
   void init();
   void tick();
-  void nextSpeed();
   void runAllStates();
+  void forceNextState();
   String stateInfo();
-  void togglePause();
+
+  void onNewState(NewStateCallback cb) { newStateEvent = cb; }
 };

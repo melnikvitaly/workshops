@@ -1,5 +1,5 @@
 #include <Arduino.h>
-#include "hardware/AdditionalLED.h"
+#include "hardware/BoardLED.h"
 #include "hardware/LEDs.h"
 #include "hardware/Button.h"
 #include "hardware/DebugOut.h"

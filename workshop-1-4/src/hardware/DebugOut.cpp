@@ -1,9 +1,17 @@
 #include "DebugOut.h"
-constexpr char* DELIM = "|";
-DebugOut::DebugOut(const String &scope) : scope(scope + DELIM) {}
+constexpr const char *DELIM = "|";
+DebugOut::DebugOut(const String &scope, int level) : scope(scope + DELIM),
+                                                     level(level)
+{
+}
 
 void DebugOut::print(const String &str)
 {
+    if (level > 0)
+    {
+        return;
+    }
+
     Serial.print(millis());
     Serial.print(DELIM);
     Serial.print(scope);
@@ -12,10 +20,15 @@ void DebugOut::print(const String &str)
 
 void DebugOut::print(const int value)
 {
-   print(String(value));
+    if (level > 0)
+    {
+        return;
+    }
+    print(String(value));
 }
 
-DebugOut &DebugOut::Scoped(const String &scope)
+DebugOut &DebugOut::Scoped(const String &scope, int level)
 {
-    return *(new DebugOut(scope));
+    level = level < 0 ? this->level : level;
+    return *(new DebugOut(scope, level));
 }

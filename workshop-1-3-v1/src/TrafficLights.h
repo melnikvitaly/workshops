@@ -1,6 +1,6 @@
 #pragma once
 #include <Arduino.h>
-#include "hardware/AdditionalLED.h"
+#include "hardware/BoardLED.h"
 #include "hardware/LEDs.h"
 #include "hardware/DebugOut.h"
 
@@ -17,7 +17,7 @@ public:
   };
 
 private:
-  AdditionalLED &additionalLed;
+  BoardLED &additionalLed;
   LEDs &leds;
   DebugOut &debug;
 
@@ -43,7 +43,7 @@ private:
   static const String stateToString(State c);
 
 public:
-  TrafficLights(LEDs &leds, AdditionalLED &additionalLed, DebugOut &debug);
+  TrafficLights(LEDs &leds, BoardLED &additionalLed, DebugOut &debug);
   void init();
   void tick();
   void runAllStates();
