@@ -11,25 +11,25 @@
 
 #pragma region PINS
 
-constexpr ulong POTENTIOMETER_RED = 17;
+constexpr uint8_t POTENTIOMETER_RED = 17;
 
-constexpr ulong NONE_PIN = 45;
-constexpr ulong LEDS_RED = 3;
-constexpr ulong LEDS_YELLOW = 8;
-constexpr ulong LEDS_GREEN = 18;
+constexpr uint8_t NONE_PIN = 45;
+constexpr uint8_t LEDS_RED = 3;
+constexpr uint8_t LEDS_YELLOW = 8;
+constexpr uint8_t LEDS_GREEN = 18;
 
-constexpr ulong M1E = 4;
-constexpr ulong M11 = 5;
-constexpr ulong M12 = 6;
-constexpr ulong M21 = 7;
-constexpr ulong M22 = 15;
-constexpr ulong M2E = 16;
+constexpr uint8_t M1E = 4;
+constexpr uint8_t M11 = 5;
+constexpr uint8_t M12 = 6;
+constexpr uint8_t M21 = 7;
+constexpr uint8_t M22 = 15;
+constexpr uint8_t M2E = 16;
 
-constexpr ulong LEDS_BUILDIN = 48;
-constexpr ulong LEDS_FOR_MEASUREMENT = 9;
-constexpr ulong LEDS_PHOTO_RESISTOR_1 = 10;
-constexpr ulong LEDS_PHOTO_RESISTOR_2 = 12;
-constexpr ulong BTN_MAIN = 40;
+constexpr uint8_t LEDS_BUILDIN = 48;
+constexpr uint8_t LEDS_FOR_MEASUREMENT = 9;
+constexpr uint8_t LEDS_PHOTO_RESISTOR_1 = 10;
+constexpr uint8_t LEDS_PHOTO_RESISTOR_2 = 12;
+constexpr uint8_t BTN_MAIN = 40;
 constexpr uint8_t BOOT_BTN_PIN = 0;
 constexpr ulong BAUD = 115200;
 constexpr ulong ADC_RESOLUTION = 1 << 12;
