@@ -71,7 +71,6 @@ uint8_t motorSpeed = currentMaxSpeed;            // Current motors' speed in %
 
 void updateCurrentSpeed(uint8_t speedValue)
 {
-  Serial1.
   motorSpeed = speedValue;
   motor1.speed(motorSpeed);
   motor2.speed(motorSpeed);

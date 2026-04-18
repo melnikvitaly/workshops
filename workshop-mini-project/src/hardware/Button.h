@@ -1,6 +1,6 @@
 #pragma once
 #include <Arduino.h>
-#include "DebugOut.h"
+#include "Debug.h"
 
 constexpr uint8_t DEBOUNCE_MS = 20;
 constexpr uint16_t LONG_PRESS_MS = 3000;
@@ -17,13 +17,13 @@ private:
     ulong _pendingPinStateStarted; // Debounce start time
     ulong _longPressStartedAt;     // When button was pressed to detect LongPressed
     bool _longPressFired;          // flag to cancel Released after LongPress event
-    DebugOut &dbg;
+    Debug &dbg;
     Callback _onPress;
     Callback _onRelease;
     Callback _onLongPressed;
 
 public:
-    Button(uint8_t buttonPin, int pressedState, DebugOut &dbg) : _buttonPin(buttonPin),
+    Button(uint8_t buttonPin, int pressedState, Debug &dbg) : _buttonPin(buttonPin),
                                                                  _pressedPinState(pressedState),
                                                                  _lastPinState(!pressedState),
                                                                  _longPressStartedAt(0),

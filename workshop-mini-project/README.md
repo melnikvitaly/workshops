@@ -16,3 +16,7 @@
       - [BootButton](./src/main.cpp#L52)
         - "released" - [onBootBtnReleased](./src/main.cpp#L100) - rotates motors speeds
         - "long press" - [onBootBtnLongPress](./src/main.cpp#L95) - resets speed to maximum
+  - TODO
+    - LEDC library
+    - RC-filter for Potentiometer
+    - 

@@ -1,6 +1,6 @@
 #pragma once
 #include <Arduino.h>
-#include <hardware/DebugOut.h>
+#include <hardware/Debug.h>
 
 class ADC
 {
@@ -10,8 +10,8 @@ private:
 public:
     uint8_t _lastPercents;
     u_int16_t _resolution;
-    DebugOut &dbg;
-    ADC(uint8_t pin, u_int16_t resolution, DebugOut &dbg) : _pin(pin), _resolution(resolution), dbg(dbg)
+    Debug &dbg;
+    ADC(uint8_t pin, u_int16_t resolution, Debug &dbg) : _pin(pin), _resolution(resolution), dbg(dbg)
     {
     }
 
