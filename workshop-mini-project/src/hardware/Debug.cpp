@@ -1,11 +1,11 @@
-#include "DebugOut.h"
+#include "Debug.h"
 constexpr const char *DELIM = "|";
-DebugOut::DebugOut(const String &scope, int level) : scope(scope + DELIM),
+Debug::Debug(const String &scope, int level) : scope(scope + DELIM),
                                                      level(level)
 {
 }
 
-void DebugOut::print(const String &str)
+void Debug::print(const String &str)
 {
     if (level > 0)
     {
@@ -18,7 +18,7 @@ void DebugOut::print(const String &str)
     Serial.println(str);
 }
 
-void DebugOut::print(const int value)
+void Debug::print(const int value)
 {
     if (level > 0)
     {
@@ -27,8 +27,8 @@ void DebugOut::print(const int value)
     print(String(value));
 }
 
-DebugOut &DebugOut::Scoped(const String &scope, int level)
+Debug &Debug::Scoped(const String &scope, int level)
 {
     level = level < 0 ? this->level : level;
-    return *(new DebugOut(scope, level));
+    return *(new Debug(scope, level)); // terrible with dynamic creation, maybe ok for static objects,
 }

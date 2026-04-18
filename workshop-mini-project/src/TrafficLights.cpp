@@ -1,6 +1,6 @@
 #include "TrafficLights.h"
 
-TrafficLights::TrafficLights(LEDs &leds, BoardLED &additionalLed, DebugOut &debug)
+TrafficLights::TrafficLights(LEDs &leds, BoardLED &additionalLed, Debug &debug)
     : additionalLed(additionalLed), leds(leds),
       state(State::RED), stateStartMs(0), debug(debug) {}
 

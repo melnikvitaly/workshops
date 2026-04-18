@@ -6,7 +6,7 @@ class RPMCounter
 {
 private:
     ADC &sensor;
-    DebugOut &dbg;
+    Debug &dbg;
 
     // Time tracking for RPM calculation
     unsigned long lastExtremumTime = 0;
@@ -30,7 +30,7 @@ private:
 public:
     uint8_t buffer[100] = {0};
 
-    RPMCounter(ADC &sensor, DebugOut &dbg) : sensor(sensor), dbg(dbg)
+    RPMCounter(ADC &sensor, Debug &dbg) : sensor(sensor), dbg(dbg)
     {
     }
 

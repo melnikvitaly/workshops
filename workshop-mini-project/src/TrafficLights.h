@@ -2,7 +2,7 @@
 #include <Arduino.h>
 #include "hardware/BoardLED.h"
 #include "hardware/LEDs.h"
-#include "hardware/DebugOut.h"
+#include "hardware/Debug.h"
 
 class TrafficLights
 {
@@ -21,7 +21,7 @@ public:
 private:
   BoardLED &additionalLed;
   LEDs &leds;
-  DebugOut &debug;
+  Debug &debug;
 
   State state;
   NewStateCallback newStateEvent;
@@ -49,7 +49,7 @@ private:
 public:
   void togglePause();
   void setSpeedMultiplier(float value);
-  TrafficLights(LEDs &leds, BoardLED &additionalLed, DebugOut &debug);
+  TrafficLights(LEDs &leds, BoardLED &additionalLed, Debug &debug);
   void init();
   void tick();
   void runAllStates();

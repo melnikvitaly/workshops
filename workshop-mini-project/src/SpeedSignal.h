@@ -1,6 +1,6 @@
 #pragma once
 #include "hardware/BoardLED.h"
-#include "hardware/DebugOut.h"
+#include "hardware/Debug.h"
 #include "RPMCounter.h"
 
 /// @brief Checks if some RPM Sensors have detected speed higher then threshold
@@ -8,13 +8,13 @@
 class SpeedSignal
 {
     BoardLED &led;
-    DebugOut &dbg;
+    Debug &dbg;
     const static uint32_t maxAllowedRPM = 80;
     RPMCounter *targets[10];
     uint8_t targetCount = 0;
 
 public:
-    SpeedSignal(BoardLED &led, DebugOut &dbg)
+    SpeedSignal(BoardLED &led, Debug &dbg)
         : led(led), dbg(dbg)
     {
     }

@@ -1,7 +1,7 @@
 #include <Arduino.h>
 #include "hardware/BoardLED.h"
 #include "hardware/LEDs.h"
-#include "hardware/DebugOut.h"
+#include "hardware/Debug.h"
 #include "TrafficLights.h"
 #include "hardware/Button.h"
 #include "hardware/L298NMotor.h"
@@ -36,7 +36,7 @@ constexpr ulong ADC_RESOLUTION = 1 << 12;
 #pragma endregion
 
 constexpr ulong POTENTIOMETER_STEP = 10;
-static DebugOut dbg("APP");
+static Debug dbg("APP");
 static std::array<uint8_t, 3> ledPins = {LEDS_RED, LEDS_YELLOW, LEDS_GREEN};
 static std::array<uint8_t, 3> motor1Pins = {M1E, M11, M12};
 static std::array<uint8_t, 3> motor2Pins = {M2E, M21, M22};
@@ -71,6 +71,7 @@ uint8_t motorSpeed = currentMaxSpeed;            // Current motors' speed in %
 
 void updateCurrentSpeed(uint8_t speedValue)
 {
+  Serial1.
   motorSpeed = speedValue;
   motor1.speed(motorSpeed);
   motor2.speed(motorSpeed);
