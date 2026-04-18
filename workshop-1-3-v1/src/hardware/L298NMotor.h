@@ -13,6 +13,7 @@ public:
         BACKWARD = -1,
     };
     constexpr static uint8_t MAX_SPEED = 100;
+    constexpr static uint8_t CURRENT = -1;
 
 private:
     // Shared timer config: 20 kHz, 8-bit resolution on timer 0
@@ -81,7 +82,7 @@ public:
         }
     }
 
-    void move(DIRECTION newDirection, uint8_t newSpeed = -1)
+    void move(DIRECTION newDirection, uint8_t newSpeed = CURRENT)
     {
         if (newSpeed != (uint8_t)-1)
             changeSpeed(newSpeed);
@@ -98,17 +99,17 @@ public:
         _dbg.print(String("speed(") + value + "%," + _duty + ")");
         return true;
     }
-    void forward(uint8_t newSpeed = -1)
+    void forward(uint8_t newSpeed = CURRENT)
     {
-        if (newSpeed != (uint8_t)-1)
-            speed(newSpeed);
+        if (newSpeed != CURRENT)
+            changeSpeed(newSpeed);
         _direction = DIRECTION::FORWARD;
         writeToPins();
     }
 
-    void backward(uint8_t newSpeed = -1)
+    void backward(uint8_t newSpeed = CURRENT)
     {
-        if (newSpeed != (uint8_t)-1)
+        if (newSpeed != CURRENT)
             changeSpeed(newSpeed);
         _direction = DIRECTION::BACKWARD;
         writeToPins();

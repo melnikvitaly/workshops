@@ -52,17 +52,17 @@ static TrafficLights trafficLights(trafficLightLeds, noneLed, dbg.Scoped("TL"));
 static Button mainBtn(BTN_MAIN, LOW, dbg.Scoped("BTN" + String(BTN_MAIN, NONE_LEVEL)));
 static Button bootBtn(BOOT_BTN_PIN, LOW, dbg.Scoped("BTN" + String(BOOT_BTN_PIN, NONE_LEVEL)));
 
-static L298NMotor motor1(motor1Pins, dbg.Scoped("M1", NONE_LEVEL));
-static L298NMotor motor2(motor2Pins, dbg.Scoped("M2", NONE_LEVEL));
+static L298NMotor motor1Pet(motor1Pins, dbg.Scoped("M1", NONE_LEVEL));
+static L298NMotor motor2Car(motor2Pins, dbg.Scoped("M2", NONE_LEVEL));
 
-static ADC lightSensor1(LEDS_PHOTO_RESISTOR_1, ADC_RESOLUTION, dbg.Scoped("LS1"));
-static ADC lightSensor2(LEDS_PHOTO_RESISTOR_2, ADC_RESOLUTION, dbg.Scoped("LS2"));
+static ADC lightSensorCar(LEDS_PHOTO_RESISTOR_1, ADC_RESOLUTION, dbg.Scoped("LS1Car", NONE_LEVEL));
+static ADC lightSensorPet(LEDS_PHOTO_RESISTOR_2, ADC_RESOLUTION, dbg.Scoped("LS2Pet", NONE_LEVEL));
 
-static RPMCounter m1Rpm(lightSensor1, dbg.Scoped("RPMCar"));
-static RPMCounter m2Rpm(lightSensor2, dbg.Scoped("RPMPet"));
+static RPMCounter m1RpmCar(lightSensorCar, dbg.Scoped("RPMCar"));
+static RPMCounter m2RpmPet(lightSensorPet, dbg.Scoped("RPMPet", NONE_LEVEL));
 
 static SpeedSignal speedSignal(boardLed, dbg.Scoped("SpeedSignal"));
-static ADC potentiometer(POTENTIOMETER_RED, ADC_RESOLUTION, dbg);
+static ADC potentiometer(POTENTIOMETER_RED, ADC_RESOLUTION, dbg.Scoped("CR"));
 
 uint8_t currentMaxSpeed = L298NMotor::MAX_SPEED; // Current max speed allowed by potentiometer in %
 uint8_t motorSpeed = currentMaxSpeed;            // Current motors' speed in %
@@ -72,8 +72,8 @@ uint8_t motorSpeed = currentMaxSpeed;            // Current motors' speed in %
 void updateCurrentSpeed(uint8_t speedValue)
 {
   motorSpeed = speedValue;
-  motor1.speed(motorSpeed);
-  motor2.speed(motorSpeed);
+  motor1Pet.speed(motorSpeed);
+  motor2Car.speed(motorSpeed);
   dbg.print("new speed: " + String(motorSpeed));
 }
 
@@ -123,63 +123,27 @@ void onLightTrafficStateChanged(TrafficLights::State state)
   case TrafficLights::State::RED_YELLOW:
   case TrafficLights::State::RED:
   case TrafficLights::State::YELLOW:
-    motor1.move(L298NMotor::DIRECTION::STOP, 0);
-    motor2.move(L298NMotor::DIRECTION::STOP, 0);
+    motor1Pet.move(L298NMotor::DIRECTION::STOP, 0);
+    motor2Car.move(L298NMotor::DIRECTION::STOP, 0);
     break;
   case TrafficLights::State::GREEN:
     num++;
     direction = num % 2 == 0
                     ? L298NMotor::DIRECTION::BACKWARD
                     : L298NMotor::DIRECTION::FORWARD;
-    motor1.move(direction, motorSpeed);
-    motor2.move(direction, motorSpeed);
+    motor1Pet.move(direction, motorSpeed);
+    motor2Car.move(direction, motorSpeed);
     break;
   case TrafficLights::State::GREEN_BLINK:
-    motor1.move(direction, motorSpeed);
-    motor2.move(direction, motorSpeed);
+    motor1Pet.move(direction, motorSpeed);
+    motor2Car.move(direction, motorSpeed);
     break;
   default:
     dbg.print("ERR:UnknownSTATE");
-    motor1.stop();
-    motor2.stop();
+    motor1Pet.stop();
+    motor2Car.stop();
     break;
   }
-}
-
-void setup()
-{
-  Serial.begin(BAUD);
-
-  boardLed.init();
-  trafficLightLeds.init();
-  mainBtn.init();
-  bootBtn.init();
-
-  motor1.init();
-  motor2.init();
-
-  measureLeds.init();
-  lightSensor1.init();
-  lightSensor2.init();
-
-  trafficLights.onNewState(onLightTrafficStateChanged);
-
-  mainBtn.onRelease(onMainBtnRelease);
-  mainBtn.onLongPress(onMainBtnLongPress);
-  bootBtn.onRelease(onBootBtnReleased);
-  bootBtn.onLongPress(onBootBtnLongPress);
-
-  trafficLights.init();
-  trafficLights.setSpeedMultiplier(0.5f);
-
-  dbg.print("initialized.");
-
-  measureLeds.upAll();
-  speedSignal.track(&m1Rpm);
-  speedSignal.track(&m2Rpm);
-
-  motor1.forward(100);
-  motor2.forward(10);
 }
 
 void processPotentiometer()
@@ -200,14 +164,50 @@ void processPotentiometer()
   }
 }
 
+void setup()
+{
+  Serial.begin(BAUD);
+
+  boardLed.init();
+  trafficLightLeds.init();
+  mainBtn.init();
+  bootBtn.init();
+
+  motor1Pet.init();
+  motor2Car.init();
+
+  measureLeds.init();
+  lightSensorCar.init();
+  lightSensorPet.init();
+
+  trafficLights.onNewState(onLightTrafficStateChanged);
+
+  mainBtn.onRelease(onMainBtnRelease);
+  mainBtn.onLongPress(onMainBtnLongPress);
+  bootBtn.onRelease(onBootBtnReleased);
+  bootBtn.onLongPress(onBootBtnLongPress);
+
+  trafficLights.init();
+  trafficLights.setSpeedMultiplier(0.5f);
+
+  dbg.print("initialized.");
+
+  measureLeds.upAll();
+  speedSignal.track(&m1RpmCar);
+  speedSignal.track(&m2RpmPet);
+
+  motor1Pet.forward(0);
+  motor2Car.forward(80);
+}
+
 void loop()
 {
-  // trafficLights.tick(); // tick/millis-based mode of traffic lights
+  trafficLights.tick(); // tick/millis-based mode of traffic lights
 
-  // mainBtn.tick();
-  // bootBtn.tick();
-  m1Rpm.tick();
-  m2Rpm.tick();
-  // speedSignal.tick();
-  // processPotentiometer();
+  mainBtn.tick();
+  bootBtn.tick();
+  m1RpmCar.tick();
+  m2RpmPet.tick();
+  speedSignal.tick();
+  processPotentiometer();
 }

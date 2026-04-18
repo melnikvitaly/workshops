@@ -17,7 +17,7 @@ private:
     bool isRising = true;
 
     // Hysteresis threshold to ignore minor signal jitter (adjust based on sensor variance)
-    const uint8_t HYSTERESIS = 5;
+    const uint8_t HYSTERESIS = 3;
 
     // Moving average filter variables
     uint8_t bufferIndex = 0;
@@ -26,6 +26,10 @@ private:
 
     // Timeout: If no peaks are detected in this time, RPM drops to 0
     const unsigned long TIMEOUT_MS = 20000;
+
+    // Measurement frequency tracking
+    unsigned long freqWindowStart = 0;
+    unsigned long tickCount = 0;
 
 public:
     uint8_t buffer[100] = {0};
@@ -37,6 +41,11 @@ public:
     void tick()
     {
         unsigned long now = millis();
+
+        tickCount++;
+        if (freqWindowStart == 0) freqWindowStart = now;
+        unsigned long elapsed = now - freqWindowStart;  
+
         auto newValue = sensor.percent();
 
         // 1. Moving Average Filter (Smooths the analog noise)
@@ -64,7 +73,8 @@ public:
                         // Calculate RPM: (1 revolution / delta ms) * (60,000 ms / 1 minute)
                         // Note: This assumes 1 peak = 1 full revolution.
                         currentRPM = 60000 / deltaMs;
-                        dbg.print(String("RPM=") + currentRPM + " , DeltaMS=" + deltaMs);
+                        unsigned long measFreq = elapsed > 0 ? tickCount * 1000 / elapsed : 0;
+                        dbg.print(String("RPM=") + currentRPM + " , DeltaMS=" + deltaMs + " , MeasFreq=" + measFreq + "Hz");
                     }
                 }
 

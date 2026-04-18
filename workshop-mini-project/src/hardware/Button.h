@@ -91,7 +91,7 @@ public:
     }
     void dumpChange(uint8_t from, uint8_t to)
     {
-        dbg.print(from + String("=>") + to);
+        dbg.print(String("btn:")+ from + String("=>") + to);
     }
 
     void raiseLongPress()
