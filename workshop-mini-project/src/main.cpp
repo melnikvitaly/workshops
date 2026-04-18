@@ -58,8 +58,8 @@ static L298NMotor motor2(motor2Pins, dbg.Scoped("M2", NONE_LEVEL));
 static ADC lightSensor1(LEDS_PHOTO_RESISTOR_1, ADC_RESOLUTION, dbg.Scoped("LS1"));
 static ADC lightSensor2(LEDS_PHOTO_RESISTOR_2, ADC_RESOLUTION, dbg.Scoped("LS2"));
 
-static RPMCounter m1Rpm(lightSensor1, dbg.Scoped("RPM1"));
-static RPMCounter m2Rpm(lightSensor2, dbg.Scoped("RPM2"));
+static RPMCounter m1Rpm(lightSensor1, dbg.Scoped("RPMCar"));
+static RPMCounter m2Rpm(lightSensor2, dbg.Scoped("RPMPet"));
 
 static SpeedSignal speedSignal(boardLed, dbg.Scoped("SpeedSignal"));
 static ADC potentiometer(POTENTIOMETER_RED, ADC_RESOLUTION, dbg);
@@ -177,6 +177,9 @@ void setup()
   measureLeds.upAll();
   speedSignal.track(&m1Rpm);
   speedSignal.track(&m2Rpm);
+
+  motor1.forward(100);
+  motor2.forward(10);
 }
 
 void processPotentiometer()
@@ -199,12 +202,12 @@ void processPotentiometer()
 
 void loop()
 {
-  trafficLights.tick(); // tick/millis-based mode of traffic lights
+  // trafficLights.tick(); // tick/millis-based mode of traffic lights
 
-  mainBtn.tick();
-  bootBtn.tick();
+  // mainBtn.tick();
+  // bootBtn.tick();
   m1Rpm.tick();
   m2Rpm.tick();
-  speedSignal.tick();
-  processPotentiometer();
+  // speedSignal.tick();
+  // processPotentiometer();
 }

@@ -16,11 +16,11 @@ public:
 
 private:
     // Shared timer config: 20 kHz, 8-bit resolution on timer 0
-    static constexpr ledc_mode_t    LEDC_MODE       = LEDC_LOW_SPEED_MODE;
-    static constexpr ledc_timer_t   LEDC_TIMER_IDX  = LEDC_TIMER_0;
-    static constexpr uint32_t       LEDC_FREQ_HZ    = 20000;
-    static constexpr ledc_timer_bit_t LEDC_RES      = LEDC_TIMER_8_BIT;
-    static constexpr uint32_t       LEDC_MAX_DUTY   = (1 << 8) - 1; // 255
+    static constexpr ledc_mode_t LEDC_MODE = LEDC_LOW_SPEED_MODE;
+    static constexpr ledc_timer_t LEDC_TIMER_IDX = LEDC_TIMER_0;
+    static constexpr uint32_t LEDC_FREQ_HZ = 20000;
+    static constexpr ledc_timer_bit_t LEDC_RES = LEDC_TIMER_8_BIT;
+    static constexpr uint32_t LEDC_MAX_DUTY = (1 << 8) - 1; // 255
 
     std::array<uint8_t, 3> _pins; // EN(PWM), IN1, IN2
     ledc_channel_t _channel;
@@ -50,23 +50,23 @@ public:
         if (!timerReady)
         {
             ledc_timer_config_t timer = {};
-            timer.speed_mode      = LEDC_MODE;
+            timer.speed_mode = LEDC_MODE;
             timer.duty_resolution = LEDC_RES;
-            timer.timer_num       = LEDC_TIMER_IDX;
-            timer.freq_hz         = LEDC_FREQ_HZ;
-            timer.clk_cfg         = LEDC_AUTO_CLK;
+            timer.timer_num = LEDC_TIMER_IDX;
+            timer.freq_hz = LEDC_FREQ_HZ;
+            timer.clk_cfg = LEDC_AUTO_CLK;
             ESP_ERROR_CHECK(ledc_timer_config(&timer));
             timerReady = true;
         }
 
         ledc_channel_config_t ch = {};
-        ch.gpio_num   = _pins[0];
+        ch.gpio_num = _pins[0];
         ch.speed_mode = LEDC_MODE;
-        ch.channel    = _channel;
-        ch.intr_type  = LEDC_INTR_DISABLE;
-        ch.timer_sel  = LEDC_TIMER_IDX;
-        ch.duty       = 0;
-        ch.hpoint     = 0;
+        ch.channel = _channel;
+        ch.intr_type = LEDC_INTR_DISABLE;
+        ch.timer_sel = LEDC_TIMER_IDX;
+        ch.duty = 0;
+        ch.hpoint = 0;
         ESP_ERROR_CHECK(ledc_channel_config(&ch));
 
         pinMode(_pins[1], OUTPUT);
@@ -75,22 +75,29 @@ public:
 
     void speed(uint8_t percent)
     {
-        uint32_t newDuty = map(percent, 0, MAX_SPEED, 0, LEDC_MAX_DUTY);
-        if (newDuty == _duty)
-            return;
-        _duty = newDuty;
-        _dbg.print(String("speed(") + percent + "%," + _duty + ")");
-        writeToPins();
+        if (changeSpeed(percent))
+        {
+            writeToPins();
+        }
     }
 
     void move(DIRECTION newDirection, uint8_t newSpeed = -1)
     {
         if (newSpeed != (uint8_t)-1)
-            speed(newSpeed);
+            changeSpeed(newSpeed);
         _direction = newDirection;
         writeToPins();
     }
 
+    bool changeSpeed(uint8_t value)
+    {
+        uint32_t newDuty = map(value, 0, MAX_SPEED, 0, LEDC_MAX_DUTY);
+        if (newDuty == _duty)
+            return false;
+        _duty = newDuty;
+        _dbg.print(String("speed(") + value + "%," + _duty + ")");
+        return true;
+    }
     void forward(uint8_t newSpeed = -1)
     {
         if (newSpeed != (uint8_t)-1)
@@ -102,7 +109,7 @@ public:
     void backward(uint8_t newSpeed = -1)
     {
         if (newSpeed != (uint8_t)-1)
-            speed(newSpeed);
+            changeSpeed(newSpeed);
         _direction = DIRECTION::BACKWARD;
         writeToPins();
     }
