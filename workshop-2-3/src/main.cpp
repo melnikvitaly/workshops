@@ -11,7 +11,7 @@
 constexpr uint8_t LED1_PIN = 4;
 constexpr uint8_t LED2_PIN = 3;
 constexpr uint8_t LED3_PIN = 2;
-constexpr uint8_t BTN_PIN = 5;
+constexpr uint8_t BTN_PIN = 5`;
 constexpr uint8_t ADC_POT_PIN = 0;
 #pragma endregion
 
