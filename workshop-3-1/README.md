@@ -15,6 +15,10 @@ The error column shows that the linear formula consistently underestimates by ~1
 
 ![ESP32-C3 results](images/c3-image.png)
 
+[c3-out.csv](images/c3-out.csv)
+
 ### ESP32-S3 (ADC_ATTEN_DB_12, V_ref = 3100 mV)
 
 ![ESP32-S3 results](images/s3-image.png)
+
+[s3-out.csv](images/s3-out.csv)
