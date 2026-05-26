@@ -2,7 +2,7 @@
 
 Use ESP-IDF framework (ESP32-C3 DevKitM-1).
 
-## Solution
+## Solution ([src/main.cpp](src/main.cpp))
 
 Reads ADC_CHANNEL_2 every 100 ms and compares two voltage estimates:
 
