@@ -6,18 +6,20 @@ Use ESP-IDF framework (ESP32-C3 DevKitM-1).
 
 Reads ADC_CHANNEL_2 every 100 ms and compares two voltage estimates:
 
-- **Computed** — simple linear formula: `V = raw × V_ref / 4095`
+- **Computed** — simple linear formula: `V = raw × ADC_MAX_MV / 4095`
 - **Calibrated** — ESP-IDF `adc_cali_raw_to_voltage()` (curve-fitting on both C3 and S3)
+
+`ADC_MAX_MV` is the max measurable pin voltage for the chosen attenuation. The attenuator scales it down to the internal V_ref (~1.1 V nominal on both C3 and S3) before the ADC silicon.
 
 The error column shows that the linear formula consistently underestimates by ~17–43%, confirming the necessity of hardware calibration for accurate ADC readings. Verified against a multimeter: the calibrated value matches the measured voltage within ~1% error.
 
-### ESP32-C3 (ADC_ATTEN_DB_11, V_ref = 2500 mV)
+### ESP32-C3 (ADC_ATTEN_DB_11, ADC_MAX_MV = 2500 mV)
 
 ![ESP32-C3 results](images/c3-image.png)
 
 [c3-out.csv](images/c3-out.csv)
 
-### ESP32-S3 (ADC_ATTEN_DB_12, V_ref = 3100 mV)
+### ESP32-S3 (ADC_ATTEN_DB_12, ADC_MAX_MV = 3100 mV)
 
 ![ESP32-S3 results](images/s3-image.png)
 

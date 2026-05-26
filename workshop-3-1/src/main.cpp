@@ -6,13 +6,14 @@
 #include <esp_adc/adc_cali_scheme.h>
 static const char *TAG = "ADC_CAL";
 
-// 12-bit ADC full-scale mV and attenuation per target
+// Attenuation and max measurable pin voltage per target.
+// The attenuator scales the pin voltage down to the internal V_ref (~1.1V) before the ADC.
 #if defined(CONFIG_IDF_TARGET_ESP32S3)
-#define ADC_ATTEN     ADC_ATTEN_DB_12
-#define ADC_VREF_MV   3100
+#define ADC_ATTEN   ADC_ATTEN_DB_12
+#define ADC_MAX_MV  3100
 #elif defined(CONFIG_IDF_TARGET_ESP32C3)
-#define ADC_ATTEN     ADC_ATTEN_DB_11
-#define ADC_VREF_MV   2500
+#define ADC_ATTEN   ADC_ATTEN_DB_11
+#define ADC_MAX_MV  2500
 #else
 #error "Unsupported target: only ESP32-S3 and ESP32-C3 are supported"
 #endif
@@ -61,7 +62,7 @@ extern "C" void app_main()
     while (1) {
         ESP_ERROR_CHECK(adc_oneshot_read(adc_handle, target_channel, &raw));
 
-        int computed_mv = (raw * ADC_VREF_MV) / ADC_MAX_RAW;
+        int computed_mv = (raw * ADC_MAX_MV) / ADC_MAX_RAW;
 
         ESP_ERROR_CHECK(adc_cali_raw_to_voltage(cali_handle, raw, &cali_mv));
         float error = (cali_mv > 0)
