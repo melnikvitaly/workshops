@@ -13,6 +13,8 @@
 
 ![Demonstration](images/gifs.gif)
 
+[Video](https://drive.google.com/file/d/1m7tPfyCJN-DQVr1zhL4lkpTcfoaOScBn/view?usp=drive_link)
+
 ## Solution
 
 - **[ADC.hpp](src/hardware/ADC.hpp)** — oneshot driver + curve-fitting calibration; exposes `readRaw()`, `toMv()`, and `errorPct()` to compare linear vs. calibrated voltage.
