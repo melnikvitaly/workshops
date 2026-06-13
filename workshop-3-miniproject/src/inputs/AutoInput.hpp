@@ -10,14 +10,6 @@
 //   1. CIRCLE - one full revolution around the ellipse inscribed in the area
 //   2. CROSS  - a diagonal "X" between the area's corners
 //
-// then loops back to the circle. Laser control comes from the shared control
-// button via the default Input handlers, so main.cpp only changes which type it
-// constructs.
-//
-// All geometry is computed directly in unit coordinates (ux, uy) in [-1, 1]
-// with (0,0) at the centre and ±1 at the edges, which is exactly the unit
-// target this source emits; the gimbal's ViewPort scales it to servo angles, so
-// resizing the working area reshapes every phase at once.
 class AutoInput : public Input
 {
     static constexpr uint32_t DEFAULT_CIRCLE_MS = 6000;

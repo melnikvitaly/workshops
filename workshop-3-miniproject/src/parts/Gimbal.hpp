@@ -7,22 +7,14 @@
 //
 //   _pan  - servo A (below) - horizontal axis
 //   _tilt - servo B (above) - vertical axis
-//
-// aim() takes a unit target (each axis in [-1, 1], (0,0) at the centre),
-// translates it into absolute servo angles through the ViewPort, clamps each
-// axis to the configured travel limits (a safety net on top of the viewport
-// bounds) and writes the servos. So inputs stay in pure [-1, 1] coordinates and
-// never compute angles themselves.
-//
-// Each servo also clamps the angle to its own configured mechanical range, so
-// out-of-range requests can never drive a servo against its stop.
+
 class Gimbal
 {
     static constexpr float DEFAULT_MIN_DEG = 10.0f;
     static constexpr float DEFAULT_MAX_DEG = 170.0f;
 
     // The gimbal's working area (a sub-window of the full travel), in degrees.
-    ViewPort _viewPort;
+    ViewPort _viewPortAngles;
 
     Servo &_pan;  // servo A (below) - horizontal axis
     Servo &_tilt; // servo B (above) - vertical axis
@@ -46,7 +38,7 @@ public:
            ViewPort viewPort,
            float panMin = DEFAULT_MIN_DEG, float panMax = DEFAULT_MAX_DEG,
            float tiltMin = DEFAULT_MIN_DEG, float tiltMax = DEFAULT_MAX_DEG)
-        : _viewPort(viewPort),
+        : _viewPortAngles(viewPort),
           _pan(pan), _tilt(tilt),
           _panMin(panMin), _panMax(panMax),
           _tiltMin(tiltMin), _tiltMax(tiltMax)
@@ -59,23 +51,22 @@ public:
         _tilt.init();
     }
 
-    ViewPort viewPort() { return _viewPort; }
+    ViewPort viewPort() { return _viewPortAngles; }
 
     // Aim at a unit target (each axis in [-1, 1], x = pan, y = tilt): translate
     // into absolute servo angles via the ViewPort, clamp to the travel limits
     // and drive the two servos.
     void aim(Point target)
     {
-        auto angles = _viewPort.translate(target);
-        moveTo(clampAngle(angles.x, _panMin, _panMax),
-               clampAngle(angles.y, _tiltMin, _tiltMax));
+        auto angles = _viewPortAngles.translate(target);
+        moveTo(angles.x, angles.y);
     }
 
     // Drive the two servos to the given angles (degrees).
     void moveTo(float panDeg, float tiltDeg)
     {
-        _pan.write(panDeg);
-        _tilt.write(tiltDeg);
+        _pan.write(clampAngle(panDeg, _panMin, _panMax));
+        _tilt.write(clampAngle(tiltDeg, _tiltMin, _tiltMax));
     }
 
     float panAngle() const { return _pan.angle(); }
