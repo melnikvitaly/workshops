@@ -1,30 +1,47 @@
 #pragma once
+#include "Point.hpp"
 
-// A rectangular region of the gimbal's normalised (x, y) target space (the
-// full travel is [-1..1] on each axis). Every input maps/clamps its output
-// into this rectangle, so the working area can be restricted in one place
-// without changing the gimbal or any individual input's logic.
+// The gimbal's working area, expressed as a rectangle in *servo-angle* space
+// (degrees): a centre angle per axis plus the full pan/tilt extents it spans.
 //
-// The default full() rectangle is the whole [-1,1] square, i.e. no restriction.
+// Every input just produces a unit point: each axis in [-1, 1] with (0,0) at
+// the centre, -1/+1 at the edges of the working area. translate() maps such a
+// unit point into absolute servo angles, scaling each axis by its reach from
+// the centre and clamping to the rectangle. So inputs stay coordinate-agnostic
+// (pure [-1, 1]) and the single question of *where* the centre sits and how far
+// it reaches lives only here, directly in the angles the servos understand.
 struct ViewPort
 {
-    float xMin, xMax;
-    float yMin, yMax;
+    Point center;            // rectangle centre in servo angles (degrees)
+    float width, height;     // full extents (degrees; half* is the reach from centre)
 
-    // The whole normalised square: the entire travel range.
-    static constexpr ViewPort full() { return { -1.0f, 1.0f, -1.0f, 1.0f }; }
+    // Build from absolute pan/tilt angle bounds (degrees), e.g. config values.
+    static constexpr ViewPort fromBounds(float panMin, float panMax,
+                                         float tiltMin, float tiltMax)
+    {
+        return { { 0.5f * (panMin + panMax), 0.5f * (tiltMin + tiltMax) },
+                 panMax - panMin,            tiltMax - tiltMin };
+    }
 
-    float width()      const { return xMax - xMin; }
-    float height()     const { return yMax - yMin; }
-    float centerX()    const { return 0.5f * (xMin + xMax); }
-    float centerY()    const { return 0.5f * (yMin + yMax); }
-    float halfWidth()  const { return 0.5f * width(); }
-    float halfHeight() const { return 0.5f * height(); }
+    float halfWidth()  const { return 0.5f * width; }
+    float halfHeight() const { return 0.5f * height; }
 
-    // Map t in [0, 1] across the rectangle's axis (0 -> min edge, 1 -> max edge).
-    float lerpX(float t) const { return xMin + t * width(); }
-    float lerpY(float t) const { return yMin + t * height(); }
+    // Map a unit point (each axis in [-1, 1], origin at the centre) into
+    // absolute servo angles: clamp to [-1, 1], scale by the per-axis reach and
+    // add the centre.
+    Point translate(Point unit) const
+    {
+        return { translateX(-unit.x), translateY(-unit.y) };
+    }
 
-    float clampX(float x) const { return x < xMin ? xMin : (x > xMax ? xMax : x); }
-    float clampY(float y) const { return y < yMin ? yMin : (y > yMax ? yMax : y); }
+    float translateX(float u) const
+    {
+        if (u < -1.0f) u = -1.0f; else if (u > 1.0f) u = 1.0f;
+        return center.x + u * halfWidth();
+    }
+    float translateY(float u) const
+    {
+        if (u < -1.0f) u = -1.0f; else if (u > 1.0f) u = 1.0f;
+        return center.y + u * halfHeight();
+    }
 };

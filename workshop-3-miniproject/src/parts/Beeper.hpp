@@ -31,7 +31,7 @@ public:
     }
 
     // Call often; silences the buzzer once the current beep elapses.
-    void update()
+    void tick()
     {
         if (_active && (int32_t)(nowMs() - _untilMs) >= 0)
         {

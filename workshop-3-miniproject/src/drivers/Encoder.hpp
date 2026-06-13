@@ -27,11 +27,17 @@
 // logic stays easy to read; for a hand-turned knob this is plenty fast.
 class Encoder
 {
-    static constexpr int DEFAULT_STEPS_PER_DETENT = 4;
+    static constexpr int   DEFAULT_STEPS_PER_DETENT = 4;
+    static constexpr float DEFAULT_SPAN_DETENTS     = 20.0f; // detents -> full deflection
+    static constexpr float NORM_MIN                 = -1.0f;
+    static constexpr float NORM_MAX                 =  1.0f;
 
     gpio_num_t _pinA;
     gpio_num_t _pinB;
     int        _stepsPerDetent;
+
+    // How many detents from centre to a full +/-1 deflection (see position()).
+    float _spanDetents;
 
     long    _steps     = 0;       // raw accumulated quadrature steps
     uint8_t _prevState = 0;       // last (A<<1 | B) value
@@ -43,8 +49,11 @@ class Encoder
     }
 
 public:
-    Encoder(gpio_num_t a, gpio_num_t b, int stepsPerDetent = DEFAULT_STEPS_PER_DETENT)
-        : _pinA(a), _pinB(b), _stepsPerDetent(stepsPerDetent) {}
+    Encoder(gpio_num_t a, gpio_num_t b,
+            float spanDetents  = DEFAULT_SPAN_DETENTS,
+            int   stepsPerDetent = DEFAULT_STEPS_PER_DETENT)
+        : _pinA(a), _pinB(b), _stepsPerDetent(stepsPerDetent),
+          _spanDetents(spanDetents) {}
 
     void init()
     {
@@ -85,6 +94,16 @@ public:
 
     // Rotation in detents (signed, accumulates across calls).
     long count() const { return _steps / _stepsPerDetent; }
+
+    // Normalised position in [-1, 1]: detent count scaled by the span and
+    // clamped, so a full +/-_spanDetents turn maps to +/-1 (centre = 0).
+    float position() const
+    {
+        float p = (float)count() / _spanDetents;
+        if (p < NORM_MIN) return NORM_MIN;
+        if (p > NORM_MAX) return NORM_MAX;
+        return p;
+    }
 
     // Raw quadrature steps, mostly for debugging.
     long raw() const { return _steps; }

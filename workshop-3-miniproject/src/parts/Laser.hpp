@@ -47,7 +47,7 @@ public:
     }
 
     // Call often; ends a flash once its duration is over.
-    void update()
+    void tick()
     {
         if (_flashing && (int32_t)(nowMs() - _flashUntilMs) >= 0)
         {

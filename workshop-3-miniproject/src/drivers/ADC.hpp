@@ -38,6 +38,7 @@ public:
             .unit_id = _unit,
             .clk_src = (adc_oneshot_clk_src_t)0,
         };
+        
         ESP_ERROR_CHECK(adc_oneshot_new_unit(&unitCfg, &_handle));
 
         adc_oneshot_chan_cfg_t chanCfg = {

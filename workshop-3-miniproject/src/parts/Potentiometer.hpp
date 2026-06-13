@@ -9,7 +9,7 @@
 // output value (unlike the encoder, which is incremental).
 class Potentiometer
 {
-    static constexpr int   FILTER_WINDOW = 16;     // moving-average samples
+    static constexpr int   FILTER_WINDOW = 4;     // moving-average samples
     static constexpr float NORM_MIN      = -1.0f;
     static constexpr float NORM_MAX      =  1.0f;
 
