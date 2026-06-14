@@ -43,6 +43,7 @@ namespace config
     // --- Potentiometer / ADC -------------------------------------------------
     constexpr adc_atten_t POT_ADC_ATTEN = ADC_ATTEN_DB_12; // ~0..3.3 V range
     constexpr int POT_FILTER_WINDOW = 16;                  // moving-average samples
+    constexpr float POT_FILTER_ALPHA = 0.2f;               // EMA smoothing factor [0..1]
 
     // --- Gimbal travel limits (degrees) -------------------------------------
     // -1 maps to MIN, +1 to MAX, 0 to their midpoint.
@@ -100,6 +101,6 @@ namespace config
     // pan [min,max] then tilt [min,max]. This is the sub-window the inputs reach
     // within the full gimbal travel limits above.
     constexpr static ViewPort InitialViewPort = ViewPort::fromBounds(
-        56.0f, 79.0f,    // pan  (degrees)
-        60, 85);  // tilt (degrees)
+        26.0f, 119.0f,    // pan  (degrees)
+        20, 115);  // tilt (degrees)
 }

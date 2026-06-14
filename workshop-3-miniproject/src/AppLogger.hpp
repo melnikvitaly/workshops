@@ -22,7 +22,7 @@ public:
 
         _last      = target;
         _lastLaser = laserOn;
-        ESP_LOGI(_tag, "x=%+.2f y=%+.2f  pan=%.0f tilt=%.0f%s",
+        ESP_LOGI(_tag, "x=%+.2f y=%+.2f  pan=%.1f tilt=%.1f%s",
                  target.x, target.y, panDeg, tiltDeg, laserOn ? "  [LASER]" : "");
     }
 };
