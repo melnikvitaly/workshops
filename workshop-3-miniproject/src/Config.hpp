@@ -69,10 +69,10 @@ namespace config
     constexpr bool RELAY_ACTIVE_HIGH = false; // this module energizes on LOW
 
     // --- Buzzer tones (laser feedback only) ---------------------------------
-    constexpr uint32_t BEEP_FIRE_HZ = 2200; // short chirp when the laser fires
-    constexpr uint32_t BEEP_FIRE_MS = LASER_FLASH_MS;
-    constexpr uint32_t BEEP_ON_HZ = 2600;  // higher tone: latched constant ON
-    constexpr uint32_t BEEP_OFF_HZ = 1400; // lower tone:  latched off
+    constexpr uint32_t BEEP_FIRE_HZ = 2200;
+    constexpr uint32_t BEEP_FIRE_MS = LASER_FLASH_MS; // tone lasts the whole flash
+    constexpr uint32_t BEEP_ON_HZ = 2600;
+    constexpr uint32_t BEEP_OFF_HZ = 1400;
     constexpr uint32_t BEEP_TOGGLE_MS = 90;
 
     // --- Loop timing ---------------------------------------------------------

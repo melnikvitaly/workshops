@@ -23,6 +23,7 @@
 #include "AutoInput.hpp"
 #include "JoystickInput.hpp"
 
+/// @brief Collection of "parts", "driver" and "inputs"
 class Device
 {
     static constexpr char TAG[] = "DEVICE";
@@ -33,8 +34,10 @@ class Device
                 config::SERVO_FREQ_HZ, config::SERVO_PWM_RES};
     PWM _tiltPwm{pinout::SERVO_TILT, config::TILT_PWM_CHANNEL, config::TILT_PWM_TIMER,
                  config::SERVO_FREQ_HZ, config::SERVO_PWM_RES};
-    Servo _panServo{_panPwm};
-    Servo _tiltServo{_tiltPwm};
+    Servo _panServo{_panPwm, config::SERVO_MIN_US, config::SERVO_MAX_US,
+                    config::SERVO_MIN_ANGLE, config::SERVO_MAX_ANGLE};
+    Servo _tiltServo{_tiltPwm, config::SERVO_MIN_US, config::SERVO_MAX_US,
+                     config::SERVO_MIN_ANGLE, config::SERVO_MAX_ANGLE};
 
     Relay _laserRelay{pinout::RELAY, config::RELAY_ACTIVE_HIGH};
 
@@ -43,7 +46,7 @@ class Device
     Buzzer _buzzer{_buzzerPwm};
 
     ADC _potAdc{pinout::POT_ADC_UNIT, pinout::POT_ADC_CHAN, config::POT_ADC_ATTEN};
-    Encoder _encoder{pinout::ENC_A, pinout::ENC_B, config::ENC_SPAN_DETENTS};
+    Encoder _encoder{pinout::ENC_A, pinout::ENC_B, config::ENC_SPAN_DETENTS, config::ENC_STEPS_PER_DETENT};
     Potentiometer _pot{_potAdc};
 
 public:
@@ -86,7 +89,6 @@ public:
     }
 
     Input &activeInput() { return *_inputs[_activeInput]; }
-    const char *activeInputName() const { return _inputs[_activeInput]->name(); }
 
     // Cycle to the next source; returns its name (for log/feedback).
     const char *next()

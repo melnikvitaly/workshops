@@ -1,6 +1,7 @@
 #pragma once
 #include "ADC.hpp"
 #include "Sma.hpp"
+#include "Config.hpp"
 
 // Potentiometer = an ADC channel + a smoothing filter, exposed as a normalised
 // position in the range [-1.0 .. +1.0] (centre of travel = 0.0).
@@ -9,12 +10,11 @@
 // output value (unlike the encoder, which is incremental).
 class Potentiometer
 {
-    static constexpr int   FILTER_WINDOW = 4;     // moving-average samples
-    static constexpr float NORM_MIN      = -1.0f;
-    static constexpr float NORM_MAX      =  1.0f;
+    static constexpr float NORM_MIN = -1.0f;
+    static constexpr float NORM_MAX =  1.0f;
 
-    ADC&               _adc;
-    Sma<FILTER_WINDOW> _sma;          // average raw samples to kill ADC jitter
+    ADC&                            _adc;
+    Sma<config::POT_FILTER_WINDOW> _sma;   // average raw samples to kill ADC jitter
 
 public:
     explicit Potentiometer(ADC& adc) : _adc(adc) {}
