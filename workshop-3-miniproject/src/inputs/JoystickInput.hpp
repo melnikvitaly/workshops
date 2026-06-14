@@ -26,10 +26,10 @@ public:
     // Both axes are absolute (pure ADC reads), so nothing to poll.
     void tick() override {}
 
-    // Latest target as unit coordinates in [-1, 1] ((0,0) at the centre).
-    Command currentTarget() override
+    // Enqueue the latest target as unit coordinates in [-1, 1] ((0,0) at the centre).
+    void update() override
     {
         // TODO: apply dead-zone / inversion to the unit reading here.
-        return Command::moveTo({ _xAxis.position(), _yAxis.position() });
+        enqueue(Command::moveTo({ _xAxis.position(), _yAxis.position() }));
     }
 };

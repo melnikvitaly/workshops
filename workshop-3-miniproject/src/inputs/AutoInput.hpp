@@ -31,8 +31,8 @@ public:
     // Position is derived from the clock in read(); nothing to poll.
     void tick() override {}
 
-    // Current target (unit coords in [-1, 1]) for the elapsed time in the loop.
-    Command currentTarget() override
+    // Enqueue the current target (unit coords in [-1, 1]) for the elapsed time in the loop.
+    void update() override
     {
         int64_t cycle = _circleUs + _crossUs;
         int64_t t     = (esp_timer_get_time() - _startUs) % cycle;
@@ -41,7 +41,7 @@ public:
                                   : crossPoint(t - _circleUs);
 
         // TODO: could enqueue(Command::action(CommandType::LaserFlash)) at a point of interest.
-        return Command::moveTo(u);
+        enqueue(Command::moveTo(u));
     }
 
 private:

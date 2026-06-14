@@ -22,9 +22,9 @@ public:
     }
     void tick() override { _enc.poll(); }
 
-    // Latest target as unit coordinates in [-1, 1] ((0,0) at the centre).
-    Command currentTarget() override
+    // Enqueue the latest target as unit coordinates in [-1, 1] ((0,0) at the centre).
+    void update() override
     {
-        return Command::moveTo({_pot.position(), _enc.position()});
+        enqueue(Command::moveTo({_pot.position(), _enc.position()}));
     }
 };

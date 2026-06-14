@@ -21,8 +21,11 @@ public:
     // Service time-critical hardware; called from the fast loop.
     virtual void tick() = 0;
 
-    // Latest continuous target
-    virtual Command currentTarget() = 0;
+    // Called once per update before the controller drains the queue. Each source
+    // places whatever Commands it wants executed this cycle into the queue here:
+    // typically the latest continuous Move target, plus any source-specific
+    // actions (e.g. an automated laser flash at a point of interest).
+    virtual void update() = 0;
 
     virtual void onEvent(const InputEvent &e)
     {

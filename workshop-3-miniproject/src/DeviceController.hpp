@@ -74,10 +74,10 @@ public:
         wireControlsEvents();
     }
 
-    void processInputCommands()
+    void processInput()
     {
         Input &source = _device.activeInput();
-        executeInputCommand(source.currentTarget()); // TODO better design
+        source.update();
 
         Command cmd;
         while (source.nextCommand(cmd))
@@ -90,11 +90,11 @@ public:
         uint32_t now = nowMs();
         if (now - lastUpdate >= config::UPDATE_PERIOD_MS)
         {
-            refreshStatusLedBasedOnLaser();
 
             lastUpdate = now;
 
-            processInputCommands();
+            processInput();
+            postProcessStates();
 
             _appLogger.update(_target,
                               _device.gimbal.panAngle(), _device.gimbal.tiltAngle(),
@@ -102,6 +102,10 @@ public:
         }
     }
 
+    void postProcessStates()
+    {
+        refreshStatusLedBasedOnLaser();
+    }
     void refreshStatusLedBasedOnLaser()
     {
         bool on = _device.laser.isOn();

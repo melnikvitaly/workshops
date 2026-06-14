@@ -21,7 +21,7 @@ ESP-S3 DevKit
 - ~~make center of view port as (0,0) for inputs~~ (done: ViewPort is centre+size; inputs work in centred coords and ViewPort.translate() places them)
 - Commands for flash led is delayed as in the same queue as movement
 - Encoder: stop increment out of the min/max/viewport
-- "Command currentTarget()" does not look correct.
+- ~~"Command currentTarget()" does not look correct.~~ - replaced by update() calls that prepare commands
 - use integers instead of float for coordinates   
 - attach real joystick
 - Try automate movement
