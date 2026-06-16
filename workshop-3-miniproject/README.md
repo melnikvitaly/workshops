@@ -15,18 +15,23 @@ ESP-S3 DevKit
   
 ### Known issues/todo LATER
 - switching of relay during rest/boot/flash
-- viewport/angle/max/min understanding and relation
-- more granular movement within viewport/ Encoder precision toggle
-- Pot endpoint calibration + deadzone
+  - control power of relay separately
+  - understand exactly behavior of the PINs
+- preserve angles across reboots
+  - save to NVS (Non-Volatile Storage) 
+- Review/Rewrite Encoder ~~debounce on encoder/ PCNT~~ - src\drivers\EncoderPcnt.hpp
+- more granular movement within viewport/Encoder precision toggle
+- Pot/Encoder calibration - understand that movement is linearly changed with rotation
+- deadzone for Encoder - when counter is large and we try rotate back then nothing changed
 - ~~make center of view port as (0,0) for inputs~~ (done: ViewPort is centre+size; inputs work in centred coords and ViewPort.translate() places them)
 - Commands for flash led is delayed as in the same queue as movement
-- Encoder: stop increment out of the min/max/viewport
+- ~~Encoder: stop increment out of the min/max/viewport~~
 - ~~"Command currentTarget()" does not look correct.~~ - replaced by update() calls that prepare commands
-- use integers instead of float for coordinates   
-- attach real joystick
-- Try automate movement
-- apply program filters
-- Review/Rewrite Encoder
+- use integers instead of float for coordinates   (will not do)
+- attach real joystick (later)
+- ~~Try automate movement~~ AutoInput only for now
+- ~~apply program filters~~ - sma/ema were tried
+
 
 
 

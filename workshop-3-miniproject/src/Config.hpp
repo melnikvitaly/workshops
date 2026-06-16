@@ -103,6 +103,6 @@ namespace config
     // pan [min,max] then tilt [min,max]. This is the sub-window the inputs reach
     // within the full gimbal travel limits above.
     constexpr static ViewPort InitialViewPort = ViewPort::fromBounds(
-        26.0f, 119.0f,    // pan  (degrees)
+        56.0f, 79.0f,    // pan  (degrees)
         20, 115);  // tilt (degrees)
 }

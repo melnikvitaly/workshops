@@ -26,7 +26,7 @@
 //
 // We use polling (poll() called from a fast loop) instead of interrupts so the
 // logic stays easy to read; for a hand-turned knob this is plenty fast.
-class Encoder
+class EncoderWithPoll
 {
     static constexpr int   DEFAULT_STEPS_PER_DETENT = 4;
     static constexpr float DEFAULT_SPAN_DETENTS     = 20.0f; // detents -> full deflection
@@ -56,7 +56,7 @@ class Encoder
     }
 
 public:
-    Encoder(gpio_num_t a, gpio_num_t b,
+    EncoderWithPoll(gpio_num_t a, gpio_num_t b,
             float spanDetents    = DEFAULT_SPAN_DETENTS,
             int   stepsPerDetent = DEFAULT_STEPS_PER_DETENT,
             float filterAlpha    = DEFAULT_FILTER_ALPHA)

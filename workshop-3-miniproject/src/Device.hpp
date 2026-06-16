@@ -9,7 +9,8 @@
 #include "ADC.hpp"
 #include "Relay.hpp"
 #include "Buzzer.hpp"
-#include "Encoder.hpp"
+#include "EncoderWithPoll.hpp"
+#include "EncoderPcnt.hpp"
 #include "Button.h"
 #include "StatusLed.hpp"
 #include "Potentiometer.hpp"
@@ -28,6 +29,8 @@ class Device
 {
     static constexpr char TAG[] = "DEVICE";
     static constexpr int COUNT = 3; // number of input sources
+    
+    using ActiveEncoder = EncoderPcnt;
 
     // --- owned hardware (low level) -----------------------------------------
     PWM _panPwm{pinout::SERVO_PAN, config::PAN_PWM_CHANNEL, config::PAN_PWM_TIMER,
@@ -46,8 +49,8 @@ class Device
     Buzzer _buzzer{_buzzerPwm};
 
     ADC _potAdc{pinout::POT_ADC_UNIT, pinout::POT_ADC_CHAN, config::POT_ADC_ATTEN};
-    Encoder _encoder{pinout::ENC_A, pinout::ENC_B, config::ENC_SPAN_DETENTS,
-                     config::ENC_STEPS_PER_DETENT, config::ENC_FILTER_ALPHA};
+    ActiveEncoder _encoder{pinout::ENC_A, pinout::ENC_B, config::ENC_SPAN_DETENTS,
+                           config::ENC_STEPS_PER_DETENT, config::ENC_FILTER_ALPHA};
     Potentiometer _pot{_potAdc};
 
 public:
@@ -105,7 +108,7 @@ private:
     // TODO: joystick needs a second ADC axis; it reuses `_pot` for both axes
     // until the Y-axis channel is wired up in Pinout.hpp.
     JoystickInput _joystickInput{_pot, _pot};
-    ManualInput _manualInput{_pot, _encoder};
+    ManualInput<ActiveEncoder> _manualInput{_pot, _encoder};
     AutoInput _autoInput{config::AUTO_CIRCLE_MS, config::AUTO_CROSS_MS};
 
     Input *_inputs[COUNT]{&_manualInput, &_autoInput, &_joystickInput};
