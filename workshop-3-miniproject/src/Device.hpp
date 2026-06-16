@@ -46,7 +46,8 @@ class Device
     Buzzer _buzzer{_buzzerPwm};
 
     ADC _potAdc{pinout::POT_ADC_UNIT, pinout::POT_ADC_CHAN, config::POT_ADC_ATTEN};
-    Encoder _encoder{pinout::ENC_A, pinout::ENC_B, config::ENC_SPAN_DETENTS, config::ENC_STEPS_PER_DETENT};
+    Encoder _encoder{pinout::ENC_A, pinout::ENC_B, config::ENC_SPAN_DETENTS,
+                     config::ENC_STEPS_PER_DETENT, config::ENC_FILTER_ALPHA};
     Potentiometer _pot{_potAdc};
 
 public:

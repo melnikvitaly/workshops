@@ -43,7 +43,7 @@ namespace config
     // --- Potentiometer / ADC -------------------------------------------------
     constexpr adc_atten_t POT_ADC_ATTEN = ADC_ATTEN_DB_12; // ~0..3.3 V range
     constexpr int POT_FILTER_WINDOW = 16;                  // moving-average samples
-    constexpr float POT_FILTER_ALPHA = 0.2f;               // EMA smoothing factor [0..1]
+    constexpr float POT_FILTER_ALPHA = 0.8f;               // EMA smoothing factor [0..1]
 
     // --- Gimbal travel limits (degrees) -------------------------------------
     // -1 maps to MIN, +1 to MAX, 0 to their midpoint.
@@ -54,7 +54,9 @@ namespace config
 
     // --- Encoder -------------------------------------------------------------
     constexpr int ENC_STEPS_PER_DETENT = 4;
-    constexpr float ENC_SPAN_DETENTS = 20.0f; // detents centre -> full deflection
+    constexpr float ENC_SPAN_DETENTS = 20.0f;  // detents centre -> full deflection
+    constexpr float ENC_FILTER_ALPHA = 0.4f;  // EMA on tilt so the servo glides
+                                               // between detents instead of jumping
 
     // --- Input source --------------------------------------------------------
     // AutoInput timing (hands-off demo: circle, then a diagonal corner cross).
