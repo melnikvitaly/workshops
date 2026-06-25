@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pio check *)",
+      "PowerShell(pio run -e esp32-c3-devkitm-1)"
+    ]
+  }
+}
