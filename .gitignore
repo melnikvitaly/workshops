@@ -5,3 +5,7 @@
 .vscode/ipch
 tmp/
 workshop-2-mini-project/out.txt
+.metadata
+Debug/
+Release/
+Drivers/
