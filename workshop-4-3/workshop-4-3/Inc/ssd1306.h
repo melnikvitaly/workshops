@@ -1,0 +1,217 @@
+#ifndef SSD1306_H
+#define SSD1306_H
+
+#include <string.h>
+#include "stm32f4xx_hal.h"
+
+/* ============================================================================
+ *  SSD1306 OLED driver (I2C) — header-only, STM32 HAL
+ * ============================================================================
+ *
+ *  ПЛАН ІНІЦІАЛІЗАЦІЇ (послідовність команд -> control byte 0x00)
+ *  --------------------------------------------------------------------------
+ *   1. 0xAE                 Display OFF
+ *   2. 0xA8, 0x1F/0x3F      Set multiplex ratio (0x1F=32 рядки, 0x3F=64 рядки)
+ *   3. 0xD3, 0x00           Set display offset = 0
+ *   4. 0x40                 Set start line = 0
+ *   5. 0x20, 0x00           Memory addressing mode = Horizontal
+ *   6. 0xA1                 Segment remap (дзеркало по X)
+ *   7. 0xC8                 COM scan direction (дзеркало по Y)
+ *   8. 0xDA, 0x02/0x12      COM pins config (0x02 для 32, 0x12 для 64)
+ *   9. 0x81, 0x7F           Set contrast
+ *  10. 0xD9, 0xF1           Set pre-charge period
+ *  11. 0xDB, 0x40           Set VCOMH deselect level
+ *  12. 0xA4                 Resume to RAM content
+ *  13. 0xA6                 Normal display (0xA7 = інверсія)
+ *  14. 0x8D, 0x14           Charge pump ON (обов'язково для внутр. живлення)
+ *  15. 0xAF                 Display ON
+ *
+ *  Команди відправляються через control byte 0x00, дані пікселів — 0x40.
+ *  У HAL це зручно робити через HAL_I2C_Mem_Write: memaddr = control byte.
+ *  Кадр = width * height / 8 байт (наприклад 128*64/8 = 1024 байти).
+ * ============================================================================ */
+
+#define SSD1306_CTRL_CMD   0x00   /* далі йдуть команди */
+#define SSD1306_CTRL_DATA  0x40   /* далі йдуть дані (GDDRAM) */
+#define SSD1306_MAX_BUFFER (128 * 64 / 8)
+
+typedef struct {
+    I2C_HandleTypeDef *hi2c;
+    uint8_t            addr;       /* зсунута 8-бітна адреса для HAL */
+    uint8_t            width;
+    uint8_t            height;
+    uint16_t           bufferLen;
+    /* Кадровий буфер: 1 біт = 1 піксель, упаковка по сторінках (8 рядків/байт). */
+    uint8_t            buffer[SSD1306_MAX_BUFFER];
+} Ssd1306;
+
+/* --- Низькорівневий обмін --- */
+static inline HAL_StatusTypeDef SSD1306_Commands(Ssd1306 *d, const uint8_t *cmds, uint16_t len) {
+    return HAL_I2C_Mem_Write(d->hi2c, d->addr, SSD1306_CTRL_CMD, I2C_MEMADD_SIZE_8BIT,
+                             (uint8_t *)cmds, len, 100);
+}
+
+static inline HAL_StatusTypeDef SSD1306_Command(Ssd1306 *d, uint8_t cmd) {
+    return SSD1306_Commands(d, &cmd, 1);
+}
+
+static inline HAL_StatusTypeDef SSD1306_SendData(Ssd1306 *d, const uint8_t *data, uint16_t len) {
+    return HAL_I2C_Mem_Write(d->hi2c, d->addr, SSD1306_CTRL_DATA, I2C_MEMADD_SIZE_8BIT,
+                             (uint8_t *)data, len, 100);
+}
+
+/* --- Робота з кадровим буфером --- */
+static inline void SSD1306_Clear(Ssd1306 *d, uint8_t pattern) {
+    memset(d->buffer, pattern, d->bufferLen);
+}
+
+static inline void SSD1306_DrawPixel(Ssd1306 *d, int16_t x, int16_t y, uint8_t on) {
+    if (x < 0 || y < 0 || x >= d->width || y >= d->height) {
+        return;
+    }
+    /* Сторінкова упаковка: байт містить 8 пікселів по вертикалі. */
+    uint16_t index = (uint16_t)x + (uint16_t)(y / 8) * d->width;
+    uint8_t  bit   = (uint8_t)(1 << (y & 0x07));
+    if (on) {
+        d->buffer[index] |= bit;
+    } else {
+        d->buffer[index] &= (uint8_t)~bit;
+    }
+}
+
+/* Виставляємо вікно запису на весь екран і відправляємо буфер. */
+static inline HAL_StatusTypeDef SSD1306_Flush(Ssd1306 *d) {
+    const uint8_t window[] = {
+        0x21, 0x00, (uint8_t)(d->width - 1),       /* column 0..W-1 */
+        0x22, 0x00, (uint8_t)(d->height / 8 - 1),  /* page 0..pages-1 */
+    };
+    HAL_StatusTypeDef ret = SSD1306_Commands(d, window, sizeof(window));
+    if (ret != HAL_OK) {
+        return ret;
+    }
+    return SSD1306_SendData(d, d->buffer, d->bufferLen);
+}
+
+/* Заповнити структуру перед SSD1306_Init (address типово 0x3C, 128x64 або 128x32) */
+static inline void SSD1306_Setup(Ssd1306 *d, I2C_HandleTypeDef *hi2c, uint8_t addr7,
+                                 uint8_t width, uint8_t height) {
+    d->hi2c   = hi2c;
+    d->addr   = (uint8_t)(addr7 << 1);
+    d->width  = width;
+    d->height = height;
+    d->bufferLen = (uint16_t)((uint16_t)width * height / 8);
+    if (d->bufferLen > SSD1306_MAX_BUFFER) {
+        d->bufferLen = SSD1306_MAX_BUFFER;
+    }
+    SSD1306_Clear(d, 0x00);
+}
+
+/* Повний план ініціалізації. I2C має бути ініціалізовано ЗОВНІ до виклику. */
+static inline HAL_StatusTypeDef SSD1306_Init(Ssd1306 *d) {
+    const uint8_t multiplex = (d->height == 32) ? 0x1F : 0x3F;  /* п.2 */
+    const uint8_t comPins   = (d->height == 32) ? 0x02 : 0x12;  /* п.8 */
+    const uint8_t seq[] = {
+        0xAE,                  /* 1. Display OFF */
+        0xA8, multiplex,       /* 2. Set multiplex ratio */
+        0xD3, 0x00,            /* 3. Set display offset = 0 */
+        0x40,                  /* 4. Set start line = 0 */
+        0x20, 0x00,            /* 5. Addressing mode = Horizontal */
+        0xA1,                  /* 6. Segment remap (дзеркало по X) */
+        0xC8,                  /* 7. COM scan direction (дзеркало по Y) */
+        0xDA, comPins,         /* 8. COM pins config */
+        0x81, 0x7F,            /* 9. Contrast */
+        0xD9, 0xF1,            /* 10. Pre-charge period */
+        0xDB, 0x40,            /* 11. VCOMH deselect level */
+        0xA4,                  /* 12. Resume to RAM content */
+        0xA6,                  /* 13. Normal (не інверсний) режим */
+        0x8D, 0x14,            /* 14. Charge pump ON */
+        0xAF,                  /* 15. Display ON */
+    };
+    HAL_StatusTypeDef ret = SSD1306_Commands(d, seq, sizeof(seq));
+    if (ret != HAL_OK) {
+        return ret;
+    }
+    HAL_Delay(100);  /* даємо charge pump стабілізуватись */
+    SSD1306_Clear(d, 0x00);
+    return SSD1306_Flush(d);
+}
+
+/* --- Зручні налаштування --- */
+static inline HAL_StatusTypeDef SSD1306_SetContrast(Ssd1306 *d, uint8_t value) {
+    const uint8_t seq[] = {0x81, value};
+    return SSD1306_Commands(d, seq, sizeof(seq));
+}
+static inline HAL_StatusTypeDef SSD1306_DisplayOn(Ssd1306 *d)  { return SSD1306_Command(d, 0xAF); }
+static inline HAL_StatusTypeDef SSD1306_DisplayOff(Ssd1306 *d) { return SSD1306_Command(d, 0xAE); }
+static inline HAL_StatusTypeDef SSD1306_Invert(Ssd1306 *d, uint8_t on) {
+    return SSD1306_Command(d, on ? 0xA7 : 0xA6);
+}
+
+/* --- Шрифт 5x7: цифри 0-9, hex-літери A-F, 'x', ':' та пробіл --- */
+static inline const uint8_t *SSD1306_GlyphFor(char c) {
+    static const uint8_t digits[10][5] = {
+        {0x3E, 0x51, 0x49, 0x45, 0x3E},  /* 0 */
+        {0x00, 0x42, 0x7F, 0x40, 0x00},  /* 1 */
+        {0x42, 0x61, 0x51, 0x49, 0x46},  /* 2 */
+        {0x21, 0x41, 0x45, 0x4B, 0x31},  /* 3 */
+        {0x18, 0x14, 0x12, 0x7F, 0x10},  /* 4 */
+        {0x27, 0x45, 0x45, 0x45, 0x39},  /* 5 */
+        {0x3C, 0x4A, 0x49, 0x49, 0x30},  /* 6 */
+        {0x01, 0x71, 0x09, 0x05, 0x03},  /* 7 */
+        {0x36, 0x49, 0x49, 0x49, 0x36},  /* 8 */
+        {0x06, 0x49, 0x49, 0x29, 0x1E},  /* 9 */
+    };
+    static const uint8_t hexAF[6][5] = {
+        {0x7E, 0x11, 0x11, 0x11, 0x7E},  /* A */
+        {0x7F, 0x49, 0x49, 0x49, 0x36},  /* B */
+        {0x3E, 0x41, 0x41, 0x41, 0x22},  /* C */
+        {0x7F, 0x41, 0x41, 0x22, 0x1C},  /* D */
+        {0x7F, 0x49, 0x49, 0x49, 0x41},  /* E */
+        {0x7F, 0x09, 0x09, 0x09, 0x01},  /* F */
+    };
+    static const uint8_t lowerX[5] = {0x44, 0x28, 0x10, 0x28, 0x44};  /* x */
+    static const uint8_t colon[5]  = {0x00, 0x36, 0x36, 0x00, 0x00};  /* : */
+    static const uint8_t blank[5]  = {0x00, 0x00, 0x00, 0x00, 0x00};  /* space */
+
+    if (c >= '0' && c <= '9') return digits[c - '0'];
+    if (c >= 'A' && c <= 'F') return hexAF[c - 'A'];
+    if (c == 'x')             return lowerX;
+    if (c == ':')             return colon;
+    return blank;
+}
+
+/* Малює один символ у буфер. scale збільшує розмір (1 = 5x7, 2 = 10x14...).
+ * Повертає ширину намальованого символа в пікселях (для зсуву курсора). */
+static inline int16_t SSD1306_DrawChar(Ssd1306 *d, int16_t x, int16_t y, char c, uint8_t scale) {
+    const uint8_t *glyph = SSD1306_GlyphFor(c);
+    for (uint8_t col = 0; col < 5; ++col) {
+        const uint8_t bits = glyph[col];
+        for (uint8_t row = 0; row < 7; ++row) {
+            if (bits & (1 << row)) {
+                for (uint8_t sx = 0; sx < scale; ++sx) {
+                    for (uint8_t sy = 0; sy < scale; ++sy) {
+                        SSD1306_DrawPixel(d, x + col * scale + sx, y + row * scale + sy, 1);
+                    }
+                }
+            }
+        }
+    }
+    return (int16_t)(6 * scale);  /* 5 пікселів гліф + 1 пробіл */
+}
+
+/* Малює рядок у буфер, починаючи з (x, y). Повертає кінцеву X-координату. */
+static inline int16_t SSD1306_DrawText(Ssd1306 *d, int16_t x, int16_t y, const char *str, uint8_t scale) {
+    for (const char *p = str; *p; ++p) {
+        x += SSD1306_DrawChar(d, x, y, *p, scale);
+    }
+    return x;
+}
+
+/* Ширина рядка в пікселях (для центрування) */
+static inline int16_t SSD1306_TextWidth(const char *str, uint8_t scale) {
+    int16_t n = 0;
+    for (const char *p = str; *p; ++p) ++n;
+    return (int16_t)(n * 6 * scale);
+}
+
+#endif /* SSD1306_H */

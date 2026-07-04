@@ -11,7 +11,16 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-// Тут можна додати власні бібліотеки, якщо знадобляться
+#include <stdio.h>
+#include <string.h>
+
+// Драйвери I2C-пристроїв (порт з workshop-4-2, адаптований під STM32 HAL)
+#include "ds1307.h"       // RTC годинник реального часу (0x68)
+#include "ssd1306.h"      // OLED дисплей (0x3C)
+#include "i2c_scanner.h"  // сканер шини I2C
+#include "cat.h"          // мордочка кота на дисплеї
+#include "eeprom.h"       // журнал у зовнішній EEPROM (0x50)
+#include "adc.h"          // вимірювання освітлення через АЦП
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -21,8 +30,6 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define EEPROM_ADDR (0x50 << 1)  // Зсунута 7-бітна адреса для HAL
-
 // 1 година в мілісекундах (60 хвилин * 60 секунд * 1000)
 // ⚠️ ПОРАДА: Для перевірки роботи на уроці змініть це значення на 5000 (5 секунд)
 #define LOG_INTERVAL 3600000
@@ -41,6 +48,19 @@ I2C_HandleTypeDef hi2c1;
 // Змінні для керування логуванням
 uint32_t last_log_time = 0;
 uint16_t current_address = 0;
+
+// Об'єкти та стан для дисплея / годинника / сканера
+Ssd1306  oled;
+uint8_t  oled_ok = 0;
+uint32_t last_scan_time = 0;   // коли востаннє сканували шину
+uint32_t last_frame_time = 0;  // коли востаннє оновлювали кадр на екрані
+char     devices[32] = "0x00"; // останній результат скану (у hex)
+int16_t  ear_tilt = 0;         // чергуємо -> вуха ворушаться
+
+// Розташування кота (нижче, щоб зверху помістилися годинник + адреси)
+#define CAT_CX 64
+#define CAT_CY 46
+#define CAT_R  14
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -50,52 +70,12 @@ static void MX_ADC1_Init(void);
 static void MX_I2C1_Init(void);
 
 /* USER CODE BEGIN PFP */
-uint8_t EEPROM_ReadByte(uint16_t mem_address);
-void EEPROM_WriteByte(uint16_t mem_address, uint8_t data);
-uint16_t Get_Next_Address(void);
-void Save_Next_Address(uint16_t ptr);
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
-// Читання 1 байта
-uint8_t EEPROM_ReadByte(uint16_t mem_address) {
-    uint8_t data = 0;
-    HAL_I2C_Mem_Read(&hi2c1, EEPROM_ADDR, mem_address, I2C_MEMADD_SIZE_16BIT, &data, 1, 100);
-    return data;
-}
-
-// Запис 1 байта
-void EEPROM_WriteByte(uint16_t mem_address, uint8_t data) {
-    HAL_I2C_Mem_Write(&hi2c1, EEPROM_ADDR, mem_address, I2C_MEMADD_SIZE_16BIT, &data, 1, 100);
-    HAL_Delay(5); // Затримка 5 мс для фізичного запису в EEPROM (обов'язково!)
-}
-
-// Читання вказівника (адреси наступного запису) з перших двох байтів пам'яті
-uint16_t Get_Next_Address(void) {
-    uint8_t buf[2];
-    HAL_I2C_Mem_Read(&hi2c1, EEPROM_ADDR, 0x0000, I2C_MEMADD_SIZE_16BIT, buf, 2, 100);
-
-    // Об'єднання за стандартом Big-Endian
-    uint16_t ptr = ((uint16_t)buf[0] << 8) | buf[1];
-
-    // Якщо пам'ять чиста (0xFFFF) або адреса некоректна, починаємо з 0x0002
-    if (ptr < 0x0002 || ptr > 0x0FFF) {
-        return 0x0002;
-    }
-    return ptr;
-}
-
-// Збереження нового вказівника
-void Save_Next_Address(uint16_t ptr) {
-    uint8_t buf[2];
-    buf[0] = (ptr >> 8) & 0xFF; // MSB (старший байт)
-    buf[1] = ptr & 0xFF;        // LSB (молодший байт)
-
-    HAL_I2C_Mem_Write(&hi2c1, EEPROM_ADDR, 0x0000, I2C_MEMADD_SIZE_16BIT, buf, 2, 100);
-    HAL_Delay(5);
-}
+// Функції роботи з EEPROM винесено в окремий драйвер (Inc/eeprom.h)
 /* USER CODE END 0 */
 
 /**
@@ -131,7 +111,11 @@ int main(void)
 
   /* USER CODE BEGIN 2 */
   // Зчитуємо адресу з пам'яті під час старту пристрою
-  current_address = Get_Next_Address();
+  current_address = EEPROM_GetNextAddress(&hi2c1);
+
+  // Ініціалізація OLED-дисплея (адреса 0x3C, 128x64) на тій самій шині I2C1
+  SSD1306_Setup(&oled, &hi2c1, 0x3C, 128, 64);
+  oled_ok = (SSD1306_Init(&oled) == HAL_OK);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -141,31 +125,68 @@ int main(void)
     // Неблокуюча перевірка таймера
     if (HAL_GetTick() - last_log_time >= LOG_INTERVAL || last_log_time == 0) {
 
-        // 1. Запуск вимірювання АЦП
-        HAL_ADC_Start(&hadc1);
+        // 1. Одне вимірювання освітлення у відсотках (0...100)
+        uint8_t light_percent = 0;
+        if (ADC_ReadPercent(&hadc1, &light_percent) == HAL_OK) {
 
-        // Чекаємо завершення конвертації (таймаут 10 мс)
-        if (HAL_ADC_PollForConversion(&hadc1, 10) == HAL_OK) {
-
-            // Отримуємо сире 12-бітне значення (0...4095)
-            uint32_t adc_value = HAL_ADC_GetValue(&hadc1);
-
-            // 2. Математика: переводимо у відсотки (0...100)
-            uint8_t light_percent = (adc_value * 100) / 4095;
-
-            // 3. Записуємо в EEPROM, якщо є вільне місце
-            if (current_address <= 0x0FFF) {
-                EEPROM_WriteByte(current_address, light_percent);
+            // 2. Записуємо в EEPROM, якщо є вільне місце
+            if (current_address <= EEPROM_DATA_END) {
+                EEPROM_WriteByte(&hi2c1, current_address, light_percent);
 
                 // Зсуваємо вказівник і зберігаємо його
                 current_address++;
-                Save_Next_Address(current_address);
+                EEPROM_SaveNextAddress(&hi2c1, current_address);
             }
         }
-        HAL_ADC_Stop(&hadc1); // Зупиняємо АЦП до наступного разу
 
         // Оновлюємо мітку часу
         last_log_time = HAL_GetTick();
+    }
+
+    // --- Періодичне сканування шини I2C (кожні 10 секунд) ---
+    uint32_t now = HAL_GetTick();
+    if (now - last_scan_time >= 10000 || last_scan_time == 0) {
+        uint8_t addrs[8];
+        int n = I2CScanner_Scan(&hi2c1, addrs, 8);
+        last_scan_time = now;
+
+        // Формуємо рядок "0x3C 0x68 ..." (стільки, скільки влізе)
+        int pos = 0;
+        devices[0] = '\0';
+        for (int i = 0; i < n && i < 4; ++i) {
+            pos += snprintf(devices + pos, sizeof(devices) - pos,
+                            "%s0x%02X", (i ? " " : ""), addrs[i]);
+        }
+        if (n == 0) {
+            snprintf(devices, sizeof(devices), "0x00");  // нічого не знайдено
+        }
+    }
+
+    // --- Оновлення кадру раз на секунду: кіт + годинник + адреси ---
+    if (now - last_frame_time >= 1000 || last_frame_time == 0) {
+        last_frame_time = now;
+
+        RtcTime t = {0};
+        char clock[16] = "--:--:--";
+        if (DS1307_ReadTime(&hi2c1, &t) == HAL_OK) {
+            snprintf(clock, sizeof(clock), "%02d:%02d:%02d",
+                     t.hours, t.minutes, t.seconds);
+        }
+
+        if (oled_ok) {
+            // Кадр: кіт (без flush) + годинник зверху по центру, потім flush
+            ear_tilt = (ear_tilt == 0) ? 5 : 0;  // проста анімація вух
+            Cat_Draw(&oled, CAT_CX, CAT_CY, CAT_R, ear_tilt, /*flush=*/0);
+
+            const uint8_t scale = 2;  // 10x14 пікселів на символ
+            int16_t tx = (int16_t)((oled.width - SSD1306_TextWidth(clock, scale)) / 2);
+            SSD1306_DrawText(&oled, tx, 0, clock, scale);  // годинник у верхньому рядку
+
+            // Адреси знайдених I2C-пристроїв (дрібним шрифтом під годинником)
+            int16_t dx = (int16_t)((oled.width - SSD1306_TextWidth(devices, 1)) / 2);
+            SSD1306_DrawText(&oled, dx, 16, devices, 1);
+            SSD1306_Flush(&oled);
+        }
     }
 
     /* USER CODE END WHILE */
