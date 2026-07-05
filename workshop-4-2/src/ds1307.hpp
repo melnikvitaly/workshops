@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstdio>
 #include "driver/i2c.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -59,6 +60,17 @@ public:
         out.date    = bcdToDec(raw[4] & 0x3F);
         out.month   = bcdToDec(raw[5] & 0x1F);
         out.year    = bcdToDec(raw[6]);
+        return ret;
+    }
+
+    // Зчитати час і одразу відформатувати у рядок "HH:MM:SS" для показу.
+    // out лишається без змін, якщо читання не вдалося (повертає код помилки).
+    esp_err_t readTimeString(char *out, size_t len) {
+        RtcTime t = {};
+        esp_err_t ret = readTime(t);
+        if (ret == ESP_OK) {
+            snprintf(out, len, "%02d:%02d:%02d", t.hours, t.minutes, t.seconds);
+        }
         return ret;
     }
 

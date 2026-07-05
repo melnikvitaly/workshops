@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstdio>
 #include "driver/i2c.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -48,7 +49,30 @@ public:
         return found;
     }
 
+    // Просканувати шину й одразу сформувати рядок адрес "0x3C 0x68 ..." для
+    // показу на екрані (не більше maxShown адрес). Якщо нічого не знайдено —
+    // записуємо "0x00". Повертає загальну кількість знайдених пристроїв.
+    int scanToString(char *out, size_t outLen, int maxShown = kMaxDevices) {
+        if (maxShown > kMaxDevices) {
+            maxShown = kMaxDevices;
+        }
+        uint8_t addrs[kMaxDevices];
+        const int found = scan(addrs, maxShown);
+
+        const int shown = (found < maxShown) ? found : maxShown;
+        int pos = 0;
+        for (int i = 0; i < shown; ++i) {
+            pos += snprintf(out + pos, outLen - pos,
+                            "%s0x%02X", (i ? " " : ""), addrs[i]);
+        }
+        if (found == 0) {
+            snprintf(out, outLen, "0x00");  // нічого не знайдено
+        }
+        return found;
+    }
+
 private:
     static constexpr const char *kTag = "I2C_SCAN";
+    static constexpr int kMaxDevices = 8;  // ємність внутрішнього буфера адрес
     i2c_port_t port_;
 };
