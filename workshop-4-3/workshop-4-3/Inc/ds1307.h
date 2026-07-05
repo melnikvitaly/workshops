@@ -1,6 +1,7 @@
 #ifndef DS1307_H
 #define DS1307_H
 
+#include <stdio.h>
 #include "stm32f4xx_hal.h"
 
 /* ============================================================================
@@ -57,6 +58,17 @@ static inline HAL_StatusTypeDef DS1307_ReadTime(I2C_HandleTypeDef *hi2c, RtcTime
     out->month   = DS1307_BcdToDec(raw[5] & 0x1F);
     out->year    = DS1307_BcdToDec(raw[6]);
     return HAL_OK;
+}
+
+/* Зчитати час і одразу відформатувати у рядок "HH:MM:SS" для показу.
+ * out лишається без змін, якщо читання не вдалося (повертає код помилки). */
+static inline HAL_StatusTypeDef DS1307_ReadTimeString(I2C_HandleTypeDef *hi2c, char *out, size_t len) {
+    RtcTime t = {0};
+    HAL_StatusTypeDef ret = DS1307_ReadTime(hi2c, &t);
+    if (ret == HAL_OK) {
+        snprintf(out, len, "%02d:%02d:%02d", t.hours, t.minutes, t.seconds);
+    }
+    return ret;
 }
 
 /* Записати повний час (запускає годинник, скидаючи біт CH) */

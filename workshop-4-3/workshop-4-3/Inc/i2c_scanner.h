@@ -1,7 +1,10 @@
 #ifndef I2C_SCANNER_H
 #define I2C_SCANNER_H
 
+#include <stdio.h>
 #include "stm32f4xx_hal.h"
+
+#define I2C_SCANNER_MAX_DEVICES 8  /* ємність внутрішнього буфера адрес */
 
 /* ============================================================================
  *  I2C Scanner — header-only, STM32 HAL
@@ -28,6 +31,28 @@ static inline int I2CScanner_Scan(I2C_HandleTypeDef *hi2c, uint8_t *out, int max
             }
             ++found;
         }
+    }
+    return found;
+}
+
+/* Просканувати шину й одразу сформувати рядок адрес "0x3C 0x68 ..." для показу
+ * на екрані (не більше maxShown адрес). Якщо нічого не знайдено — записуємо
+ * "0x00". Повертає загальну кількість знайдених пристроїв. */
+static inline int I2CScanner_ScanToString(I2C_HandleTypeDef *hi2c, char *out, size_t outLen, int maxShown) {
+    if (maxShown > I2C_SCANNER_MAX_DEVICES) {
+        maxShown = I2C_SCANNER_MAX_DEVICES;
+    }
+    uint8_t addrs[I2C_SCANNER_MAX_DEVICES];
+    const int found = I2CScanner_Scan(hi2c, addrs, maxShown);
+
+    const int shown = (found < maxShown) ? found : maxShown;
+    int pos = 0;
+    out[0] = '\0';
+    for (int i = 0; i < shown; ++i) {
+        pos += snprintf(out + pos, outLen - pos, "%s0x%02X", (i ? " " : ""), addrs[i]);
+    }
+    if (found == 0) {
+        snprintf(out, outLen, "0x00");  /* нічого не знайдено */
     }
     return found;
 }
