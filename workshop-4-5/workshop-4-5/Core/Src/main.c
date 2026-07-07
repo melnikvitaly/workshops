@@ -21,7 +21,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <string.h> // Додано для роботи з memset та strcpy
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -31,7 +31,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define BUFFER_SIZE 32 // Розмір буфера для обміну даними
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -43,7 +43,9 @@
 SPI_HandleTypeDef hspi1;
 
 /* USER CODE BEGIN PV */
-
+uint8_t tx_buffer[BUFFER_SIZE];
+uint8_t rx_buffer[BUFFER_SIZE];
+volatile uint8_t spi_transfer_complete = 0; // Прапорець завершення прийому/передачі
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -91,6 +93,16 @@ int main(void)
   MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
 
+  // Очищаємо буфери
+  memset(tx_buffer, 0, BUFFER_SIZE);
+  memset(rx_buffer, 0, BUFFER_SIZE);
+
+  // Записуємо повідомлення, яке STM32 відправить до ESP32
+  strcpy((char*)tx_buffer, "Hello, ESP!");
+
+  // Ставимо SPI в режим очікування: як тільки ESP32 почне передачу, STM32 апаратно відповість
+  HAL_SPI_TransmitReceive_IT(&hspi1, tx_buffer, rx_buffer, BUFFER_SIZE);
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -100,6 +112,20 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+
+    // Перевіряємо, чи переривання повідомило про успішне завершення транзакції
+    if (spi_transfer_complete == 1)
+    {
+      // 1. Скидаємо прапорець
+      spi_transfer_complete = 0;
+
+      // 2. Очищаємо приймальний буфер від старих даних ESP32
+      memset(rx_buffer, 0, BUFFER_SIZE);
+
+      // 3. Знову "зводимо" SPI для прийому наступної команди від Master
+      HAL_SPI_TransmitReceive_IT(&hspi1, tx_buffer, rx_buffer, BUFFER_SIZE);
+    }
+
   }
   /* USER CODE END 3 */
 }
@@ -202,6 +228,16 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+// Колбек, який викликається бібліотекою HAL після успішного прийому/передачі
+void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi)
+{
+  if (hspi->Instance == SPI1)
+  {
+    // Сигналізуємо головному циклу, що дані оброблено
+    spi_transfer_complete = 1;
+  }
+}
 
 /* USER CODE END 4 */
 
