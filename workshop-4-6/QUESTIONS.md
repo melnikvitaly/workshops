@@ -1,2 +1,0 @@
-- circular buffer awaiting processor?
-- 
