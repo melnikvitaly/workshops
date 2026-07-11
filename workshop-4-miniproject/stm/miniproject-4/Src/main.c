@@ -24,6 +24,7 @@
 #include "cat.h"           // мордочка кота на дисплеї
 #include "eeprom.h"        // журнал у зовнішній EEPROM (0x50)
 #include "adc.h"           // вимірювання освітлення через АЦП
+#include "log_emission.h"  // SPI-slave: віддає Data Logs ESP32-майстру
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -91,6 +92,12 @@ static void poll_light_log(void) {
     uint8_t light_percent = 0;
     if (ADC_ReadPercent(&hadc1, &light_percent) != HAL_OK) {
         return;
+    }
+    // Ставимо запис у чергу для SPI-майстра (він забере його як Data Log).
+    char msg[LOGEMIT_PAYLOAD_MAX + 1];
+    int  msg_len = snprintf(msg, sizeof(msg), "light=%u%%", light_percent);
+    if (msg_len > 0) {
+        LogEmission_AddText(msg);
     }
     // Записуємо в EEPROM, якщо є вільне місце
     if (current_address <= EEPROM_DATA_END) {
@@ -176,6 +183,9 @@ int main(void)
   // Готовність дисплея далі зберігає сам драйвер (oled.ready).
   SSD1306_Setup(&oled, &hi2c1, OLED_ADDR, OLED_WIDTH, OLED_HEIGHT);
   SSD1306_Init(&oled);
+
+  // SPI1 як slave: віддає накопичені Data Logs ESP32-майстру (PA4..PA7).
+  LogEmission_Init();
   /* USER CODE END 2 */
 
   /* Infinite loop */
