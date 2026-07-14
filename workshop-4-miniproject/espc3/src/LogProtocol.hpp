@@ -1,145 +1,107 @@
 #pragma once
+#include "LogPacket.hpp"   // wire data structures (Header, DateTime, constants)
 #include <cstdint>
 #include <cstddef>
 
-// Wire protocol between this SPI master and every data-log slave.
+// One-way streaming log protocol: every slave continuously presents a byte
+// stream of self-framed packets on MISO, and this master clocks blocks of it out
+// with DMA and parses the packets. There is no request, no acknowledgement, no
+// time sync and no command set — the master only ever clocks dummy bytes. This
+// is deliberately best-effort: a record the master fails to collect before the
+// slave's ring overwrites it is simply lost, and the slave reports how much it
+// has dropped so the master can flag it.
 //
-// Delivery model: cumulative acknowledgement by record id.
-// Every log record on a slave has a monotonically increasing 32-bit id. A
-// CMD_GET_LOG request carries the highest id the master has already received and
-// delivered ("lastReceivedId"). The slave treats that as an ack: it marks every
-// record with id <= lastReceivedId as processed (and may free them) and replies
-// with the oldest record whose id > lastReceivedId, or ST_NO_DATA if there is
-// none. The master advances its high-water mark only after a frame passes
-// validation, so a corrupted or lost response is simply re-requested at the same
-// offset on the next pass — no record is lost, and processed records are never
-// resent.
+// The wire layout (Header, DateTime, ValueType, constants) is in LogPacket.hpp;
+// this file adds the behaviour: the CRC and the stream parser.
 //
-// Time model: master-as-reference.
-// The master is the single time authority. It periodically pushes its own clock
-// (ms on the master's timebase) to each slave via CMD_SET_TIME. A slave stamps
-// every record with the event time on that timebase and, once it has been
-// synced, sets FLAG_TIME_SYNCED on the record. Before the first sync (or after a
-// slave reboot) it stamps its own uptime and leaves the flag clear, so a sink
-// can tell absolute-ish master time from raw uptime. The master's clock is ms
-// since boot today; swapping in SNTP/RTC later makes it true wall-clock with no
-// protocol change. recordTime and lastReceivedId are u32 ms/id and wrap after
-// ~49 days / 4 billion records respectively (fine for this project).
+// Delivery model: best-effort stream.
+//   The slave keeps a circular byte buffer, pre-filled with NoEntry packets, and
+//   feeds it to MISO with free-running circular DMA. A new record is written into
+//   the ring as a fresh packet, overwriting the oldest bytes. The master reads
+//   forward through this stream; it never rewinds, so within one lap of the ring
+//   it sees each packet at most once. If the master clocks faster than the slave
+//   produces, the ring's read pointer laps around and re-presents old packets —
+//   the master de-duplicates ENTRY packets by their monotonic `seq` (only a seq
+//   strictly greater than the last delivered one is dispatched). A slave that
+//   produces faster than the master drains overwrites not-yet-read bytes; it
+//   counts those overflow events in `dropped`, reported in every packet.
 //
-// Framing: SPI CS delimits every frame; presence and integrity are confirmed by
-// MAGIC + checksum (an empty CS line reads 0xFF and can satisfy neither).
+// Presence: inferred from a valid framed packet.
+//   SPI has no ACK, and an unselected/empty CS line reads 0xFF (MISO is held high
+//   by an internal pull-up, see SpiBus::init) which can never satisfy MAGIC + a
+//   correct CRC. A slave that has nothing to log therefore still presents valid
+//   NoEntry packets (from the ring pre-fill), so "a valid packet appeared this
+//   pass" is a reliable present/absent test.
 //
-// Slave-side contract (see stm/miniproject-4 log_emission.c for a reference
-// implementation):
-//   * Keep a full 32-byte reply preloaded; each transaction sends the previous
-//     reply and latches the new request. Parse the request on transfer-complete
-//     and build the reply for the *next* transaction (the two-phase model).
-//   * Validate the request checksum before acting; ignore a corrupt request so a
-//     garbled lastReceivedId can never drop unprocessed records.
-//   * Treat lastReceivedId as "mark <= this as processed"; only send id > it.
-//   * Assign recordId monotonically; on buffer overflow it may skip ids (the
-//     master follows the recordId it actually receives, so a gap is tolerated).
-//   * Count every record discarded to overflow in `dropped` (saturating u16) and
-//     report it in every response, so the master can flag lost data.
-//   * On CMD_SET_TIME, adopt the supplied ms as its clock (set RTC or store an
-//     offset) and stamp later records with FLAG_TIME_SYNCED set.
+// Time: slaves stamp their own uptime.
+//   There is no master clock push; `timestamp` is the slave's HAL_GetTick() ms at
+//   the moment the record was queued (for ordering/latency). Wall-clock is not a
+//   header field — the RTC is treated as just another sensor: a slave logs it as
+//   an ordinary entry with valueType VT_DATETIME (a 6-byte payload). The master
+//   additionally records its own collection time (collectedAtUs) per record.
+//
+// Framing: self-synchronising, so the master can lock onto the stream at any
+//   offset. The header ends at payloadLen so the length is known before the
+//   (variable) tail; the CRC covers header+payload. A corrupt/torn packet (e.g.
+//   at the seam where a new record partially overwrote an old one) fails the CRC
+//   and the parser resynchronises to the next MAGIC.
 namespace logproto
 {
-    // First byte of a request frame (master -> slave).
-    //
-    // Two-phase exchange: a HAL SPI slave is still clocking in the command while
-    // it must already be shifting out MISO, so it cannot answer in the same
-    // frame. The master therefore sends the real command in one transaction
-    // (ignoring MISO), then issues a CMD_NOP transaction to clock out the reply
-    // the slave prepared. CMD_NOP mutates nothing on the slave.
-    enum Command : uint8_t
+    // CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF). Table-less; the slave uses
+    // the identical routine. Covers header+payload (everything before the CRC).
+    inline uint16_t crc16(const uint8_t* d, size_t n)
     {
-        CMD_NOP      = 0x00, // second-phase filler; read the prepared reply
-        CMD_PING     = 0x01, // presence probe; args ignored
-        CMD_GET_LOG  = 0x02, // ack up to lastReceivedId, return the next record
-        CMD_SET_TIME = 0x03, // adopt masterTimeMs as the slave's clock
-    };
-
-    // First byte of every response frame (slave -> master).
-    static constexpr uint8_t MAGIC = 0xA5;
-
-    // Low bits of the status byte: what the response carries.
-    enum Status : uint8_t
-    {
-        ST_OK      = 0x00, // payload/recordId/recordTime hold a valid record
-        ST_NO_DATA = 0x01, // device alive, nothing newer than lastReceivedId
-    };
-    static constexpr uint8_t STATUS_CODE_MASK = 0x7F;
-    // High bit of the status byte: the record's time is on the master timebase
-    // (set), vs. raw slave uptime (clear).
-    static constexpr uint8_t FLAG_TIME_SYNCED = 0x80;
-
-    // Fixed 32-byte frame in both directions. Fields map 1:1 onto the wire via a
-    // packed struct: this works only because both ends are little-endian (ESP32
-    // and STM32 are) — do NOT port the slave to a big-endian part without adding
-    // byte-swaps. Access multi-byte fields through the struct member (the
-    // compiler emits safe unaligned loads); never take &field for an aligned
-    // pointer. The static_asserts guard against padding creeping in.
-    static constexpr int FRAME_SIZE  = 32;
-    static constexpr int PAYLOAD_MAX  = 18;
-    static constexpr int CHECKSUM_POS = FRAME_SIZE - 1; // 31
-
-    // Request (master -> slave). arg = lastReceivedId (CMD_GET_LOG) or
-    // masterTimeMs (CMD_SET_TIME); ignored for CMD_PING/CMD_NOP.
-    struct __attribute__((packed)) Request
-    {
-        uint8_t  cmd;          // [0]
-        uint32_t arg;          // [1..4]
-        uint8_t  reserved[26]; // [5..30]
-        uint8_t  checksum;     // [31]
-    };
-
-    // Response (slave -> master).
-    struct __attribute__((packed)) Response
-    {
-        uint8_t  magic;              // [0]
-        uint8_t  status;             // [1] code in low 7 bits, sync flag in bit 7
-        uint8_t  len;                // [2] payload bytes used (0..PAYLOAD_MAX)
-        uint32_t recordId;           // [3..6]
-        uint32_t recordTimeMs;       // [7..10] master timebase, or uptime if !synced
-        uint16_t dropped;            // [11..12] overflow-drop total (saturating)
-        uint8_t  payload[PAYLOAD_MAX]; // [13..30]
-        uint8_t  checksum;           // [31]
-    };
-
-    // A frame buffer: byte view for SPI/DMA + checksum, struct views for fields.
-    union Frame
-    {
-        uint8_t  bytes[FRAME_SIZE];
-        Request  req;
-        Response resp;
-    };
-
-    static_assert(sizeof(Request)  == FRAME_SIZE, "Request layout drift (padding?)");
-    static_assert(sizeof(Response) == FRAME_SIZE, "Response layout drift (padding?)");
-    static_assert(sizeof(Frame)    == FRAME_SIZE, "Frame size drift");
-
-    inline uint8_t checksum(const uint8_t* bytes)
-    {
-        uint8_t x = 0;
-        for (int i = 0; i < CHECKSUM_POS; ++i)
-            x ^= bytes[i];
-        return x;
+        uint16_t crc = 0xFFFF;
+        for (size_t i = 0; i < n; ++i)
+        {
+            crc ^= (uint16_t)d[i] << 8;
+            for (int b = 0; b < 8; ++b)
+                crc = (crc & 0x8000) ? (uint16_t)((crc << 1) ^ 0x1021)
+                                     : (uint16_t)(crc << 1);
+        }
+        return crc;
     }
 
-    // Stamp the trailing checksum (call after filling a frame to send).
-    inline void sign(Frame& f)
+    enum ParseResult
     {
-        f.bytes[CHECKSUM_POS] = checksum(f.bytes);
-    }
+        PKT_OK,        // a full, CRC-valid packet starts at buf[0]
+        PKT_NEED_MORE, // buf[0] may start a packet but not all bytes are present
+        PKT_BAD,       // buf[0] is not a valid packet start; skip `consumed` bytes
+    };
 
-    // A response is genuine iff it starts with MAGIC and its checksum matches.
-    inline bool valid(const Frame& f)
+    // Try to lock one packet at the front of `buf` (`avail` bytes readable).
+    //  * PKT_OK       -> `consumed` = full packet length; header/payload valid.
+    //  * PKT_NEED_MORE-> caller should read more bytes and retry (nothing consumed).
+    //  * PKT_BAD      -> `consumed` = 1; caller advances one byte to resync on the
+    //                    next MAGIC (covers seams, 0xFF idle lines, and torn frames
+    //                    whose CRC fails).
+    // Transport-agnostic: `buf` is any byte window of the stream.
+    inline ParseResult parsePacket(const uint8_t* buf, size_t avail, size_t& consumed)
     {
-        return f.resp.magic == MAGIC &&
-               checksum(f.bytes) == f.bytes[CHECKSUM_POS];
-    }
+        consumed = 0;
+        if (avail < 1)
+            return PKT_NEED_MORE;
+        if (buf[0] != MAGIC)
+        {
+            consumed = 1;
+            return PKT_BAD;
+        }
+        if (avail < HEADER_SIZE)
+            return PKT_NEED_MORE;
 
-    inline uint8_t statusCode(const Response& r) { return r.status & STATUS_CODE_MASK; }
-    inline bool    timeSynced(const Response& r) { return (r.status & FLAG_TIME_SYNCED) != 0; }
+        const uint8_t payloadLen = buf[HEADER_SIZE - 1];
+        const size_t  total      = packetLen(payloadLen);
+        if (avail < total)
+            return PKT_NEED_MORE;
+
+        const size_t   crcPos = HEADER_SIZE + payloadLen;
+        const uint16_t got    = (uint16_t)buf[crcPos] | ((uint16_t)buf[crcPos + 1] << 8);
+        if (got != crc16(buf, crcPos))
+        {
+            consumed = 1;           // false MAGIC or torn packet: resync
+            return PKT_BAD;
+        }
+        consumed = total;
+        return PKT_OK;
+    }
 }

@@ -6,36 +6,48 @@
 #include <esp_log.h>
 #include <esp_attr.h>
 #include <esp_timer.h>
-#include <esp_rom_sys.h>
 #include <cstring>
 
 // Polls a predefined set of CS pins. Each scan() pass, for every pin, it
-// attaches a device just long enough to probe it and drain its log queue, then
+// attaches a device just long enough to clock one block of its log stream, then
 // detaches — so at most one device is on the bus at any instant and the SPI
 // host's concurrent-device limit is never a concern no matter how many pins are
 // listed. Transitions (a device appearing on or vanishing from a pin) are
 // logged, and per-pin record counts are kept.
+//
+// The wire protocol is a best-effort one-way stream (see LogProtocol.hpp): the
+// master only clocks dummy bytes; the slave feeds self-framed packets from a
+// circular DMA buffer. Reading is therefore just "clock a block, parse packets
+// out of it." Because consecutive reads of one device are contiguous slices of
+// its stream, a per-device accumulator carries a packet that straddles a block
+// boundary into the next read. ENTRY packets are de-duplicated by their monotonic
+// `seq`, since an idle slave re-presents old packets as its ring laps.
 //
 // Every collected record is fanned out to all registered LogsTarget sinks, so
 // UART, SD card, etc. can consume the same stream simultaneously.
 class DataLogCollector
 {
 public:
-    static constexpr int MAX_DEVICES          = 8;
-    static constexpr int MAX_TARGETS          = 4;
-    static constexpr int MAX_RECORDS_PER_SCAN = 16;    // drain cap per pin per pass
-    static constexpr uint32_t TIME_SYNC_MS    = 60'000; // re-push clock this often
-    static constexpr uint32_t SLAVE_TURNAROUND_US = 100; // phase-1→phase-2 gap
+    static constexpr int MAX_DEVICES   = 8;
+    static constexpr int MAX_TARGETS   = 4;
+    // Bytes clocked out of each device per pass. Larger = more records drained
+    // per scan (higher throughput) at the cost of a longer SPI transaction.
+    static constexpr int COLLECT_BLOCK = 512;
+    // Accumulator must hold last pass's leftover (< one max packet) plus a fresh
+    // block, so a straddling packet is always completed.
+    static constexpr int ACC_CAP       = COLLECT_BLOCK + logproto::MAX_PACKET;
 
 private:
     SpiBus&    _bus;
     SpiDevice  _dev[MAX_DEVICES];
     gpio_num_t _pin[MAX_DEVICES];
     bool       _present[MAX_DEVICES];
-    uint32_t   _lastId[MAX_DEVICES];   // highest record id received & delivered
     uint32_t   _records[MAX_DEVICES];  // count delivered (diagnostics)
     uint16_t   _dropped[MAX_DEVICES];  // last-seen slave overflow-drop count
-    uint32_t   _lastSyncMs[MAX_DEVICES]; // master-clock ms of last CMD_SET_TIME
+    uint32_t   _lastSeq[MAX_DEVICES];  // highest ENTRY seq delivered (dedup)
+    bool       _haveSeq[MAX_DEVICES];  // _lastSeq valid yet?
+    uint8_t    _acc[MAX_DEVICES][ACC_CAP];
+    int        _accLen[MAX_DEVICES];   // valid bytes buffered in _acc[i]
     int        _count;
 
     LogsTarget* _target[MAX_TARGETS];
@@ -43,114 +55,108 @@ private:
 
     static constexpr const char* TAG = "COLLECTOR";
 
-    // Master-as-reference clock: ms since boot. Swap for SNTP/RTC epoch later
-    // and every record becomes true wall-clock with no protocol change.
-    static uint32_t masterNowMs()
+    // Clock COLLECT_BLOCK bytes out of the device (dummy 0xFF on MOSI) and read
+    // its MISO stream into a DMA-capable buffer. Both scratch buffers are static
+    // and shared across pins — safe because scan() runs on a single task.
+    esp_err_t readBlock(SpiDevice& d, const uint8_t*& rx)
     {
-        return (uint32_t)(esp_timer_get_time() / 1000);
-    }
+        static DMA_ATTR uint8_t tx[COLLECT_BLOCK];
+        static DMA_ATTR uint8_t rxbuf[COLLECT_BLOCK];
+        static bool txInit = false;
+        if (!txInit) { memset(tx, 0xFF, sizeof(tx)); txInit = true; }
 
-    // Two-phase request/response (see LogProtocol.hpp): phase 1 delivers the
-    // command (MISO ignored — the slave is latching it); phase 2 clocks out the
-    // reply the slave prepared, using a CMD_NOP that changes nothing. arg is the
-    // u32 carried by CMD_GET_LOG (lastReceivedId) / CMD_SET_TIME (masterTimeMs).
-    // Static DMA-capable scratch buffers: scan() runs on a single task, so
-    // sharing them across all pins is safe and avoids per-call allocation.
-    esp_err_t exchange(SpiDevice& d, uint8_t cmd, uint32_t arg, logproto::Frame* out)
-    {
-        static DMA_ATTR logproto::Frame tx;
-        static DMA_ATTR logproto::Frame rx;
-
-        // Phase 1: send the command; the slave prepares its reply for phase 2.
-        memset(&tx, 0, sizeof(tx));
-        tx.req.cmd = cmd;
-        tx.req.arg = arg;
-        logproto::sign(tx);
-        esp_err_t r = d.transfer(tx.bytes, rx.bytes, logproto::FRAME_SIZE);
-        if (r != ESP_OK)
-            return r;
-
-        // Give the slave's ISR time to build the reply and re-arm its SPI.
-        esp_rom_delay_us(SLAVE_TURNAROUND_US);
-
-        // Phase 2: clock the prepared reply out with a no-op request.
-        memset(&tx, 0, sizeof(tx));
-        tx.req.cmd = logproto::CMD_NOP;
-        logproto::sign(tx);
-        r = d.transfer(tx.bytes, rx.bytes, logproto::FRAME_SIZE);
-        if (r == ESP_OK && out)
-            *out = rx;
+        esp_err_t r = d.transfer(tx, rxbuf, COLLECT_BLOCK);
+        rx = rxbuf;
         return r;
     }
 
-    bool probe(SpiDevice& d)
+    // Read one block, parse every complete packet out of the accumulator, and
+    // dispatch new ENTRY records. Returns true if any valid packet was seen
+    // (i.e. a live slave is present on this pin).
+    bool collect(int i)
     {
-        logproto::Frame f;
-        return exchange(d, logproto::CMD_PING, 0, &f) == ESP_OK &&
-               logproto::valid(f);
-    }
+        const uint8_t* rx = nullptr;
+        if (readBlock(_dev[i], rx) != ESP_OK)
+            return false;
 
-    // Push the master clock so the slave stamps records on our timebase.
-    void pushTime(SpiDevice& d, uint32_t nowMs)
-    {
-        logproto::Frame f;
-        // The ack response is not needed; CMD_SET_TIME is idempotent and the
-        // next periodic push corrects a missed one.
-        exchange(d, logproto::CMD_SET_TIME, nowMs, &f);
-    }
+        // Append the fresh block to whatever straddled the last read. _accLen is
+        // always < MAX_PACKET after a parse, so this never overflows ACC_CAP.
+        int copyable = COLLECT_BLOCK;
+        if (_accLen[i] + copyable > ACC_CAP)
+            copyable = ACC_CAP - _accLen[i];
+        memcpy(_acc[i] + _accLen[i], rx, copyable);
+        _accLen[i] += copyable;
 
-    void drainLogs(int i)
-    {
-        uint32_t hw = _lastId[i]; // high-water mark: everything through hw is acked
-        for (int n = 0; n < MAX_RECORDS_PER_SCAN; ++n)
+        bool sawValid = false;
+        int  pos      = 0;
+        while (pos < _accLen[i])
         {
-            logproto::Frame f;
-            // The request acks up to hw; the slave replies with the next id > hw.
-            if (exchange(_dev[i], logproto::CMD_GET_LOG, hw, &f) != ESP_OK)
-                break;
-            if (!logproto::valid(f))
+            size_t consumed = 0;
+            logproto::ParseResult res =
+                logproto::parsePacket(_acc[i] + pos, _accLen[i] - pos, consumed);
+
+            if (res == logproto::PKT_NEED_MORE)
+                break;                       // wait for the next block's bytes
+            if (res == logproto::PKT_BAD)
             {
-                // hw is left unchanged, so this same record is re-requested next
-                // pass — nothing is lost or double-acked.
-                ESP_LOGW(TAG, "CS%d: corrupt frame, retrying id>%u next pass",
-                         (int)_pin[i], (unsigned)hw);
-                break;
+                pos += (int)consumed;        // skip one byte, resync on next MAGIC
+                continue;
             }
-
-            // The slave reports its overflow-drop total in every frame; a rise
-            // means it discarded records we will never receive.
-            const uint16_t dropped = f.resp.dropped;
-            if (dropped != _dropped[i])
-            {
-                ESP_LOGW(TAG, "CS%d: slave dropped %u records (buffer overflow)",
-                         (int)_pin[i], (unsigned)(uint16_t)(dropped - _dropped[i]));
-                _dropped[i] = dropped;
-            }
-
-            if (logproto::statusCode(f.resp) == logproto::ST_NO_DATA)
-                break; // nothing newer than hw
-
-            uint8_t len = f.resp.len;
-            if (len > logproto::PAYLOAD_MAX)
-                len = logproto::PAYLOAD_MAX;
-
-            const uint32_t id = f.resp.recordId;
-
-            LogRecord rec = {};
-            rec.cs            = _pin[i];
-            rec.seq           = id; // slave record id (sinks dedup on this)
-            rec.eventTimeMs   = f.resp.recordTimeMs;
-            rec.timeSynced    = logproto::timeSynced(f.resp);
-            rec.collectedAtUs = esp_timer_get_time();
-            rec.data          = f.resp.payload; // valid until f goes out of scope
-            rec.len           = len;
-            dispatch(rec);
-
-            // Advance the ack only after the record is validated and delivered.
-            hw = id;
-            _lastId[i] = hw;
-            _records[i]++;
+            sawValid = true;
+            handlePacket(i, _acc[i] + pos);
+            pos += (int)consumed;
         }
+
+        // Keep the unparsed tail (a partial packet) for the next pass.
+        _accLen[i] -= pos;
+        if (_accLen[i] > 0)
+            memmove(_acc[i], _acc[i] + pos, _accLen[i]);
+        return sawValid;
+    }
+
+    // Process one CRC-valid packet at `p`. Updates the drop counter, and for
+    // ENTRY packets de-duplicates by seq and dispatches the record.
+    void handlePacket(int i, const uint8_t* p)
+    {
+        logproto::Header h;
+        memcpy(&h, p, sizeof(h));            // p may be unaligned; copy out fields
+
+        if (!logproto::isEntry(h))
+            return;                          // NoEntry heartbeat: presence only
+
+        // The stream re-presents old ENTRY packets as the slave's ring laps, so
+        // only deliver a seq we have not delivered before.
+        if (_haveSeq[i] && (int32_t)(h.seq - _lastSeq[i]) <= 0)
+            return;
+        if (_haveSeq[i] && h.seq != _lastSeq[i] + 1)
+            ESP_LOGW(TAG, "CS%d: seq gap %u -> %u (records missed)",
+                     (int)_pin[i], (unsigned)_lastSeq[i], (unsigned)h.seq);
+        _lastSeq[i] = h.seq;
+        _haveSeq[i] = true;
+
+        // Only ENTRY packets carry a live drop count (NoEntry reports 0). Read it
+        // here, after dedup, so it stays monotonic: a rise means the slave
+        // discarded records we will never receive.
+        if (h.dropped != _dropped[i])
+        {
+            ESP_LOGW(TAG, "CS%d: slave dropped %u records (buffer overflow)",
+                     (int)_pin[i], (unsigned)(uint16_t)(h.dropped - _dropped[i]));
+            _dropped[i] = h.dropped;
+        }
+
+        uint8_t len = h.payloadLen;          // parsePacket already bounds-checked
+
+        LogRecord rec = {};
+        rec.cs            = _pin[i];
+        rec.seq           = h.seq;
+        rec.eventTimeMs   = h.timestamp;
+        rec.collectedAtUs = esp_timer_get_time();
+        memcpy(rec.objectId, h.objectId, sizeof(rec.objectId));
+        rec.valueType     = h.valueType;
+        rec.data          = p + logproto::HEADER_SIZE;   // valid until next read
+        rec.len           = len;
+        dispatch(rec);
+        _records[i]++;
     }
 
     // Fan one record out to every registered sink.
@@ -160,6 +166,16 @@ private:
             _target[t]->write(rec);
     }
 
+    // Clear per-device parse/dedup state (called when a device (re)appears so a
+    // fresh slave's early records are not skipped and stale bytes are dropped).
+    void resetDevice(int i)
+    {
+        _accLen[i]  = 0;
+        _haveSeq[i] = false;
+        _lastSeq[i] = 0;
+        _dropped[i] = 0;
+    }
+
 public:
     DataLogCollector(SpiBus& bus, const gpio_num_t* csPins, int count,
                      int clockHz = 1'000'000)
@@ -167,13 +183,11 @@ public:
     {
         for (int i = 0; i < _count; ++i)
         {
-            _pin[i]        = csPins[i];
-            _dev[i]        = SpiDevice(bus.host(), csPins[i], clockHz);
-            _present[i]    = false;
-            _lastId[i]     = 0;
-            _records[i]    = 0;
-            _dropped[i]    = 0;
-            _lastSyncMs[i] = 0;
+            _pin[i]     = csPins[i];
+            _dev[i]     = SpiDevice(bus.host(), csPins[i], clockHz);
+            _present[i] = false;
+            _records[i] = 0;
+            resetDevice(i);
         }
     }
 
@@ -209,42 +223,52 @@ public:
                 continue;
             }
 
-            const bool     present = probe(_dev[i]);
-            const uint32_t nowMs   = masterNowMs();
+            // While a pin reads as absent, keep its parse state clear so the
+            // first block from a newly plugged device starts clean (no stale
+            // leftover bytes and no stale seq high-water mark).
+            if (!_present[i])
+                resetDevice(i);
+
+            const bool present = collect(i);
 
             if (present && !_present[i])
-            {
-                // A (possibly different) device just appeared: restart its ack
-                // stream from 0 so we don't skip a fresh device's early records,
-                // and hand it our clock before draining so records are stamped
-                // on the master timebase from the start.
-                _lastId[i]  = 0;
-                _dropped[i] = 0;
-                pushTime(_dev[i], nowMs);
-                _lastSyncMs[i] = nowMs;
                 ESP_LOGI(TAG, "Device ADDED on CS%d", (int)_pin[i]);
-            }
             else if (!present && _present[i])
                 ESP_LOGI(TAG, "Device REMOVED on CS%d", (int)_pin[i]);
             _present[i] = present;
-
-            if (present)
-            {
-                // Periodic re-sync corrects drift (and re-arms a slave that
-                // rebooted since the last push).
-                if (nowMs - _lastSyncMs[i] >= TIME_SYNC_MS)
-                {
-                    pushTime(_dev[i], nowMs);
-                    _lastSyncMs[i] = nowMs;
-                }
-                drainLogs(i);
-            }
 
             _dev[i].detach();
         }
     }
 
-    int  deviceCount() const           { return _count; }
-    bool present(int i) const          { return _present[i]; }
-    uint32_t records(int i) const      { return _records[i]; }
+    int  deviceCount() const      { return _count; }
+    bool present(int i) const     { return _present[i]; }
+    uint32_t records(int i) const { return _records[i]; }
+    uint32_t dropped(int i) const { return _dropped[i]; }
+
+    void logStatus() const
+    {
+        uint32_t processedEntries = 0;
+        uint32_t droppedMessages = 0;
+        int presentCount = 0;
+
+        for (int i = 0; i < _count; ++i)
+        {
+            processedEntries += _records[i];
+            droppedMessages += _dropped[i];
+            if (_present[i])
+                ++presentCount;
+        }
+
+        ESP_LOGI(TAG, "STATUS: present=%d/%d processed_entries=%u dropped_messages=%u",
+                 presentCount, _count, (unsigned)processedEntries,
+                 (unsigned)droppedMessages);
+
+        for (int i = 0; i < _count; ++i)
+        {
+            ESP_LOGI(TAG, "  CS%d: present=%d processed_entries=%u dropped_messages=%u",
+                     (int)_pin[i], _present[i] ? 1 : 0,
+                     (unsigned)_records[i], (unsigned)_dropped[i]);
+        }
+    }
 };

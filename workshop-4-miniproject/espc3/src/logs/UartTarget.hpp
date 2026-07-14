@@ -1,5 +1,6 @@
 #pragma once
 #include "LogsTarget.hpp"
+#include "../LogProtocol.hpp"
 #include <driver/uart.h>
 #include <esp_log.h>
 #include <cstdio>
@@ -52,19 +53,18 @@ public:
         if (!_ready)
             return;
 
-        // "[t=<ms>|up=<ms>] CS<pin> #<id>: <payload>\r\n" — payload as text.
-        // 't=' means master-timebase time; 'up=' means unsynced slave uptime.
-        char line[96];
-        int n = snprintf(line, sizeof(line), "[%s=%u] CS%d #%u: ",
-                         rec.timeSynced ? "t" : "up",
-                         (unsigned)rec.eventTimeMs,
-                         (int)rec.cs, (unsigned)rec.seq);
+        // "[up=<ms>] CS<pin> #<id> <objId>=<value>\r\n" — up= is the slave's raw
+        // uptime stamp; the value is rendered per its ValueType.
+        char line[128];
+        int n = snprintf(line, sizeof(line), "[up=%u] CS%d #%u %.4s=",
+                         (unsigned)rec.eventTimeMs, (int)rec.cs,
+                         (unsigned)rec.seq, rec.objectId);
+        n += formatLogValue(line + n, sizeof(line) - n, rec);
         if (n < 0)
             return;
         if (n > (int)sizeof(line))
             n = sizeof(line);
         uart_write_bytes(_port, line, n);
-        uart_write_bytes(_port, (const char*)rec.data, rec.len);
         uart_write_bytes(_port, "\r\n", 2);
     }
 

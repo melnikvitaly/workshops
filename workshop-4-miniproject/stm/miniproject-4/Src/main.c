@@ -25,6 +25,7 @@
 #include "eeprom.h"        // журнал у зовнішній EEPROM (0x50)
 #include "adc.h"           // вимірювання освітлення через АЦП
 #include "log_emission.h"  // SPI-slave: віддає Data Logs ESP32-майстру
+#include "sensor_stream.h" // ADC(DMA)+RTC -> потік Data Logs
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -44,7 +45,14 @@
 
 /* Private variables ---------------------------------------------------------*/
 ADC_HandleTypeDef hadc1;
+DMA_HandleTypeDef hdma_adc1;
+
 I2C_HandleTypeDef hi2c1;
+
+SPI_HandleTypeDef hspi1;
+DMA_HandleTypeDef hdma_spi1_tx;
+
+TIM_HandleTypeDef htim2;
 
 /* USER CODE BEGIN PV */
 // Змінні для керування логуванням
@@ -70,9 +78,11 @@ FrameData frame = { "0x00", "--:--:--" };  // плейсхолдери до пе
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
 static void MX_ADC1_Init(void);
 static void MX_I2C1_Init(void);
-
+static void MX_SPI1_Init(void);
+static void MX_TIM2_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -89,17 +99,9 @@ static void poll_light_log(void) {
     }
     last_log_time = HAL_GetTick();
 
-    uint8_t light_percent = 0;
-    if (ADC_ReadPercent(&hadc1, &light_percent) != HAL_OK) {
-        return;
-    }
-    // Ставимо запис у чергу для SPI-майстра (він забере його як Data Log).
-    char msg[LOGEMIT_PAYLOAD_MAX + 1];
-    int  msg_len = snprintf(msg, sizeof(msg), "light=%u%%", light_percent);
-    if (msg_len > 0) {
-        LogEmission_AddText(msg);
-    }
-    // Записуємо в EEPROM, якщо є вільне місце
+    // Потік у SPI (записи "LGHT"/"TIME") веде sensor_stream; тут лише архівуємо
+    // останнє усереднене значення освітлення в EEPROM раз на LOG_INTERVAL_MS.
+    uint8_t light_percent = SensorStream_LatestLightPercent();
     if (current_address <= EEPROM_DATA_END) {
         EEPROM_WriteByte(&hi2c1, current_address, light_percent);
         current_address++;                                  // зсуваємо вказівник
@@ -150,6 +152,7 @@ static void poll_frame(void) {
   */
 int main(void)
 {
+
   /* USER CODE BEGIN 1 */
 
   /* USER CODE END 1 */
@@ -172,9 +175,11 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_ADC1_Init();
   MX_I2C1_Init();
-
+  MX_SPI1_Init();
+  MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
   // Зчитуємо адресу з пам'яті під час старту пристрою
   current_address = EEPROM_GetNextAddress(&hi2c1);
@@ -186,6 +191,10 @@ int main(void)
 
   // SPI1 як slave: віддає накопичені Data Logs ESP32-майстру (PA4..PA7).
   LogEmission_Init();
+
+  // Потокове зчитування сенсорів (ADC світла через TIM2+DMA, час з RTC) у
+  // той самий SPI-потік. Має йти після MX_ADC1_Init/MX_I2C1_Init.
+  SensorStream_Init();
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -194,7 +203,8 @@ int main(void)
   {
     // Кожен помічник неблокуюче перевіряє свій таймер (HAL_GetTick) і
     // виконує роботу лише коли настав його період — деталі у USER CODE 0.
-    poll_light_log();  // логування освітлення в EEPROM (раз на годину)
+    SensorStream_Poll();  // ADC(DMA)+RTC -> записи "LGHT"/"TIME" у SPI-потік
+    poll_light_log();  // архів освітлення в EEPROM (раз на годину)
     poll_i2c_scan();   // сканування шини I2C (кожні 10 с)
     poll_frame();      // оновлення кадру: кіт + годинник + адреси (раз на секунду)
 
@@ -207,22 +217,10 @@ int main(void)
   /* USER CODE END 3 */
 }
 
-// ... (Нижче залишаються стандартні функції SystemClock_Config, MX_ADC1_Init, MX_I2C1_Init тощо, які згенерував CubeMX. Я їх не дублюю, щоб не захаращувати відповідь, але вони залишаються без змін!)
-
 /**
-  * @brief  This function is executed in case of error occurrence.
+  * @brief System Clock Configuration
   * @retval None
   */
-void Error_Handler(void)
-{
-  /* USER CODE BEGIN Error_Handler_Debug */
-  __disable_irq();
-  while (1)
-  {
-  }
-  /* USER CODE END Error_Handler_Debug */
-}
-
 void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
@@ -286,11 +284,11 @@ static void MX_ADC1_Init(void)
   hadc1.Init.ScanConvMode = DISABLE;
   hadc1.Init.ContinuousConvMode = DISABLE;
   hadc1.Init.DiscontinuousConvMode = DISABLE;
-  hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
-  hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
+  hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_RISING;
+  hadc1.Init.ExternalTrigConv = ADC_EXTERNALTRIGCONV_T2_TRGO;
   hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
   hadc1.Init.NbrOfConversion = 1;
-  hadc1.Init.DMAContinuousRequests = DISABLE;
+  hadc1.Init.DMAContinuousRequests = ENABLE;
   hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
   if (HAL_ADC_Init(&hadc1) != HAL_OK)
   {
@@ -301,7 +299,7 @@ static void MX_ADC1_Init(void)
   */
   sConfig.Channel = ADC_CHANNEL_0;
   sConfig.Rank = 1;
-  sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES;
+  sConfig.SamplingTime = ADC_SAMPLETIME_480CYCLES;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
     Error_Handler();
@@ -347,6 +345,107 @@ static void MX_I2C1_Init(void)
 }
 
 /**
+  * @brief SPI1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_SPI1_Init(void)
+{
+
+  /* USER CODE BEGIN SPI1_Init 0 */
+
+  /* USER CODE END SPI1_Init 0 */
+
+  /* USER CODE BEGIN SPI1_Init 1 */
+
+  /* USER CODE END SPI1_Init 1 */
+  /* SPI1 parameter configuration*/
+  hspi1.Instance = SPI1;
+  hspi1.Init.Mode = SPI_MODE_SLAVE;
+  hspi1.Init.Direction = SPI_DIRECTION_2LINES;
+  hspi1.Init.DataSize = SPI_DATASIZE_8BIT;
+  hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
+  hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
+  hspi1.Init.NSS = SPI_NSS_HARD_INPUT;
+  hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
+  hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
+  hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
+  hspi1.Init.CRCPolynomial = 10;
+  if (HAL_SPI_Init(&hspi1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN SPI1_Init 2 */
+
+  /* USER CODE END SPI1_Init 2 */
+
+}
+
+/**
+  * @brief TIM2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM2_Init(void)
+{
+
+  /* USER CODE BEGIN TIM2_Init 0 */
+
+  /* USER CODE END TIM2_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM2_Init 1 */
+
+  /* USER CODE END TIM2_Init 1 */
+  htim2.Instance = TIM2;
+  htim2.Init.Prescaler = 1599;
+  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim2.Init.Period = 49;
+  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim2, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_UPDATE;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM2_Init 2 */
+
+  /* USER CODE END TIM2_Init 2 */
+
+}
+
+/**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA2_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA2_Stream0_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Stream0_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream0_IRQn);
+  /* DMA2_Stream3_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Stream3_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream3_IRQn);
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -370,6 +469,19 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE END 4 */
 
+/**
+  * @brief  This function is executed in case of error occurrence.
+  * @retval None
+  */
+void Error_Handler(void)
+{
+  /* USER CODE BEGIN Error_Handler_Debug */
+  __disable_irq();
+  while (1)
+  {
+  }
+  /* USER CODE END Error_Handler_Debug */
+}
 #ifdef USE_FULL_ASSERT
 /**
   * @brief  Reports the name of the source file and the source line number

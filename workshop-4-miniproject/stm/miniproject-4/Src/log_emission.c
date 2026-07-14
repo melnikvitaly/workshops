@@ -3,282 +3,171 @@
 
 // ---------------------------------------------------------------------------
 // Protocol constants — mirror of espc3/src/LogProtocol.hpp. KEEP IN SYNC.
+// One-way stream: [18-byte header][payload 0..255][crc16], little-endian.
 // ---------------------------------------------------------------------------
-#define LP_FRAME_SIZE   32
 #define LP_MAGIC        0xA5
 
-// Commands (request byte 0). CMD_NOP is the master's second-phase filler.
-#define CMD_NOP         0x00
-#define CMD_PING        0x01
-#define CMD_GET_LOG     0x02
-#define CMD_SET_TIME    0x03
+// Status byte: low nibble = kind, high bits = flags.
+#define SC_ENTRY        0x00
+#define SC_NOENTRY      0x01
+#define FLAG_OVERFLOW   0x80
 
-// Status (response byte 1): code in low 7 bits, sync flag in bit 7.
-#define ST_OK           0x00
-#define ST_NO_DATA      0x01
-#define FLAG_TIME_SYNCED 0x80
+#define LP_HEADER_SIZE  18
+#define LP_CRC_SIZE     2
+#define LP_OBJID_LEN    4
+#define LP_MAX_PACKET   (LP_HEADER_SIZE + 255 + LP_CRC_SIZE)  // 275
 
-#define LP_CHECKSUM_POS (LP_FRAME_SIZE - 1)
-
-// ---------------------------------------------------------------------------
-// Wire frame — packed-struct overlay, mirror of logproto::Frame on the master.
-// Fields map 1:1 onto the wire because both ends are little-endian; do not port
-// to a big-endian part without byte-swaps. Access multi-byte fields through the
-// struct member (the compiler emits safe unaligned accesses).
-// ---------------------------------------------------------------------------
-typedef struct __attribute__((packed)) {
-    uint8_t  cmd;          // [0]  lastReceivedId (GET_LOG) / masterTimeMs (SET_TIME)
-    uint32_t arg;          // [1..4]
-    uint8_t  reserved[26]; // [5..30]
-    uint8_t  checksum;     // [31]
-} LogRequest;
-
-typedef struct __attribute__((packed)) {
-    uint8_t  magic;                     // [0]
-    uint8_t  status;                    // [1]
-    uint8_t  len;                       // [2]
-    uint32_t recordId;                  // [3..6]
-    uint32_t recordTimeMs;              // [7..10]
-    uint16_t dropped;                   // [11..12]
-    uint8_t  payload[LOGEMIT_PAYLOAD_MAX]; // [13..30]
-    uint8_t  checksum;                  // [31]
-} LogResponse;
-
-typedef union {
-    uint8_t     bytes[LP_FRAME_SIZE];
-    LogRequest  req;
-    LogResponse resp;
-} LogFrame;
-
-_Static_assert(sizeof(LogRequest)  == LP_FRAME_SIZE, "LogRequest layout drift");
-_Static_assert(sizeof(LogResponse) == LP_FRAME_SIZE, "LogResponse layout drift");
-_Static_assert(sizeof(LogFrame)    == LP_FRAME_SIZE, "LogFrame size drift");
-
-static uint8_t checksum(const uint8_t *f)
+// CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF), identical to the master's.
+static uint16_t crc16(const uint8_t *d, uint16_t n)
 {
-    uint8_t x = 0;
-    for (int i = 0; i < LP_CHECKSUM_POS; ++i)
-        x ^= f[i];
-    return x;
-}
-
-// ---------------------------------------------------------------------------
-// Record ring buffer. head/tail are monotonic counters; slot = idx % RING_CAP.
-// tail is the oldest *unacknowledged* record; the master's cumulative ack moves
-// it forward. Records are kept until acked, so a corrupted read simply retries.
-// ---------------------------------------------------------------------------
-#define RING_CAP 32
-
-typedef struct {
-    uint32_t id;
-    uint32_t timeMs;
-    uint8_t  synced;   // was the clock master-referenced when this was stamped?
-    uint8_t  len;
-    uint8_t  data[LOGEMIT_PAYLOAD_MAX];
-} Record;
-
-static Record            g_ring[RING_CAP];
-static volatile uint32_t g_head    = 0;  // next write position (count)
-static volatile uint32_t g_tail    = 0;  // oldest unacked position (count)
-static volatile uint32_t g_nextId  = 1;  // id for the next queued record
-static volatile uint16_t g_dropped = 0;  // records lost to overflow (saturating)
-
-// ---------------------------------------------------------------------------
-// Clock: master-as-reference. HAL_GetTick() is our local ms; SET_TIME gives an
-// offset so nowMs() reads on the master timebase. Before the first sync we
-// report raw uptime and leave FLAG_TIME_SYNCED clear.
-// ---------------------------------------------------------------------------
-static volatile int32_t g_timeOffsetMs = 0;
-static volatile uint8_t g_timeSynced   = 0;
-
-static uint32_t nowMs(void)
-{
-    return (uint32_t)((int32_t)HAL_GetTick() + g_timeOffsetMs);
-}
-
-// ---------------------------------------------------------------------------
-// SPI slave state. Two-phase exchange with the master: a request received in
-// one 32-byte transaction is answered in the *next* one. We therefore always
-// keep a response preloaded in g_tx; on each completed transaction we parse the
-// request that just arrived in g_rx, build the reply for the following
-// transaction, and re-arm. g_tx starts as a valid idle frame so the very first
-// read is well-formed.
-// ---------------------------------------------------------------------------
-static SPI_HandleTypeDef g_hspi;
-static LogFrame          g_rx;
-static LogFrame          g_tx;
-
-// Build an idle response (valid frame, no record) for PING/SET_TIME/NOP.
-static void build_idle(void)
-{
-    memset(&g_tx, 0, sizeof(g_tx));
-    g_tx.resp.magic   = LP_MAGIC;
-    g_tx.resp.status  = ST_NO_DATA | (g_timeSynced ? FLAG_TIME_SYNCED : 0);
-    g_tx.resp.dropped = g_dropped;
-    g_tx.bytes[LP_CHECKSUM_POS] = checksum(g_tx.bytes);
-}
-
-// Build the response to CMD_GET_LOG carrying lastReceivedId. First apply the
-// cumulative ack (drop everything with id <= lastReceivedId), then return the
-// oldest record that remains, or ST_NO_DATA.
-static void build_get_log(uint32_t lastReceivedId)
-{
-    // Acknowledge: pop processed records off the tail.
-    while (g_head != g_tail && g_ring[g_tail % RING_CAP].id <= lastReceivedId)
-        g_tail++;
-
-    memset(&g_tx, 0, sizeof(g_tx));
-    g_tx.resp.magic = LP_MAGIC;
-
-    uint8_t status = ST_NO_DATA;
-    uint8_t synced = 0;
-    if (g_head != g_tail)
+    uint16_t crc = 0xFFFF;
+    for (uint16_t i = 0; i < n; ++i)
     {
-        const Record *r = &g_ring[g_tail % RING_CAP];
-        status = ST_OK;
-        synced = r->synced;   // the record's own stamp state, not the current one
-        g_tx.resp.len          = r->len;
-        g_tx.resp.recordId     = r->id;
-        g_tx.resp.recordTimeMs = r->timeMs;
-        memcpy(g_tx.resp.payload, r->data, r->len);
+        crc ^= (uint16_t)d[i] << 8;
+        for (int b = 0; b < 8; ++b)
+            crc = (crc & 0x8000) ? (uint16_t)((crc << 1) ^ 0x1021)
+                                 : (uint16_t)(crc << 1);
     }
-    g_tx.resp.status  = status | (synced ? FLAG_TIME_SYNCED : 0);
-    g_tx.resp.dropped = g_dropped;
-    g_tx.bytes[LP_CHECKSUM_POS] = checksum(g_tx.bytes);
+    return crc;
 }
 
-// Parse the request just received and prepare the reply for the next frame.
-static void handle_request(void)
+// Build one packet into `out` (must hold up to LP_MAX_PACKET bytes). Fields are
+// written little-endian with memcpy (both ends are little-endian). Returns the
+// packet length. `objId` may be NULL for NoEntry (filled with zeros).
+static uint16_t build_packet(uint8_t *out, uint8_t status, uint32_t seq,
+                             uint16_t dropped, const char *objId,
+                             uint8_t vtype, const uint8_t *payload, uint8_t plen)
 {
-    // Requests are checksummed too; ignore a corrupt one so a garbled ack can
-    // never drop unacked records. Leaving the previous g_tx would resend a stale
-    // record, so fall back to idle.
-    if (checksum(g_rx.bytes) != g_rx.bytes[LP_CHECKSUM_POS])
-    {
-        build_idle();
+    uint32_t ts = HAL_GetTick();
+    out[0] = LP_MAGIC;
+    out[1] = status;
+    memcpy(out + 2, &seq, 4);
+    memcpy(out + 6, &dropped, 2);
+    memcpy(out + 8, &ts, 4);
+    if (objId) memcpy(out + 12, objId, LP_OBJID_LEN);
+    else       memset(out + 12, 0, LP_OBJID_LEN);
+    out[16] = vtype;
+    out[17] = plen;
+    if (plen) memcpy(out + LP_HEADER_SIZE, payload, plen);
+    uint16_t crc = crc16(out, (uint16_t)(LP_HEADER_SIZE + plen));
+    memcpy(out + LP_HEADER_SIZE + plen, &crc, 2);
+    return (uint16_t)(LP_HEADER_SIZE + plen + LP_CRC_SIZE);
+}
+
+// ---------------------------------------------------------------------------
+// Stream ring. A byte buffer that free-running circular DMA feeds to MISO. The
+// producer appends packets at g_write, wrapping; the DMA read position advances
+// only as the master clocks bytes out. It is pre-filled with NoEntry packets so
+// an idle slave still presents valid frames (the master infers presence from
+// them). Overwriting bytes the master has not yet read is the sole loss path and
+// is counted in g_dropped, reported to the master.
+// ---------------------------------------------------------------------------
+#define STREAM_CAP 2048
+
+static uint8_t           g_stream[STREAM_CAP];
+static volatile uint16_t g_write   = 0;  // next byte position to write
+static volatile uint32_t g_nextSeq = 1;  // id for the next ENTRY (0 = NoEntry)
+static volatile uint16_t g_dropped = 0;  // bytes-overflowed events (saturating)
+
+// SPI1 and its TX DMA are configured entirely by CubeMX: MX_SPI1_Init (slave,
+// mode 0, hardware NSS, PA4..PA7) and MX_DMA_Init + HAL_SPI_MspInit set up the
+// circular DMA2 Stream3 handle `hdma_spi1_tx` and link it to hspi1. This module
+// just starts that circular DMA on the ring and drives the stream.
+extern SPI_HandleTypeDef hspi1;
+extern DMA_HandleTypeDef hdma_spi1_tx;
+
+// Current DMA read index (bytes already handed to the SPI shift path).
+static uint16_t stream_read_index(void)
+{
+    uint16_t ndtr = (uint16_t)__HAL_DMA_GET_COUNTER(&hdma_spi1_tx);
+    return (uint16_t)(STREAM_CAP - ndtr);
+}
+
+// Append n bytes into the ring, wrapping. If this overtakes the master's read
+// position we are overwriting unread data — count it as an overflow.
+static void stream_write(const uint8_t *p, uint16_t n)
+{
+    if (n == 0 || n > STREAM_CAP)
         return;
-    }
 
-    switch (g_rx.req.cmd)
+    uint16_t r        = stream_read_index();
+    uint16_t inflight = (uint16_t)((g_write - r + STREAM_CAP) % STREAM_CAP);
+    if ((uint32_t)inflight + n >= STREAM_CAP && g_dropped != 0xFFFF)
+        g_dropped++;
+
+    uint16_t first = (uint16_t)(STREAM_CAP - g_write);
+    if (first >= n)
     {
-    case CMD_GET_LOG:
-        build_get_log(g_rx.req.arg);
-        break;
-    case CMD_SET_TIME:
-        g_timeOffsetMs = (int32_t)g_rx.req.arg - (int32_t)HAL_GetTick();
-        g_timeSynced   = 1;
-        build_idle();
-        break;
-    case CMD_PING:
-    case CMD_NOP:
-    default:
-        build_idle();
-        break;
+        memcpy(&g_stream[g_write], p, n);
     }
+    else
+    {
+        memcpy(&g_stream[g_write], p, first);
+        memcpy(&g_stream[0], p + first, (uint16_t)(n - first));
+    }
+    g_write = (uint16_t)((g_write + n) % STREAM_CAP);
 }
 
 // ---------------------------------------------------------------------------
 // Public API.
 // ---------------------------------------------------------------------------
-void LogEmission_Add(const uint8_t *data, uint8_t len)
+void LogEmission_AddEntry(const char objectId[LOGEMIT_OBJID_LEN],
+                          uint8_t valueType,
+                          const void *payload, uint8_t payloadLen)
 {
-    if (len > LOGEMIT_PAYLOAD_MAX)
-        len = LOGEMIT_PAYLOAD_MAX;
-
-    // The SPI ISR also moves g_tail (acking); mask it while we touch the ring.
-    HAL_NVIC_DisableIRQ(SPI1_IRQn);
-
-    if (g_head - g_tail >= RING_CAP)
-    {
-        g_tail++;                       // ring full: drop oldest (id gap)
-        if (g_dropped != 0xFFFF)
-            g_dropped++;                // report the loss to the master
-    }
-
-    Record *r = &g_ring[g_head % RING_CAP];
-    r->id     = g_nextId++;
-    r->timeMs = nowMs();
-    r->synced = g_timeSynced;
-    r->len    = len;
-    memcpy(r->data, data, len);
-    g_head++;
-
-    HAL_NVIC_EnableIRQ(SPI1_IRQn);
+    uint8_t  pkt[LP_MAX_PACKET];
+    uint8_t  status = (uint8_t)(SC_ENTRY | (g_dropped ? FLAG_OVERFLOW : 0));
+    uint32_t seq    = g_nextSeq++;
+    uint16_t len    = build_packet(pkt, status, seq, g_dropped, objectId,
+                                   valueType, (const uint8_t *)payload, payloadLen);
+    stream_write(pkt, len);
 }
 
-void LogEmission_AddText(const char *text)
+void LogEmission_AddU32(const char objectId[LOGEMIT_OBJID_LEN], uint32_t value)
+{
+    LogEmission_AddEntry(objectId, LOGVT_U32, &value, sizeof(value));
+}
+
+void LogEmission_AddDateTime(const char objectId[LOGEMIT_OBJID_LEN],
+                             const LogDateTime *dt)
+{
+    // 6 raw bytes (year..seconds), typed VT_DATETIME. Treated like any sensor.
+    LogEmission_AddEntry(objectId, LOGVT_DATETIME, dt, sizeof(*dt));
+}
+
+void LogEmission_AddText(const char objectId[LOGEMIT_OBJID_LEN], const char *text)
 {
     size_t n = strlen(text);
-    if (n > LOGEMIT_PAYLOAD_MAX)
-        n = LOGEMIT_PAYLOAD_MAX;
-    LogEmission_Add((const uint8_t *)text, (uint8_t)n);
+    if (n > 255)
+        n = 255;
+    LogEmission_AddEntry(objectId, LOGVT_STR, text, (uint8_t)n);
 }
 
 void LogEmission_Init(void)
 {
-    g_hspi.Instance               = SPI1;
-    g_hspi.Init.Mode              = SPI_MODE_SLAVE;
-    g_hspi.Init.Direction         = SPI_DIRECTION_2LINES;
-    g_hspi.Init.DataSize          = SPI_DATASIZE_8BIT;
-    g_hspi.Init.CLKPolarity       = SPI_POLARITY_LOW;   // mode 0
-    g_hspi.Init.CLKPhase          = SPI_PHASE_1EDGE;    // mode 0
-    g_hspi.Init.NSS               = SPI_NSS_HARD_INPUT;  // CS frames each xfer
-    g_hspi.Init.FirstBit          = SPI_FIRSTBIT_MSB;
-    g_hspi.Init.TIMode            = SPI_TIMODE_DISABLE;
-    g_hspi.Init.CRCCalculation    = SPI_CRCCALCULATION_DISABLE;
-    g_hspi.Init.CRCPolynomial     = 10;
-    // BaudRatePrescaler is ignored in slave mode (the master clocks the bus).
-    g_hspi.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_2;
-    if (HAL_SPI_Init(&g_hspi) != HAL_OK)
-        return;
+    // SPI1 (MX_SPI1_Init) and its circular TX DMA (MX_DMA_Init + HAL_SPI_MspInit,
+    // handle `hdma_spi1_tx`) are already initialised by CubeMX before this call.
 
-    build_idle();  // valid frame ready before the first request arrives
-    HAL_SPI_TransmitReceive_IT(&g_hspi, g_tx.bytes, g_rx.bytes, LP_FRAME_SIZE);
-}
+    // Pre-fill the whole ring with back-to-back NoEntry packets so the stream is
+    // valid from the first clock. Any trailing bytes that cannot hold a full
+    // packet are zeroed (non-MAGIC: the master skips them while resyncing).
+    uint16_t w = 0;
+    while (w + (LP_HEADER_SIZE + LP_CRC_SIZE) <= STREAM_CAP)
+    {
+        uint8_t  pkt[LP_HEADER_SIZE + LP_CRC_SIZE];
+        uint16_t len = build_packet(pkt, SC_NOENTRY, 0, 0, NULL, 0, NULL, 0);
+        memcpy(&g_stream[w], pkt, len);
+        w = (uint16_t)(w + len);
+    }
+    if (w < STREAM_CAP)
+        memset(&g_stream[w], 0, (uint16_t)(STREAM_CAP - w));
+    g_write = 0;
 
-// ---------------------------------------------------------------------------
-// HAL glue (weak overrides). Everything SPI1 lives here so main.c stays clean.
-// ---------------------------------------------------------------------------
-void HAL_SPI_MspInit(SPI_HandleTypeDef *hspi)
-{
-    if (hspi->Instance != SPI1)
-        return;
-
-    __HAL_RCC_SPI1_CLK_ENABLE();
-    __HAL_RCC_GPIOA_CLK_ENABLE();
-
-    GPIO_InitTypeDef gpio = {0};
-    gpio.Pin       = GPIO_PIN_4 | GPIO_PIN_5 | GPIO_PIN_6 | GPIO_PIN_7;
-    gpio.Mode      = GPIO_MODE_AF_PP;
-    gpio.Pull      = GPIO_NOPULL;
-    gpio.Speed     = GPIO_SPEED_FREQ_HIGH;
-    gpio.Alternate = GPIO_AF5_SPI1;
-    HAL_GPIO_Init(GPIOA, &gpio);
-
-    HAL_NVIC_SetPriority(SPI1_IRQn, 5, 0);
-    HAL_NVIC_EnableIRQ(SPI1_IRQn);
-}
-
-void SPI1_IRQHandler(void)
-{
-    HAL_SPI_IRQHandler(&g_hspi);
-}
-
-void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi)
-{
-    if (hspi->Instance != SPI1)
-        return;
-    handle_request();
-    HAL_SPI_TransmitReceive_IT(&g_hspi, g_tx.bytes, g_rx.bytes, LP_FRAME_SIZE);
-}
-
-void HAL_SPI_ErrorCallback(SPI_HandleTypeDef *hspi)
-{
-    if (hspi->Instance != SPI1)
-        return;
-    // A CS glitch / short clock can abort a transfer; reset framing to a known
-    // idle frame and re-arm so the next CS assertion starts clean.
-    __HAL_SPI_CLEAR_OVRFLAG(&g_hspi);
-    build_idle();
-    HAL_SPI_TransmitReceive_IT(&g_hspi, g_tx.bytes, g_rx.bytes, LP_FRAME_SIZE);
+    // Start the circular DMA (polling mode — no transfer interrupt: the stream
+    // never stops, so there is nothing to service). It re-reads the ring forever,
+    // handing one byte to SPI1_TX per byte the master clocks.
+    HAL_DMA_Start(&hdma_spi1_tx, (uint32_t)g_stream,
+                  (uint32_t)&hspi1.Instance->DR, STREAM_CAP);
+    SET_BIT(hspi1.Instance->CR2, SPI_CR2_TXDMAEN);
+    __HAL_SPI_ENABLE(&hspi1);
 }
