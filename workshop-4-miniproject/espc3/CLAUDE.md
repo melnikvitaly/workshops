@@ -22,16 +22,31 @@ serial output.
 ## Architecture
 
 An SPI **bus scanner / hot-plug collector**, not a fixed point-to-point link.
-`app_main` (`src/main.cpp`) sets up the bus and one or more log sinks, then loops
-`collector.scan()` every `SCAN_PERIOD_MS`. Key design points — preserve them when
-editing:
+`app_main` (`src/main.cpp`) sets up the bus and one or more log sinks, then runs
+two independently-paced cadences: `collector.drainPresent()` continuously (no
+delay) to collect data, and `collector.probeAbsent()` every `SCAN_PERIOD_MS` to
+notice hot-plug. Key design points — preserve them when editing:
 
-1. **One device on the bus at a time** (`DataLogCollector::scan`). Each pass, for
-   every predefined CS pin, the collector attaches an SPI device, reads a block of
-   its log stream, then detaches. Because only one device is ever attached at
-   once, the number of scanned CS pins is *not* limited by the SPI host's
-   concurrent-device cap. Don't "optimize" this into keeping devices attached
-   without re-checking that cap.
+0. **Draining and hot-plug scanning are decoupled** (`DataLogCollector::drainPresent`
+   / `probeAbsent`). `drainPresent()` reads only the currently-present devices and
+   is meant to be called flat-out — while ≥1 device is present its SPI transfers
+   block the task and thereby yield the CPU, so the caller needs no delay; the
+   `main.cpp` loop only `vTaskDelay`s when *nothing* is present (to avoid spinning
+   an empty loop until the next probe). `probeAbsent()` reads only the currently-
+   absent pins and is called periodically. This keeps data latency/throughput off
+   the (rare) hot-plug cadence. Don't reintroduce a blanket per-pass delay around
+   draining, and don't move draining onto the slow probe cadence.
+
+1. **At most two devices attached, one transfer on the wire** (`DataLogCollector::sweep`,
+   shared by both entry points). Each sweep is pipelined: device `i`'s block is
+   queued and clocks on the wire via DMA (fire-and-forget) while device `i-1`'s
+   block is parsed, so `i` is attached before `i-1` is detached — at most two
+   devices attached at once, and only one transfer ever on the bus (the shared bus
+   serializes them). Two is within the C3's 3 hardware-CS slots, so the number of
+   scanned CS pins is still *not* limited by the SPI host's concurrent-device cap.
+   If you widen the pipeline (more in-flight transfers) or keep devices attached
+   across passes, re-check that cap and add one rx/transaction buffer per
+   additional in-flight slot.
 
 2. **One-way, best-effort streaming.** Slaves don't answer requests — the master
    only ever clocks dummy bytes and each slave continuously presents self-framed

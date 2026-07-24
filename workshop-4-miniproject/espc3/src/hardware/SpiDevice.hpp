@@ -1,6 +1,7 @@
 #pragma once
 #include <driver/spi_master.h>
 #include <driver/gpio.h>
+#include <freertos/FreeRTOS.h>
 #include <esp_err.h>
 #include <cstring>
 #include <cstdint>
@@ -60,5 +61,37 @@ public:
         t.tx_buffer = tx;
         t.rx_buffer = rx;
         return spi_device_transmit(_handle, &t);
+    }
+
+    // --- Queued (fire-and-forget) variant ------------------------------------
+    // These split transfer() into "start" and "reap" so the caller can do work
+    // (e.g. parse a previous block) while this one clocks on the wire via DMA.
+
+    // Start a full-duplex transfer without waiting for it to finish. `t` is the
+    // transaction descriptor; the driver keeps a pointer to it, so it MUST stay
+    // alive and untouched until the matching getResult() reaps it. tx/rx carry
+    // the same DMA-capable requirement as transfer(). Returns once the transfer
+    // is queued (it may still be clocking). queue_size is 1, so the caller must
+    // reap the previous transfer on this device before queuing another.
+    esp_err_t queue(spi_transaction_t* t, const uint8_t* tx, uint8_t* rx, size_t len)
+    {
+        if (!_handle)
+            return ESP_ERR_INVALID_STATE;
+        *t = spi_transaction_t{};
+        t->length    = len * 8; // ESP-IDF counts transaction length in bits
+        t->tx_buffer = tx;
+        t->rx_buffer = rx;
+        return spi_device_queue_trans(_handle, t, portMAX_DELAY);
+    }
+
+    // Wait for one previously queued transfer on this device to complete. Blocks
+    // until the DMA transfer finishes; the rx buffer passed to queue() is then
+    // filled with the received block.
+    esp_err_t getResult()
+    {
+        if (!_handle)
+            return ESP_ERR_INVALID_STATE;
+        spi_transaction_t* done = nullptr;
+        return spi_device_get_trans_result(_handle, &done, portMAX_DELAY);
     }
 };

@@ -194,7 +194,13 @@ int main(void)
 
   // Потокове зчитування сенсорів (ADC світла через TIM2+DMA, час з RTC) у
   // той самий SPI-потік. Має йти після MX_ADC1_Init/MX_I2C1_Init.
+  // У режимі LOGEMIT_DEBUG_SPI сенсорний потік вимкнено: інакше реальні пакети
+  // "LGHT"/"TIME" переписують налагоджувальну "пилку" 0x00..0xFF у SPI-кільці і
+  // рамп зникає. Так MISO залишається стабільним сигналом для перевірки ліній.
+  // Прибрати ці #if-guard'и для звичайної роботи (LOGEMIT_DEBUG_SPI = 0).
+#if !LOGEMIT_DEBUG_SPI
   SensorStream_Init();
+#endif
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -203,7 +209,10 @@ int main(void)
   {
     // Кожен помічник неблокуюче перевіряє свій таймер (HAL_GetTick) і
     // виконує роботу лише коли настав його період — деталі у USER CODE 0.
+#if !LOGEMIT_DEBUG_SPI
     SensorStream_Poll();  // ADC(DMA)+RTC -> записи "LGHT"/"TIME" у SPI-потік
+#endif
+    LogEmission_ActivityPoll();  // блимання світлодіода PC13 при SPI-обміні з майстром
     poll_light_log();  // архів освітлення в EEPROM (раз на годину)
     poll_i2c_scan();   // сканування шини I2C (кожні 10 с)
     poll_frame();      // оновлення кадру: кіт + годинник + адреси (раз на секунду)

@@ -83,6 +83,103 @@ static uint16_t stream_read_index(void)
     return (uint16_t)(STREAM_CAP - ndtr);
 }
 
+// ---------------------------------------------------------------------------
+// SPI-activity LED. Blinks while the master is clocking the stream.
+//
+// The TX path is free-running circular DMA with no per-byte/-packet interrupt,
+// so "bytes moved" can't be caught in a callback — instead we watch the DMA read
+// index advance. Every byte the master clocks out of us on MISO is one it
+// simultaneously clocks into us on MOSI, so a change in the read position means
+// SPI traffic in both directions (RX and TX at once). The LED is lit when traffic
+// is seen and released a short time after it stops, giving a visible activity
+// blink. Poll from the main loop (see LogEmission_ActivityPoll); it uses only
+// GPIO writes and HAL_GetTick, so it is also safe to call from an ISR.
+//
+// PC13 is the on-board LED of the STM32F401CCUx ("black pill") board and is
+// unused elsewhere here; it is active-low (drive the pin low to light it). The
+// pin is configured in LogEmission_Init so the whole SPI-slave feature stays
+// self-contained in this module.
+// ---------------------------------------------------------------------------
+#define ACT_LED_PORT   GPIOC
+#define ACT_LED_PIN    GPIO_PIN_13
+#define ACT_LED_ON()   HAL_GPIO_WritePin(ACT_LED_PORT, ACT_LED_PIN, GPIO_PIN_RESET)
+#define ACT_LED_OFF()  HAL_GPIO_WritePin(ACT_LED_PORT, ACT_LED_PIN, GPIO_PIN_SET)
+#define ACT_BLINK_MS   25u   // keep the LED lit this long after the last activity
+
+static uint16_t g_lastReadIdx = 0;  // DMA read index sampled at the previous poll
+static uint32_t g_lastActMs   = 0;  // tick of the last observed SPI activity
+static uint8_t  g_ledOn       = 0;  // current LED state (1 = lit)
+
+static void act_led_init(void)
+{
+    __HAL_RCC_GPIOC_CLK_ENABLE();
+    GPIO_InitTypeDef gi = {0};
+    gi.Pin   = ACT_LED_PIN;
+    gi.Mode  = GPIO_MODE_OUTPUT_PP;
+    gi.Pull  = GPIO_NOPULL;
+    gi.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(ACT_LED_PORT, &gi);
+    ACT_LED_OFF();
+    g_lastReadIdx = stream_read_index();
+}
+
+// ---------------------------------------------------------------------------
+// SPI RX (MOSI) capture — debug only. See LOGEMIT_DEBUG_SPI in the header.
+// Normally the slave never reads MOSI (the protocol is one-way MISO). For pin
+// bring-up we drain SPI1_RX with a second free-running circular DMA so the bytes
+// the master clocks in on MOSI land in RAM and can be watched in a debugger.
+// SPI1_RX is DMA2 Stream2 / Channel 3 on the STM32F401 (Stream3 = TX, Stream0 =
+// ADC), so it doesn't clash with the TX DMA or the ADC DMA. Polling mode, no IRQ.
+// ---------------------------------------------------------------------------
+#if LOGEMIT_DEBUG_SPI
+#define SPI_RX_DEBUG_LEN 64
+
+static uint8_t           g_spiRxDebug[SPI_RX_DEBUG_LEN];  // circular MOSI capture
+static DMA_HandleTypeDef hdma_spi1_rx;                    // hand-configured (not CubeMX)
+static volatile uint8_t  g_spiRxLast  = 0;               // last byte seen on MOSI
+static volatile uint32_t g_spiRxCount = 0;               // bytes captured since boot
+static uint16_t          g_rxLastIdx  = 0;               // DMA write index at last poll
+
+static void spi_rx_debug_init(void)
+{
+    __HAL_RCC_DMA2_CLK_ENABLE();
+    hdma_spi1_rx.Instance                 = DMA2_Stream2;
+    hdma_spi1_rx.Init.Channel             = DMA_CHANNEL_3;
+    hdma_spi1_rx.Init.Direction           = DMA_PERIPH_TO_MEMORY;
+    hdma_spi1_rx.Init.PeriphInc           = DMA_PINC_DISABLE;
+    hdma_spi1_rx.Init.MemInc              = DMA_MINC_ENABLE;
+    hdma_spi1_rx.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
+    hdma_spi1_rx.Init.MemDataAlignment    = DMA_MDATAALIGN_BYTE;
+    hdma_spi1_rx.Init.Mode                = DMA_CIRCULAR;
+    hdma_spi1_rx.Init.Priority            = DMA_PRIORITY_LOW;
+    hdma_spi1_rx.Init.FIFOMode            = DMA_FIFOMODE_DISABLE;
+    HAL_DMA_Init(&hdma_spi1_rx);
+    HAL_DMA_Start(&hdma_spi1_rx, (uint32_t)&hspi1.Instance->DR,
+                  (uint32_t)g_spiRxDebug, SPI_RX_DEBUG_LEN);
+    SET_BIT(hspi1.Instance->CR2, SPI_CR2_RXDMAEN);
+}
+
+// Refresh the "last byte / count" snapshot from the RX DMA write position.
+static void spi_rx_debug_poll(void)
+{
+    uint16_t ndtr = (uint16_t)__HAL_DMA_GET_COUNTER(&hdma_spi1_rx);
+    uint16_t widx = (uint16_t)(SPI_RX_DEBUG_LEN - ndtr);   // next slot the DMA will fill
+    if (widx != g_rxLastIdx)
+    {
+        uint16_t last = (uint16_t)((widx + SPI_RX_DEBUG_LEN - 1) % SPI_RX_DEBUG_LEN);
+        g_spiRxLast   = g_spiRxDebug[last];
+        g_spiRxCount += (uint16_t)((widx - g_rxLastIdx + SPI_RX_DEBUG_LEN) % SPI_RX_DEBUG_LEN);
+        g_rxLastIdx   = widx;
+    }
+}
+
+uint32_t LogEmission_DebugRx(uint8_t *lastByte)
+{
+    if (lastByte) *lastByte = g_spiRxLast;
+    return g_spiRxCount;
+}
+#endif // LOGEMIT_DEBUG_SPI
+
 // Append n bytes into the ring, wrapping. If this overtakes the master's read
 // position we are overwriting unread data — count it as an overflow.
 static void stream_write(const uint8_t *p, uint16_t n)
@@ -143,11 +240,39 @@ void LogEmission_AddText(const char objectId[LOGEMIT_OBJID_LEN], const char *tex
     LogEmission_AddEntry(objectId, LOGVT_STR, text, (uint8_t)n);
 }
 
+void LogEmission_ActivityPoll(void)
+{
+#if LOGEMIT_DEBUG_SPI
+    spi_rx_debug_poll();   // refresh the captured-MOSI debug snapshot
+#endif
+
+    uint16_t r = stream_read_index();
+    if (r != g_lastReadIdx)             // master clocked bytes since the last poll
+    {
+        g_lastReadIdx = r;
+        g_lastActMs   = HAL_GetTick();
+        if (!g_ledOn) { ACT_LED_ON(); g_ledOn = 1; }
+    }
+    else if (g_ledOn && (HAL_GetTick() - g_lastActMs) >= ACT_BLINK_MS)
+    {
+        ACT_LED_OFF();                  // no traffic for ACT_BLINK_MS -> release
+        g_ledOn = 0;
+    }
+}
+
 void LogEmission_Init(void)
 {
     // SPI1 (MX_SPI1_Init) and its circular TX DMA (MX_DMA_Init + HAL_SPI_MspInit,
     // handle `hdma_spi1_tx`) are already initialised by CubeMX before this call.
 
+#if LOGEMIT_DEBUG_SPI
+    // Debug: fill the whole ring with a repeating 0x00..0xFF ramp so MISO shows an
+    // obvious incrementing sawtooth on a scope (no protocol framing — the master
+    // will not parse packets while this is on). See LOGEMIT_DEBUG_SPI in header.
+    for (uint16_t i = 0; i < STREAM_CAP; ++i)
+        g_stream[i] = (uint8_t)i;
+    g_write = 0;
+#else
     // Pre-fill the whole ring with back-to-back NoEntry packets so the stream is
     // valid from the first clock. Any trailing bytes that cannot hold a full
     // packet are zeroed (non-MAGIC: the master skips them while resyncing).
@@ -162,6 +287,7 @@ void LogEmission_Init(void)
     if (w < STREAM_CAP)
         memset(&g_stream[w], 0, (uint16_t)(STREAM_CAP - w));
     g_write = 0;
+#endif
 
     // Start the circular DMA (polling mode — no transfer interrupt: the stream
     // never stops, so there is nothing to service). It re-reads the ring forever,
@@ -170,4 +296,13 @@ void LogEmission_Init(void)
                   (uint32_t)&hspi1.Instance->DR, STREAM_CAP);
     SET_BIT(hspi1.Instance->CR2, SPI_CR2_TXDMAEN);
     __HAL_SPI_ENABLE(&hspi1);
+
+#if LOGEMIT_DEBUG_SPI
+    // Debug: also drain SPI1_RX so the master's MOSI bytes are captured (LOGEMIT_DEBUG_SPI).
+    spi_rx_debug_init();
+#endif
+
+    // Configure the on-board activity LED (PC13) now that the DMA is running, so
+    // the first read-index sample matches the live stream. See LogEmission_ActivityPoll.
+    act_led_init();
 }

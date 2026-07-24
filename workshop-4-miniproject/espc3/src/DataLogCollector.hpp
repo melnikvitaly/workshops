@@ -1,6 +1,7 @@
 #pragma once
 #include "hardware/SpiBus.hpp"
 #include "hardware/SpiDevice.hpp"
+#include "hardware/StatusLed.hpp"
 #include "logs/LogsTarget.hpp"
 #include "LogProtocol.hpp"
 #include <esp_log.h>
@@ -8,12 +9,22 @@
 #include <esp_timer.h>
 #include <cstring>
 
-// Polls a predefined set of CS pins. Each scan() pass, for every pin, it
-// attaches a device just long enough to clock one block of its log stream, then
-// detaches — so at most one device is on the bus at any instant and the SPI
-// host's concurrent-device limit is never a concern no matter how many pins are
-// listed. Transitions (a device appearing on or vanishing from a pin) are
-// logged, and per-pin record counts are kept.
+// Polls a predefined set of CS pins, attaching a device just long enough to
+// clock one block of its log stream, then detaching. Presence detection and data
+// collection are split into two independently-paced entry points:
+//
+//   drainPresent() — fast path, call continuously with no delay: drains a block
+//                    from every currently-present device (marks REMOVED ones).
+//   probeAbsent()  — slow path, call periodically (e.g. 1 Hz): probes only the
+//                    currently-absent pins for a newly plugged device (ADDED).
+//
+// Splitting them lets data draining run flat-out (low latency, no drops) while
+// hot-plug scanning — which changes rarely — stays cheap and periodic. Both share
+// one pipelined sweep(): device i's block is clocked on the wire (DMA, fire-and-
+// forget) while device (i-1)'s block is parsed, so at most TWO devices are
+// attached at once and only ONE transfer is ever on the wire. Two attached stays
+// within the SPI host's concurrent-device limit no matter how many pins are
+// listed. Transitions are logged, and per-pin record counts are kept.
 //
 // The wire protocol is a best-effort one-way stream (see LogProtocol.hpp): the
 // master only clocks dummy bytes; the slave feeds self-framed packets from a
@@ -53,31 +64,34 @@ private:
     LogsTarget* _target[MAX_TARGETS];
     int         _targetCount = 0;
 
+    // Optional activity LED: pulsed once per SPI block transfer for a brief
+    // "bytes on the wire" blink. Null = no indication (unchanged behaviour).
+    StatusLed*  _led = nullptr;
+
     static constexpr const char* TAG = "COLLECTOR";
 
-    // Clock COLLECT_BLOCK bytes out of the device (dummy 0xFF on MOSI) and read
-    // its MISO stream into a DMA-capable buffer. Both scratch buffers are static
-    // and shared across pins — safe because scan() runs on a single task.
-    esp_err_t readBlock(SpiDevice& d, const uint8_t*& rx)
+    // Fill the shared MOSI scratch buffer once. See the note in scan().
+    static void initTxPattern(uint8_t* tx, size_t n)
     {
-        static DMA_ATTR uint8_t tx[COLLECT_BLOCK];
-        static DMA_ATTR uint8_t rxbuf[COLLECT_BLOCK];
-        static bool txInit = false;
-        if (!txInit) { memset(tx, 0xFF, sizeof(tx)); txInit = true; }
-
-        esp_err_t r = d.transfer(tx, rxbuf, COLLECT_BLOCK);
-        rx = rxbuf;
-        return r;
+        // Normal operation: the protocol is one-way (slaves ignore MOSI), so the
+        // master just clocks dummy 0xFF bytes to generate SCK. For pin bring-up
+        // you can instead fill this with a recognizable non-constant pattern
+        // (e.g. 0xDE 0xAD 0xBE 0xEF repeating) to make MOSI visible on a logic
+        // analyzer; slaves still ignore it, so parsing is unaffected.
+        memset(tx, 0xFF, n);
     }
 
-    // Read one block, parse every complete packet out of the accumulator, and
-    // dispatch new ENTRY records. Returns true if any valid packet was seen
-    // (i.e. a live slave is present on this pin).
-    bool collect(int i)
+    // Parse one freshly received block for device i: append it to the per-device
+    // accumulator, pull every complete packet out, and dispatch new ENTRY
+    // records. Returns true if any valid packet was seen (a live slave is on this
+    // pin). `rx` points at the DMA buffer the block was clocked into by queue().
+    bool parseBlock(int i, const uint8_t* rx)
     {
-        const uint8_t* rx = nullptr;
-        if (readBlock(_dev[i], rx) != ESP_OK)
-            return false;
+        // While a pin has been reading as absent, keep its parse state clear so
+        // the first block from a newly plugged device starts clean (no stale
+        // leftover bytes and no stale seq high-water mark).
+        if (!_present[i])
+            resetDevice(i);
 
         // Append the fresh block to whatever straddled the last read. _accLen is
         // always < MAX_PACKET after a parse, so this never overflows ACC_CAP.
@@ -176,6 +190,134 @@ private:
         _dropped[i] = 0;
     }
 
+    // Reap device i's previously queued transfer, detach it, then parse the block
+    // out of `rx` and update presence (logging ADDED/REMOVED transitions). Called
+    // for the pipeline's trailing device while the next device's block is already
+    // clocking on the wire.
+    void finishTransfer(int i, const uint8_t* rx)
+    {
+        esp_err_t rr = _dev[i].getResult();   // block until this block's DMA done
+        _dev[i].detach();
+
+        bool present;
+        if (rr != ESP_OK)
+        {
+            ESP_LOGE(TAG, "CS%d: transfer failed: %s",
+                     (int)_pin[i], esp_err_to_name(rr));
+            present = false;
+        }
+        else
+        {
+            present = parseBlock(i, rx);
+        }
+
+        if (present && !_present[i])
+            ESP_LOGI(TAG, "Device ADDED on CS%d", (int)_pin[i]);
+        else if (!present && _present[i])
+            ESP_LOGI(TAG, "Device REMOVED on CS%d", (int)_pin[i]);
+        _present[i] = present;
+    }
+
+    // Pipelined (fire-and-forget) sweep over the subset of pins selected by
+    // wantPresent: pass true to drain the currently-present devices, false to
+    // probe the currently-absent pins for hot-plug. Device i's block clocks on
+    // the wire via DMA while device (i-1)'s block is parsed; finishTransfer()
+    // updates each pin's presence (logging ADDED/REMOVED). Returns the number of
+    // pins reading as present after the sweep.
+    //
+    // Concurrency invariant (re-checked against the host's device cap, per the
+    // project's design notes): only ONE transfer is ever on the wire (single
+    // shared bus, serialized by the driver), and AT MOST TWO devices are attached
+    // at once — device i is attached before device (i-1) is detached inside
+    // finishTransfer(). Two is well within the C3's 3 hardware-CS slots.
+    int sweep(bool wantPresent)
+    {
+        // Shared DMA scratch. tx is constant and read-only, so both in-flight
+        // transactions can point at it; rx is double-buffered (ping-pong) so
+        // parsing the previous block never races the DMA filling the next one.
+        // Static and shared across pins — safe because the collector runs on one
+        // task (both drainPresent() and probeAbsent() funnel through here).
+        static DMA_ATTR uint8_t tx[COLLECT_BLOCK];
+        static DMA_ATTR uint8_t rx[2][COLLECT_BLOCK];
+        static bool txInit = false;
+        if (!txInit)
+        {
+            initTxPattern(tx, sizeof(tx));
+            txInit = true;
+        }
+
+        // Transaction descriptors for the two in-flight slots. They must outlive
+        // their transfers, so they live for the whole sweep. They ping-pong in
+        // lockstep with rx[]: at most two are unreaped at any instant. buf only
+        // advances on devices actually queued, so skipped pins don't disturb the
+        // ping-pong parity.
+        spi_transaction_t trans[2];
+
+        int inflightIdx = -1;   // device with a queued, not-yet-reaped transfer
+        int inflightBuf = 0;    // which rx[]/trans[] slot it occupies
+        int buf         = 0;    // next ping-pong slot to use
+
+        for (int i = 0; i < _count; ++i)
+        {
+            if (_present[i] != wantPresent)   // not in this sweep's subset
+                continue;
+
+            // Start device i's transfer without waiting for it (fire-and-forget).
+            bool queued = false;
+            esp_err_t ar = _dev[i].attach();
+            if (ar != ESP_OK)
+            {
+                ESP_LOGE(TAG, "CS%d: attach failed: %s",
+                         (int)_pin[i], esp_err_to_name(ar));
+            }
+            else
+            {
+                if (_led)                 // bytes are about to be clocked out
+                    _led->pulse();
+                esp_err_t qr =
+                    _dev[i].queue(&trans[buf], tx, rx[buf], COLLECT_BLOCK);
+                if (qr != ESP_OK)
+                {
+                    ESP_LOGE(TAG, "CS%d: queue failed: %s",
+                             (int)_pin[i], esp_err_to_name(qr));
+                    _dev[i].detach();
+                }
+                else
+                {
+                    queued = true;
+                }
+            }
+
+            // While device i clocks on the wire, reap + parse the previous one.
+            if (inflightIdx >= 0)
+                finishTransfer(inflightIdx, rx[inflightBuf]);
+
+            // Device i (if it started) becomes the new in-flight slot. Its buffer
+            // was freed one queued device ago, when its same-parity predecessor
+            // was reaped above.
+            if (queued)
+            {
+                inflightIdx = i;
+                inflightBuf = buf;
+                buf ^= 1;
+            }
+            else
+            {
+                inflightIdx = -1;
+            }
+        }
+
+        // Drain the final in-flight transfer.
+        if (inflightIdx >= 0)
+            finishTransfer(inflightIdx, rx[inflightBuf]);
+
+        int present = 0;
+        for (int i = 0; i < _count; ++i)
+            if (_present[i])
+                ++present;
+        return present;
+    }
+
 public:
     DataLogCollector(SpiBus& bus, const gpio_num_t* csPins, int count,
                      int clockHz = 1'000'000)
@@ -210,36 +352,23 @@ public:
         return true;
     }
 
-    // One full sweep over all predefined CS pins.
-    void scan()
-    {
-        for (int i = 0; i < _count; ++i)
-        {
-            esp_err_t r = _dev[i].attach();
-            if (r != ESP_OK)
-            {
-                ESP_LOGE(TAG, "CS%d: attach failed: %s",
-                         (int)_pin[i], esp_err_to_name(r));
-                continue;
-            }
+    // Attach an activity LED that blinks briefly on every SPI block transfer.
+    // Optional — the collector works the same without one.
+    void setStatusLed(StatusLed* led) { _led = led; }
 
-            // While a pin reads as absent, keep its parse state clear so the
-            // first block from a newly plugged device starts clean (no stale
-            // leftover bytes and no stale seq high-water mark).
-            if (!_present[i])
-                resetDevice(i);
+    // Fast path — call as often as you like, with no delay in between. Drains
+    // one block from every currently-present device (pipelined). A device that
+    // stops presenting valid packets is marked REMOVED here. Returns the number
+    // of devices still present. While ≥1 device is present each call performs SPI
+    // transfers, and getResult() blocks the task during each one, so a tight
+    // caller loop naturally yields the CPU — no explicit delay needed.
+    int drainPresent() { return sweep(true); }
 
-            const bool present = collect(i);
-
-            if (present && !_present[i])
-                ESP_LOGI(TAG, "Device ADDED on CS%d", (int)_pin[i]);
-            else if (!present && _present[i])
-                ESP_LOGI(TAG, "Device REMOVED on CS%d", (int)_pin[i]);
-            _present[i] = present;
-
-            _dev[i].detach();
-        }
-    }
+    // Slow path — call periodically (e.g. once per second). Probes only the
+    // currently-absent pins for a newly plugged device, marking it ADDED. Kept
+    // separate from drainPresent() so hot-plug detection (rare) does not gate
+    // continuous draining (constant). Returns the number of devices present.
+    int probeAbsent() { return sweep(false); }
 
     int  deviceCount() const      { return _count; }
     bool present(int i) const     { return _present[i]; }

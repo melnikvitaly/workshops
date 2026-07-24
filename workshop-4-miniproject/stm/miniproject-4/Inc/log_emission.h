@@ -20,6 +20,20 @@
 #include "stm32f4xx_hal.h"
 #include <stdint.h>
 
+// ---------------------------------------------------------------------------
+// SPI pin-debug mode. Set to 1 to replace the normal protocol stream with fixed,
+// easy-to-scope test data so the physical SPI pins can be verified with a logic
+// analyzer / debugger:
+//   * MISO (slave -> master): the TX ring is filled with a repeating 0x00..0xFF
+//     ramp instead of protocol packets — an unmistakable incrementing sawtooth
+//     that also confirms MSB-first bit order and that MISO/SCK are alive.
+//   * MOSI (master -> slave): SPI1_RX is captured by a second circular DMA; the
+//     most recent master byte and a running count are exposed via
+//     LogEmission_DebugRx() for watching in the debugger.
+// With this ON the master will NOT see valid packets (it just clocks the ramp);
+// it is a hardware bring-up aid. Set back to 0 for normal operation.
+#define LOGEMIT_DEBUG_SPI 0
+
 // Value types carried by a DataEntry. Numeric types are stored little-endian;
 // LOGVT_STR is raw chars; LOGVT_DATETIME is a 6-byte LogDateTime. Mirror of
 // logproto::ValueType on the master.
@@ -64,5 +78,20 @@ void LogEmission_AddU32(const char objectId[LOGEMIT_OBJID_LEN], uint32_t value);
 void LogEmission_AddText(const char objectId[LOGEMIT_OBJID_LEN], const char *text);
 void LogEmission_AddDateTime(const char objectId[LOGEMIT_OBJID_LEN],
                              const LogDateTime *dt);
+
+// Drive the SPI-activity LED (on-board PC13). Detects bytes moving over SPI by
+// watching the free-running TX DMA advance (each clocked byte is both received on
+// MOSI and sent on MISO), lighting the LED on traffic and releasing it a short
+// time after it stops. Cheap (GPIO writes + HAL_GetTick); call it from the main
+// loop. Safe to call from an ISR too — it neither blocks nor delays.
+void LogEmission_ActivityPoll(void);
+
+#if LOGEMIT_DEBUG_SPI
+// Debug: report SPI RX (MOSI) activity captured from the master. Writes the most
+// recent byte the master clocked in to *lastByte (if non-NULL) and returns a
+// running count of captured bytes. Watch these in a debugger to confirm MOSI is
+// live end-to-end (master request bytes actually reaching the slave).
+uint32_t LogEmission_DebugRx(uint8_t *lastByte);
+#endif
 
 #endif // LOG_EMISSION_H
