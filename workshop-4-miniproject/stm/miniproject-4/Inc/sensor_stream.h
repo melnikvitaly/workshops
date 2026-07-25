@@ -5,9 +5,11 @@
 //
 //  * Light: ADC1 (PA0) sampled by TIM2 at LIGHT_SAMPLE_RATE_HZ into a circular
 //    DMA buffer. Each half of the buffer, when full, is averaged into one
-//    "LGHT" DataEntry. The DMA half/full interrupts only set a flag; the
-//    averaging and the LogEmission enqueue happen in SensorStream_Poll() so the
-//    log producer stays single-writer.
+//    "LGHT" DataEntry carrying the raw 12-bit average (LOGVT_U16, 0..4095) —
+//    not a percent, which quantised real light changes away at ~41 counts per
+//    step. The DMA half/full interrupts only set a flag; the averaging and the
+//    LogEmission enqueue happen in SensorStream_Poll() so the log producer stays
+//    single-writer.
 //  * Time: the DS1307 RTC is read on a software timer (RTC_STREAM_INTERVAL_MS)
 //    and pushed as a "TIME" DataEntry — the RTC is just another sensor.
 //
@@ -28,5 +30,10 @@ void SensorStream_Poll(void);
 
 // Most recent averaged light level (0..100 %), e.g. for the EEPROM logger.
 uint8_t SensorStream_LatestLightPercent(void);
+
+// Most recent averaged light level in raw ADC counts (0..4095) — the same value
+// that goes into the "LGHT" packet. Use this for display; the percent above is
+// only kept for the one-byte-per-sample EEPROM archive.
+uint16_t SensorStream_LatestLightRaw(void);
 
 #endif // SENSOR_STREAM_H

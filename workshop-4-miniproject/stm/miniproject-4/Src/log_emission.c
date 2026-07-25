@@ -84,6 +84,46 @@ static uint16_t stream_read_index(void)
 }
 
 // ---------------------------------------------------------------------------
+// Throughput counters (packets queued, bytes clocked out) for the OLED.
+//
+// The read index alone cannot measure throughput: it wraps every STREAM_CAP
+// bytes, which at 1 MHz is ~16 ms, and the main loop can be away far longer than
+// that (one SSD1306 flush is ~1 KB over 100 kHz I2C ≈ 100 ms, i.e. several laps).
+// A modular delta would silently drop whole laps. So the TX DMA's
+// transfer-complete interrupt counts laps instead, and the byte total is just
+// laps * STREAM_CAP. That is the only reason this DMA runs with an interrupt at
+// all; the stream itself still needs no servicing.
+// ---------------------------------------------------------------------------
+static volatile uint32_t g_pktTotal = 0;  // ENTRY packets queued since boot
+static volatile uint32_t g_dmaLaps  = 0;  // full ring laps completed (ISR-owned)
+
+static uint32_t g_windowMs      = 0;      // start of the current 1 s rate window
+static uint32_t g_pktAtWindow   = 0;
+static uint32_t g_bytesAtWindow = 0;
+static uint32_t g_pktRate       = 0;      // packets/s over the last full window
+static uint32_t g_byteRate      = 0;      // bytes/s over the last full window
+
+// DMA2 Stream3 transfer-complete: one more lap of the ring has been clocked out.
+// Circular mode, so the stream keeps running; this only bumps the counter.
+static void stream_tx_lap_cb(DMA_HandleTypeDef *hdma)
+{
+    (void)hdma;
+    ++g_dmaLaps;
+}
+
+// Bytes handed to SPI1 since boot, counted in whole ring laps. Deliberately
+// ignores the partial lap in progress: mixing the lap count with the live read
+// index means the two can disagree by a whole ring if a lap lands between the two
+// reads, which needs a retry loop to paper over. Counting laps alone is a single
+// atomic read of an aligned 32-bit word, and the cost is only granularity —
+// STREAM_CAP bytes, i.e. the rate below is quantised to ~2 KB/s (±1.6 % at the
+// ~125 KB/s this link runs at). The error does not accumulate: laps are exact.
+static uint32_t stream_bytes_total(void)
+{
+    return g_dmaLaps * (uint32_t)STREAM_CAP;
+}
+
+// ---------------------------------------------------------------------------
 // SPI-activity LED. Blinks while the master is clocking the stream.
 //
 // The TX path is free-running circular DMA with no per-byte/-packet interrupt,
@@ -218,6 +258,7 @@ void LogEmission_AddEntry(const char objectId[LOGEMIT_OBJID_LEN],
     uint16_t len    = build_packet(pkt, status, seq, g_dropped, objectId,
                                    valueType, (const uint8_t *)payload, payloadLen);
     stream_write(pkt, len);
+    ++g_pktTotal;
 }
 
 void LogEmission_AddU32(const char objectId[LOGEMIT_OBJID_LEN], uint32_t value)
@@ -246,18 +287,56 @@ void LogEmission_ActivityPoll(void)
     spi_rx_debug_poll();   // refresh the captured-MOSI debug snapshot
 #endif
 
-    uint16_t r = stream_read_index();
+    uint16_t r   = stream_read_index();
+    uint32_t now = HAL_GetTick();
+
     if (r != g_lastReadIdx)             // master clocked bytes since the last poll
     {
         g_lastReadIdx = r;
-        g_lastActMs   = HAL_GetTick();
+        g_lastActMs   = now;
         if (!g_ledOn) { ACT_LED_ON(); g_ledOn = 1; }
     }
-    else if (g_ledOn && (HAL_GetTick() - g_lastActMs) >= ACT_BLINK_MS)
+    else if (g_ledOn && (now - g_lastActMs) >= ACT_BLINK_MS)
     {
         ACT_LED_OFF();                  // no traffic for ACT_BLINK_MS -> release
         g_ledOn = 0;
     }
+
+    // Close the rate window once a second. dt is measured rather than assumed to
+    // be 1000 ms: the main loop can overshoot (a blocking OLED flush), and
+    // dividing by the real elapsed time keeps the rate honest.
+    if (g_windowMs == 0)
+    {
+        g_windowMs      = now;
+        g_pktAtWindow   = g_pktTotal;
+        g_bytesAtWindow = stream_bytes_total();
+    }
+    else if ((uint32_t)(now - g_windowMs) >= 1000u)
+    {
+        uint32_t dtMs  = now - g_windowMs;
+        uint32_t pkt   = g_pktTotal;
+        uint32_t bytes = stream_bytes_total();
+
+        g_pktRate  = ((pkt - g_pktAtWindow) * 1000u) / dtMs;
+        // 64-bit intermediate: the byte delta can reach ~125 000 per second, and
+        // after a long stall (delta * 1000) would overflow 32 bits.
+        g_byteRate = (uint32_t)(((uint64_t)(bytes - g_bytesAtWindow) * 1000u) / dtMs);
+
+        g_windowMs      = now;
+        g_pktAtWindow   = pkt;
+        g_bytesAtWindow = bytes;
+    }
+}
+
+void LogEmission_GetStats(LogEmitStats *out)
+{
+    if (!out)
+        return;
+    out->packetsPerSec = g_pktRate;
+    out->bytesPerSec   = g_byteRate;
+    out->totalPackets  = g_pktTotal;
+    out->totalBytes    = stream_bytes_total();
+    out->dropped       = g_dropped;
 }
 
 void LogEmission_Init(void)
@@ -289,11 +368,16 @@ void LogEmission_Init(void)
     g_write = 0;
 #endif
 
-    // Start the circular DMA (polling mode — no transfer interrupt: the stream
-    // never stops, so there is nothing to service). It re-reads the ring forever,
-    // handing one byte to SPI1_TX per byte the master clocks.
-    HAL_DMA_Start(&hdma_spi1_tx, (uint32_t)g_stream,
-                  (uint32_t)&hspi1.Instance->DR, STREAM_CAP);
+    // Start the circular DMA. It re-reads the ring forever, handing one byte to
+    // SPI1_TX per byte the master clocks — the stream never stops and needs no
+    // servicing. The transfer-complete interrupt is enabled purely to count laps
+    // for the throughput stats (see stream_bytes_total); DMA2_Stream3_IRQn is
+    // already NVIC-enabled by MX_DMA_Init and dispatched in stm32f4xx_it.c.
+    hdma_spi1_tx.XferCpltCallback     = stream_tx_lap_cb;
+    hdma_spi1_tx.XferHalfCpltCallback = NULL;  // half-transfer IRQ stays off
+    hdma_spi1_tx.XferErrorCallback    = NULL;
+    HAL_DMA_Start_IT(&hdma_spi1_tx, (uint32_t)g_stream,
+                     (uint32_t)&hspi1.Instance->DR, STREAM_CAP);
     SET_BIT(hspi1.Instance->CR2, SPI_CR2_TXDMAEN);
     __HAL_SPI_ENABLE(&hspi1);
 

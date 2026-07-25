@@ -79,6 +79,23 @@ void LogEmission_AddText(const char objectId[LOGEMIT_OBJID_LEN], const char *tex
 void LogEmission_AddDateTime(const char objectId[LOGEMIT_OBJID_LEN],
                              const LogDateTime *dt);
 
+// Throughput snapshot for diagnostics/display. The two rates are recomputed once
+// a second by LogEmission_ActivityPoll() over the actual elapsed time, so they
+// stay honest even when the main loop overshoots (e.g. a blocking OLED flush).
+typedef struct {
+    uint32_t packetsPerSec;  // DataEntries queued in the last full window
+    uint32_t bytesPerSec;    // bytes the TX DMA handed to SPI1 in that window
+    uint32_t totalPackets;   // DataEntries queued since boot
+    // Bytes clocked out since boot, counted in whole ring laps — the partial lap
+    // in progress is not included, so this trails the truth by up to one ring and
+    // the rate above is quantised to that step. Wraps at 2^32 (~9 h at 1 MHz).
+    uint32_t totalBytes;
+    uint16_t dropped;        // ring-overflow events reported to the master
+} LogEmitStats;
+
+// Copy the latest throughput snapshot into *out (no-op if out is NULL).
+void LogEmission_GetStats(LogEmitStats *out);
+
 // Drive the SPI-activity LED (on-board PC13). Detects bytes moving over SPI by
 // watching the free-running TX DMA advance (each clocked byte is both received on
 // MOSI and sent on MISO), lighting the LED on traffic and releasing it a short

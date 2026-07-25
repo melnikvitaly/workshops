@@ -21,7 +21,6 @@
 #include "ssd1306.h"       // OLED дисплей (0x3C)
 #include "text_renderer.h" // малює годинник/адреси шрифтом 5x7
 #include "i2c_scanner.h"   // сканер шини I2C
-#include "cat.h"           // мордочка кота на дисплеї
 #include "eeprom.h"        // журнал у зовнішній EEPROM (0x50)
 #include "adc.h"           // вимірювання освітлення через АЦП
 #include "log_emission.h"  // SPI-slave: віддає Data Logs ESP32-майстру
@@ -63,16 +62,17 @@ uint16_t current_address = 0;
 Ssd1306  oled;                 // готовність дисплея зберігає сам драйвер (oled.ready)
 uint32_t last_scan_time = 0;   // коли востаннє сканували шину
 uint32_t last_frame_time = 0;  // коли востаннє оновлювали кадр на екрані
-int16_t  ear_tilt = 0;         // чергуємо -> вуха ворушаться
 
-// Рядки одного кадру (показуємо на екрані щокадру). Шрифт має лише
-// цифри/A-F/x/':'/пробіл, тож стан I2C-шини показуємо у hex.
+// Рядки одного кадру (показуємо на екрані щокадру). Стан I2C-шини показуємо у
+// hex — так само, як його друкує сканер.
 typedef struct {
     char devices[DEVICES_STR_LEN];  // "0x3C 0x68 ..." — результат сканування
     char clock[CLOCK_STR_LEN];      // "HH:MM:SS" — час з RTC
+    char light[LIGHT_STR_LEN];      // "L<АЦП>" — сире значення освітлення
+    char rates[RATES_STR_LEN];      // "P<пакетів/с> B<байтів/с>"
 } FrameData;
 
-FrameData frame = { "0x00", "--:--:--" };  // плейсхолдери до першого скану/читання
+FrameData frame = { "0x00", "--:--:--", "L----", "P- B-" };  // до першого виміру
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -119,14 +119,15 @@ static void poll_i2c_scan(void) {
     I2CScanner_ScanToString(&hi2c1, frame.devices, sizeof(frame.devices), MAX_DEVICES_SHOWN);
 }
 
-// Намалювати один кадр: кіт + годинник зверху + адреси знайдених пристроїв.
+// Намалювати один кадр: годинник + адреси пристроїв + освітлення + темпи SPI.
+// Розкладку (Y та масштаб кожного рядка) задано в config.h.
 static void render_frame(void) {
-    // Нахил вух чергується щокадру -> вуха ворушаться (стан між викликами).
-    ear_tilt = (ear_tilt == 0) ? EAR_TILT_MAX : 0;  // проста анімація вух
-    Cat_Draw(&oled, CAT_CX, CAT_CY, CAT_R, ear_tilt, /*flush=*/0);
+    SSD1306_Clear(&oled, 0x00);   // чистимо буфер: далі домальовуємо всі рядки
 
     Text_DrawTextCentered(&oled, CLOCK_Y, frame.clock, CLOCK_SCALE);        // годинник зверху
     Text_DrawTextCentered(&oled, DEVICES_Y, frame.devices, DEVICES_SCALE);  // адреси під ним
+    Text_DrawTextCentered(&oled, LIGHT_Y, frame.light, LIGHT_SCALE);        // освітлення (АЦП)
+    Text_DrawTextCentered(&oled, RATES_Y, frame.rates, RATES_SCALE);        // темпи SPI-потоку
     SSD1306_Flush(&oled);
 }
 
@@ -139,6 +140,17 @@ static void poll_frame(void) {
 
     // frame.clock лишається без змін, якщо RTC не відповів (показуємо старий час).
     DS1307_ReadTimeString(&hi2c1, frame.clock, sizeof(frame.clock));
+
+    // L = сире значення АЦП світла (0..4095, те саме, що йде в пакет "LGHT").
+    snprintf(frame.light, sizeof(frame.light), "L%u",
+             (unsigned)SensorStream_LatestLightRaw());
+
+    // P = скільки пакетів поставлено в потік за останню секунду,
+    // B = скільки байтів DMA віддав у SPI1 за ту саму секунду.
+    LogEmitStats st;
+    LogEmission_GetStats(&st);
+    snprintf(frame.rates, sizeof(frame.rates), "P%u B%u",
+             (unsigned)st.packetsPerSec, (unsigned)st.bytesPerSec);
 
     if (oled.ready) {
         render_frame();
