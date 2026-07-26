@@ -63,16 +63,23 @@ Ssd1306  oled;                 // готовність дисплея збері
 uint32_t last_scan_time = 0;   // коли востаннє сканували шину
 uint32_t last_frame_time = 0;  // коли востаннє оновлювали кадр на екрані
 
+// Скільки разів зривався обмін з дисплеєм по I2C (таймаут/NACK/зайнята шина).
+// Показуємо на екрані як "E<n>": нуль, що тримається, означає, що запасу за
+// часом вистачає; зростання — що шина на межі. Обмежене згори, щоб рядок
+// лічильників не розповзався по ширині.
+#define OLED_FAIL_MAX 9999u
+uint32_t oled_fail_count = 0;
+
 // Рядки одного кадру (показуємо на екрані щокадру). Стан I2C-шини показуємо у
 // hex — так само, як його друкує сканер.
 typedef struct {
     char devices[DEVICES_STR_LEN];  // "0x3C 0x68 ..." — результат сканування
     char clock[CLOCK_STR_LEN];      // "HH:MM:SS" — час з RTC
     char light[LIGHT_STR_LEN];      // "L<АЦП>" — сире значення освітлення
-    char rates[RATES_STR_LEN];      // "P<пакетів/с> B<байтів/с>"
+    char rates[RATES_STR_LEN];      // "P<пакетів/с> E<збоїв I2C> <кбіт/с>kb"
 } FrameData;
 
-FrameData frame = { "0x00", "--:--:--", "L----", "P- B-" };  // до першого виміру
+FrameData frame = { "0x00", "--:--:--", "L----", "P- E0 -kb" };  // до першого виміру
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -119,6 +126,77 @@ static void poll_i2c_scan(void) {
     I2CScanner_ScanToString(&hi2c1, frame.devices, sizeof(frame.devices), MAX_DEVICES_SHOWN);
 }
 
+// I2C1 сидить на PB6 (SCL) і PB7 (SDA), AF4, відкритий стік (див. HAL_I2C_MspInit).
+#define I2C_SCL_PIN   GPIO_PIN_6
+#define I2C_SDA_PIN   GPIO_PIN_7
+#define I2C_GPIO_PORT GPIOB
+
+// Груба затримка на півтакту (~10 мкс на 16 МГц) — це аварійне звільнення шини,
+// а не робочий обмін, тож точність не потрібна, аби лиш було не швидше 100 кГц.
+static void i2c_bit_delay(void) {
+    for (volatile int i = 0; i < 20; ++i) {
+        __NOP();
+    }
+}
+
+// Звільнити шину, яку тримає завислий раб.
+//
+// Якщо обмін обірвався посеред байта (таймаут без STOP), раб лишається чекати
+// решту тактів і тримає SDA притиснутою до землі. Скидання МК тут не допомагає
+// НІЯК: раб не бачив скидання і не має про нього поняття — саме тому дисплей
+// оживає лише після зняття живлення. Так само не рятує і SWRST у HAL_I2C_DeInit:
+// він скидає периферію STM32, а не раба.
+//
+// Єдиний спосіб з боку майстра — доклацати за нього: перевести SCL у звичайний
+// GPIO і видати до 9 тактів (байт + ACK), доки SDA не відпустять, а тоді вручну
+// зробити STOP (SDA піднімається, поки SCL угорі).
+static void i2c_bus_release(void) {
+    GPIO_InitTypeDef gi = {0};
+    __HAL_RCC_GPIOB_CLK_ENABLE();
+
+    // Обидві лінії — GPIO з відкритим стоком, відпущені (лог. 1). Внутрішня
+    // підтяжка слабка (~40 кОм) і зовнішніх резисторів не замінює, але не заважає.
+    gi.Mode  = GPIO_MODE_OUTPUT_OD;
+    gi.Pull  = GPIO_PULLUP;
+    gi.Speed = GPIO_SPEED_FREQ_LOW;
+    gi.Pin   = I2C_SCL_PIN | I2C_SDA_PIN;
+    HAL_GPIO_Init(I2C_GPIO_PORT, &gi);
+    HAL_GPIO_WritePin(I2C_GPIO_PORT, I2C_SCL_PIN | I2C_SDA_PIN, GPIO_PIN_SET);
+    i2c_bit_delay();
+
+    // Рівно 9 тактів вистачає, щоб раб дотиснув найдовший недописаний байт.
+    for (int i = 0; i < 9; ++i) {
+        if (HAL_GPIO_ReadPin(I2C_GPIO_PORT, I2C_SDA_PIN) == GPIO_PIN_SET) {
+            break;   // SDA відпустили — раб вийшов зі свого байта
+        }
+        HAL_GPIO_WritePin(I2C_GPIO_PORT, I2C_SCL_PIN, GPIO_PIN_RESET);
+        i2c_bit_delay();
+        HAL_GPIO_WritePin(I2C_GPIO_PORT, I2C_SCL_PIN, GPIO_PIN_SET);
+        i2c_bit_delay();
+    }
+
+    // Ручний STOP, щоб усі раби повернулися в idle.
+    HAL_GPIO_WritePin(I2C_GPIO_PORT, I2C_SDA_PIN, GPIO_PIN_RESET);
+    i2c_bit_delay();
+    HAL_GPIO_WritePin(I2C_GPIO_PORT, I2C_SCL_PIN, GPIO_PIN_SET);
+    i2c_bit_delay();
+    HAL_GPIO_WritePin(I2C_GPIO_PORT, I2C_SDA_PIN, GPIO_PIN_SET);
+    i2c_bit_delay();
+}
+
+// Підняти шину I2C1 після зірваного обміну. Якщо HAL_I2C_Mem_Write вийшов по
+// таймауту, він НЕ виставляє STOP (це робиться лише при NACK), тож ламається
+// одразу з двох боків: периферія STM32 лишається з піднятим BUSY, а раб — з
+// притиснутою SDA. Лікуємо обидва: SWRST у DeInit чистить свій бік, 9 тактів —
+// чужий. Викликається не частіше разу на кадр, тож коштує дешево і заразом дає
+// гарячу заміну дисплея.
+static void i2c_bus_recover(void) {
+    HAL_I2C_DeInit(&hi2c1);   // SWRST: чистимо свій бік і відпускаємо піни
+    i2c_bus_release();        // 9 тактів: чистимо чужий бік
+    MX_I2C1_Init();           // назад у AF4
+    SSD1306_Init(&oled);      // сам виставить oled.ready за успіху
+}
+
 // Намалювати один кадр: годинник + адреси пристроїв + освітлення + темпи SPI.
 // Розкладку (Y та масштаб кожного рядка) задано в config.h.
 static void render_frame(void) {
@@ -128,7 +206,16 @@ static void render_frame(void) {
     Text_DrawTextCentered(&oled, DEVICES_Y, frame.devices, DEVICES_SCALE);  // адреси під ним
     Text_DrawTextCentered(&oled, LIGHT_Y, frame.light, LIGHT_SCALE);        // освітлення (АЦП)
     Text_DrawTextCentered(&oled, RATES_Y, frame.rates, RATES_SCALE);        // темпи SPI-потоку
-    SSD1306_Flush(&oled);
+
+    // Раніше результат ігнорувався: один зірваний обмін — і картинка застигала
+    // без жодних ознак. Тепер помічаємо дисплей як неготовий, і наступний кадр
+    // підніме шину (див. poll_frame).
+    if (SSD1306_Flush(&oled) != HAL_OK) {
+        oled.ready = 0;
+        if (oled_fail_count < OLED_FAIL_MAX) {
+            ++oled_fail_count;
+        }
+    }
 }
 
 // Раз на FRAME_PERIOD_MS оновити час з RTC і перемалювати кадр.
@@ -146,14 +233,27 @@ static void poll_frame(void) {
              (unsigned)SensorStream_LatestLightRaw());
 
     // P = скільки пакетів поставлено в потік за останню секунду,
-    // B = скільки байтів DMA віддав у SPI1 за ту саму секунду.
+    // E = скільки разів зривався обмін з дисплеєм по I2C від старту,
+    // <n>kb = темп SPI у кілобітах/с.
+    //
+    // Кілобіти зручні тим, що число прямо звіряється з тактовою частотою SPI:
+    // на 1 МГц майстер вичитує ~999kb, тож видно, що лінк іде на повній швидкості.
+    // Крок дискретизації — один оберт кільця (2048 Б = ~16 кбіт/с), бо байти
+    // рахуються обертами DMA (див. stream_bytes_total у log_emission.c).
     LogEmitStats st;
     LogEmission_GetStats(&st);
-    snprintf(frame.rates, sizeof(frame.rates), "P%u B%u",
-             (unsigned)st.packetsPerSec, (unsigned)st.bytesPerSec);
+    unsigned kbits = (unsigned)((st.bytesPerSec * 8u + 500u) / 1000u);
+    snprintf(frame.rates, sizeof(frame.rates), "P%u E%u %ukb",
+             (unsigned)st.packetsPerSec,
+             (unsigned)oled_fail_count,
+             kbits);
 
     if (oled.ready) {
         render_frame();
+    } else {
+        // Дисплей не піднявся на старті або обмін зірвався — пробуємо раз на
+        // кадр, доки не вийде. Без цього oled.ready лишався б 0 назавжди.
+        i2c_bus_recover();
     }
 }
 /* USER CODE END 0 */
@@ -193,6 +293,14 @@ int main(void)
   MX_SPI1_Init();
   MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
+  // Шина могла лишитись захопленою ще з минулого сеансу: якщо обмін обірвався
+  // посеред байта, раб тримає SDA і скидання МК він не бачив — саме тому плата
+  // піднімалась мертвою і оживала лише після зняття живлення з дисплея. Тому
+  // ПЕРШИМ ділом доклацуємо шину, інакше і EEPROM, і дисплей нижче отримають
+  // HAL_BUSY і не піднімуться.
+  i2c_bus_release();
+  MX_I2C1_Init();   // повертаємо PB6/PB7 з ручного GPIO назад у AF4
+
   // Зчитуємо адресу з пам'яті під час старту пристрою
   current_address = EEPROM_GetNextAddress(&hi2c1);
 

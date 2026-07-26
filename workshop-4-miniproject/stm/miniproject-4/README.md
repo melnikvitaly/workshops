@@ -25,3 +25,14 @@ main loop is non-blocking — each helper fires on its own timer (`HAL_GetTick`)
 - [Inc/ssd1306.h](Inc/ssd1306.h) — SSD1306 OLED driver (0x3C): frame buffer + pixel
 - [Inc/text_renderer.h](Inc/text_renderer.h) — 5x7 font on top of the display driver
 - [Inc/cat.h](Inc/cat.h) — cat face from primitives (line/circle/triangle)
+
+## Hardware: Tiny RTC I2C module
+
+The RTC (0x68) and logging EEPROM (0x50) are the two chips on one "Tiny RTC"
+breakout board:
+
+- **DS1307** — I2C RTC IC; sec/min/hour/date/month/year with auto leap-year compensation
+- **56 B NV-SRAM** — built into the DS1307, battery-backed
+- **AT24C32 EEPROM** — 4 KB (32 Kb), separate chip on the same board, used here for light-log storage
+- **Backup battery** — CR2032 coin cell keeps time/SRAM alive on power loss (budget boards ship without it installed)
+- Also has a programmable square-wave output pin and auto power-fail switchover

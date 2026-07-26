@@ -3,6 +3,7 @@
 #include "hardware/SpiDevice.hpp"
 #include "hardware/StatusLed.hpp"
 #include "logs/LogsTarget.hpp"
+#include "logs/TargetTimer.hpp"
 #include "LogProtocol.hpp"
 #include <esp_log.h>
 #include <esp_attr.h>
@@ -61,8 +62,9 @@ private:
     int        _accLen[MAX_DEVICES];   // valid bytes buffered in _acc[i]
     int        _count;
 
-    LogsTarget* _target[MAX_TARGETS];
-    int         _targetCount = 0;
+    LogsTarget* _targets[MAX_TARGETS];
+    int         _targetsCount = 0;
+    TargetTimer _timer;
 
     // Optional activity LED: pulsed once per SPI block transfer for a brief
     // "bytes on the wire" blink. Null = no indication (unchanged behaviour).
@@ -153,8 +155,10 @@ private:
         // discarded records we will never receive.
         if (h.dropped != _dropped[i])
         {
+            uint16_t delta = (uint16_t)(h.dropped - _dropped[i]);
             ESP_LOGW(TAG, "CS%d: slave dropped %u records (buffer overflow)",
-                     (int)_pin[i], (unsigned)(uint16_t)(h.dropped - _dropped[i]));
+                     (int)_pin[i], (unsigned)delta);
+            _timer.addDropped(delta);
             _dropped[i] = h.dropped;
         }
 
@@ -173,11 +177,10 @@ private:
         _records[i]++;
     }
 
-    // Fan one record out to every registered sink.
+    // Fan one record out to every registered sink, timing each write().
     void dispatch(const LogRecord& rec)
     {
-        for (int t = 0; t < _targetCount; ++t)
-            _target[t]->write(rec);
+        _timer.dispatch(_targets, _targetsCount, rec);
     }
 
     // Clear per-device parse/dedup state (called when a device (re)appears so a
@@ -337,7 +340,7 @@ public:
     // added. Returns false if it failed or there is no room.
     bool addTarget(LogsTarget* target)
     {
-        if (_targetCount >= MAX_TARGETS)
+        if (_targetsCount >= MAX_TARGETS)
         {
             ESP_LOGE(TAG, "target list full, '%s' rejected", target->name());
             return false;
@@ -347,8 +350,8 @@ public:
             ESP_LOGE(TAG, "target '%s' init failed, not added", target->name());
             return false;
         }
-        _target[_targetCount++] = target;
-        ESP_LOGI(TAG, "target '%s' added (%d total)", target->name(), _targetCount);
+        _targets[_targetsCount++] = target;
+        ESP_LOGI(TAG, "target '%s' added (%d total)", target->name(), _targetsCount);
         return true;
     }
 

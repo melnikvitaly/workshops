@@ -35,6 +35,15 @@
 #define SSD1306_CTRL_DATA  0x40   /* далі йдуть дані (GDDRAM) */
 #define SSD1306_MAX_BUFFER (128 * 64 / 8)
 
+/* Таймаут одного I2C-обміну (мс). Це дедлайн на ВЕСЬ обмін, а не на байт:
+ * HAL_I2C_Mem_Write бере tickstart один раз і звіряє з ним кожне очікування
+ * прапорця. Кадр 128x64 = 1024 байти даних + control byte, на 100 кГц це ~9 біт
+ * на байт => ~92 мс. Тобто попередні 100 мс лишали менше 8% запасу, а зрив по
+ * таймауту тут фатальний: HAL виставляє STOP лише при NACK, тож після таймауту
+ * шина лишається BUSY і всі наступні виклики одразу повертають HAL_BUSY —
+ * картинка застигає назавжди. Беремо запас на порядок. */
+#define SSD1306_I2C_TIMEOUT 1000
+
 typedef struct {
     I2C_HandleTypeDef *hi2c;
     uint8_t            addr;       /* зсунута 8-бітна адреса для HAL */
@@ -49,7 +58,7 @@ typedef struct {
 /* --- Низькорівневий обмін --- */
 static inline HAL_StatusTypeDef SSD1306_Commands(Ssd1306 *d, const uint8_t *cmds, uint16_t len) {
     return HAL_I2C_Mem_Write(d->hi2c, d->addr, SSD1306_CTRL_CMD, I2C_MEMADD_SIZE_8BIT,
-                             (uint8_t *)cmds, len, 100);
+                             (uint8_t *)cmds, len, SSD1306_I2C_TIMEOUT);
 }
 
 static inline HAL_StatusTypeDef SSD1306_Command(Ssd1306 *d, uint8_t cmd) {
@@ -58,7 +67,7 @@ static inline HAL_StatusTypeDef SSD1306_Command(Ssd1306 *d, uint8_t cmd) {
 
 static inline HAL_StatusTypeDef SSD1306_SendData(Ssd1306 *d, const uint8_t *data, uint16_t len) {
     return HAL_I2C_Mem_Write(d->hi2c, d->addr, SSD1306_CTRL_DATA, I2C_MEMADD_SIZE_8BIT,
-                             (uint8_t *)data, len, 100);
+                             (uint8_t *)data, len, SSD1306_I2C_TIMEOUT);
 }
 
 /* --- Робота з кадровим буфером --- */

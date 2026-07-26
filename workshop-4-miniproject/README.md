@@ -2,6 +2,8 @@
 # Faced problems
 
 - failed wire caused wrong data over SPI
+- SD card mount on the shared SPI bus failed intermittently (timeout / invalid response / CRC errors) whenever the STM32 slave was powered — its SPI1 uses hardware NSS (CS7), and until the ESP32 collector's first `attach()` that CS pin was left floating, so noise on it could make the STM drive MISO at the wrong time and corrupt the SD card's transactions. Fixed by driving all CS pins high immediately after bus init, before anything else touches the bus; a hardware pull-up on CS/NSS lines is the more complete fix since it also covers the pre-firmware boot window.
+- `pio device monitor` loses the boot log after every reset: the C3's console rides the same native USB-Serial/JTAG peripheral used for flashing, so a reset drops and re-enumerates the USB CDC connection and the monitor doesn't auto-reconnect. Worked around with a 2s startup delay to give the monitor time to reattach.
 
 # Diagram
 
@@ -28,8 +30,11 @@ flowchart TB
     end
 
     I2C1{{"I2C1 bus — SDA/SCL, 100 kHz<br/>CPU-driven, blocking HAL"}}
-    RTC["DS1307 RTC · 0x68"]
-    EEP["EEPROM archive · 0x50"]
+    subgraph TINYRTC["Tiny RTC I2C module"]
+        direction TB
+        RTC["DS1307 RTC · 0x68<br/>+56B NV-SRAM, CR2032 backup"]
+        EEP["AT24C32 EEPROM · 0x50<br/>4KB, used as light-log archive"]
+    end
     OLED["SSD1306 OLED · 0x3C"]
 
     SCPU <--> I2C1
@@ -59,6 +64,12 @@ flowchart TB
     MCPU -->|"UART1 TX, GPIO0, 115200"| UARTLOG["Serial log sink"]
     MCPU --> I2C0 --> MOLED["SSD1306 OLED · 0x3C"]
     MCPU -->|"UART0"| CONSOLE["USB-serial console"]
+
+    subgraph SDC["microSD card — CS3, dedicated"]
+        SDCARD["FAT32 (SDSPI)<br/>datalog.txt, append + fflush"]
+    end
+    SPIBUS <-->|"own CS, shares SCK/MOSI/MISO<br/>with the log-slave scan"| SDCARD
+    MCPU -->|"records as text lines"| SDCARD
 ```
 
 | link | bus / port | who moves the bytes |
@@ -67,3 +78,4 @@ flowchart TB
 | STM32 ↔ RTC / EEPROM / OLED | I2C1, one bus, 3 addresses | CPU, blocking HAL |
 | STM32 → ESP32-C3 | SPI1 slave, hardware NSS, mode 0 | DMA both ends; CPU only fills / parses buffers |
 | ESP32-C3 → sinks | UART1 (GPIO0), I2C0, USB console | CPU |
+| ESP32-C3 ↔ microSD | same SPI2/FSPI bus, dedicated CS3 | CPU, synchronous (SDSPI + FATFS, no DMA) |
