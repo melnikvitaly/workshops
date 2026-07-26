@@ -69,6 +69,15 @@ static volatile uint16_t g_write   = 0;  // next byte position to write
 static volatile uint32_t g_nextSeq = 1;  // id for the next ENTRY (0 = NoEntry)
 static volatile uint16_t g_dropped = 0;  // bytes-overflowed events (saturating)
 
+// Monotonic (never-wraps-at-STREAM_CAP) count of bytes ever placed into the
+// ring, producer side. Starts at STREAM_CAP right after the initial pre-fill
+// (see LogEmission_Init) so it and stream_read_total() below share the same
+// zero point: "the whole ring holds valid content as of g_write==0". Paired
+// with stream_read_total() to detect real overflow — see the long comment on
+// stream_write() for why a lap-relative comparison (what this replaced) gives
+// false positives here.
+static volatile uint32_t g_writeTotal = 0;
+
 // SPI1 and its TX DMA are configured entirely by CubeMX: MX_SPI1_Init (slave,
 // mode 0, hardware NSS, PA4..PA7) and MX_DMA_Init + HAL_SPI_MspInit set up the
 // circular DMA2 Stream3 handle `hdma_spi1_tx` and link it to hspi1. This module
@@ -76,7 +85,7 @@ static volatile uint16_t g_dropped = 0;  // bytes-overflowed events (saturating)
 extern SPI_HandleTypeDef hspi1;
 extern DMA_HandleTypeDef hdma_spi1_tx;
 
-// Current DMA read index (bytes already handed to the SPI shift path).
+// Current DMA read index (bytes already handed to the SPI shift path this lap).
 static uint16_t stream_read_index(void)
 {
     uint16_t ndtr = (uint16_t)__HAL_DMA_GET_COUNTER(&hdma_spi1_tx);
@@ -121,6 +130,28 @@ static void stream_tx_lap_cb(DMA_HandleTypeDef *hdma)
 static uint32_t stream_bytes_total(void)
 {
     return g_dmaLaps * (uint32_t)STREAM_CAP;
+}
+
+// Monotonic (never-wraps-at-STREAM_CAP) count of bytes the TX DMA has handed
+// to the SPI shift path since boot: g_dmaLaps (ISR-owned) times STREAM_CAP,
+// plus the live in-lap position. Unlike stream_bytes_total() above, this
+// *does* combine the lap count with the live read index — needed here for an
+// unambiguous ahead/behind comparison against g_writeTotal (see
+// stream_write()) — so it pays for that with the retry loop
+// stream_bytes_total()'s own comment says to avoid: read the lap count,
+// sample the index, then re-check the lap count didn't change out from under
+// us (a lap boundary landing mid-read would otherwise pair a stale lap count
+// with a post-wrap index, undercounting by a whole ring).
+static uint32_t stream_read_total(void)
+{
+    uint32_t laps;
+    uint16_t pos;
+    do
+    {
+        laps = g_dmaLaps;
+        pos  = stream_read_index();
+    } while (laps != g_dmaLaps);
+    return laps * (uint32_t)STREAM_CAP + pos;
 }
 
 // ---------------------------------------------------------------------------
@@ -222,14 +253,33 @@ uint32_t LogEmission_DebugRx(uint8_t *lastByte)
 
 // Append n bytes into the ring, wrapping. If this overtakes the master's read
 // position we are overwriting unread data — count it as an overflow.
+//
+// Overflow detection uses monotonic (never-wrapping) totals, not a lap-
+// relative position comparison, and that distinction matters here. This
+// stream's producer (this function, paced by TIM2/ADC — see LogEmission_Init)
+// is far slower than its consumer: the master polls continuously, so one TX
+// DMA lap (STREAM_CAP bytes) completes in ~16 ms at 1 MHz while records land
+// every ~40-80 ms. That means stream_read_index() (lap-relative, resets to 0
+// every lap) sweeps past g_write's position several times between any two
+// producer writes, making its value effectively uncorrelated with g_write at
+// write-time. A naive "(g_write - r) mod STREAM_CAP" can't tell "producer is
+// genuinely near a full ring ahead of the reader" from "the reader raced past
+// the producer's position and is most of a lap ahead of it" — both look like
+// a large forward distance from r to g_write under modular arithmetic, so the
+// old version flagged a false overflow roughly packetSize/STREAM_CAP of the
+// time even under perfectly healthy, fully-drained operation. Comparing
+// monotonic totals instead removes the ambiguity: g_writeTotal only grows on
+// real writes, stream_read_total() only grows as bytes are genuinely clocked
+// out, and the signed subtraction below is well-defined regardless of how
+// many laps either side has completed.
 static void stream_write(const uint8_t *p, uint16_t n)
 {
     if (n == 0 || n > STREAM_CAP)
         return;
 
-    uint16_t r        = stream_read_index();
-    uint16_t inflight = (uint16_t)((g_write - r + STREAM_CAP) % STREAM_CAP);
-    if ((uint32_t)inflight + n >= STREAM_CAP && g_dropped != 0xFFFF)
+    int32_t  rawBacklog = (int32_t)(g_writeTotal - stream_read_total());
+    uint32_t backlog     = rawBacklog > 0 ? (uint32_t)rawBacklog : 0;
+    if (backlog + n >= STREAM_CAP && g_dropped != 0xFFFF)
         g_dropped++;
 
     uint16_t first = (uint16_t)(STREAM_CAP - g_write);
@@ -242,7 +292,8 @@ static void stream_write(const uint8_t *p, uint16_t n)
         memcpy(&g_stream[g_write], p, first);
         memcpy(&g_stream[0], p + first, (uint16_t)(n - first));
     }
-    g_write = (uint16_t)((g_write + n) % STREAM_CAP);
+    g_write       = (uint16_t)((g_write + n) % STREAM_CAP);
+    g_writeTotal += n;
 }
 
 // ---------------------------------------------------------------------------
@@ -367,6 +418,12 @@ void LogEmission_Init(void)
         memset(&g_stream[w], 0, (uint16_t)(STREAM_CAP - w));
     g_write = 0;
 #endif
+
+    // The whole ring now holds valid initial content, i.e. conceptually
+    // "written" once through — give g_writeTotal the matching starting value
+    // so it and stream_read_total() (which starts at 0 as DMA begins reading
+    // from position 0 below) share the same zero point. See stream_write().
+    g_writeTotal = STREAM_CAP;
 
     // Start the circular DMA. It re-reads the ring forever, handing one byte to
     // SPI1_TX per byte the master clocks — the stream never stops and needs no

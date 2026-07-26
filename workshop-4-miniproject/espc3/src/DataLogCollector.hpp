@@ -42,6 +42,11 @@ class DataLogCollector
 public:
     static constexpr int MAX_DEVICES   = 8;
     static constexpr int MAX_TARGETS   = 4;
+    // Cap on distinct objectId values tracked per device for the status report.
+    // A slave logging more than this many kinds of object just stops growing
+    // the set (existing entries are still recognised); plenty for the handful
+    // of sensor object ids ("LGHT", "TIME", ...) any one slave here logs.
+    static constexpr int MAX_OBJECT_IDS = 8;
     // Bytes clocked out of each device per pass. Larger = more records drained
     // per scan (higher throughput) at the cost of a longer SPI transaction.
     static constexpr int COLLECT_BLOCK = 512;
@@ -56,6 +61,10 @@ private:
     bool       _present[MAX_DEVICES];
     uint32_t   _records[MAX_DEVICES];  // count delivered (diagnostics)
     uint16_t   _dropped[MAX_DEVICES];  // last-seen slave overflow-drop count
+    uint32_t   _invalidTotal[MAX_DEVICES]; // CRC-failed frames seen, this device
+    uint32_t   _duplicates[MAX_DEVICES];   // already-delivered seq re-seen (ring lap)
+    char       _objectIds[MAX_DEVICES][MAX_OBJECT_IDS][4]; // distinct objectIds seen
+    int        _objectIdCount[MAX_DEVICES];                // entries used in _objectIds[i]
     uint32_t   _lastSeq[MAX_DEVICES];  // highest ENTRY seq delivered (dedup)
     bool       _haveSeq[MAX_DEVICES];  // _lastSeq valid yet?
     uint8_t    _acc[MAX_DEVICES][ACC_CAP];
@@ -103,6 +112,13 @@ private:
         memcpy(_acc[i] + _accLen[i], rx, copyable);
         _accLen[i] += copyable;
 
+        // Tallied locally and reported as one consolidated line at the end of
+        // this pass (see below), instead of a separate log line per event —
+        // both are per-device stats, not per-target, so TargetTimer doesn't
+        // see them.
+        uint32_t droppedThisPass = 0;
+        uint32_t invalidThisPass = 0;
+
         bool sawValid = false;
         int  pos      = 0;
         while (pos < _accLen[i])
@@ -115,11 +131,22 @@ private:
                 break;                       // wait for the next block's bytes
             if (res == logproto::PKT_BAD)
             {
+                // Only count it as a genuinely invalid *message*, not idle-line
+                // noise: parsePacket() also returns PKT_BAD for a plain non-MAGIC
+                // byte (0xFF filler between records, or the byte after a torn
+                // packet while resyncing), which is expected traffic, not a
+                // transmission error. MAGIC having matched but the CRC failing
+                // afterward is the real signal something got corrupted on the wire.
+                if (_acc[i][pos] == logproto::MAGIC)
+                {
+                    ++invalidThisPass;
+                    ++_invalidTotal[i];
+                }
                 pos += (int)consumed;        // skip one byte, resync on next MAGIC
                 continue;
             }
             sawValid = true;
-            handlePacket(i, _acc[i] + pos);
+            droppedThisPass += handlePacket(i, _acc[i] + pos);
             pos += (int)consumed;
         }
 
@@ -127,23 +154,34 @@ private:
         _accLen[i] -= pos;
         if (_accLen[i] > 0)
             memmove(_acc[i], _acc[i] + pos, _accLen[i]);
+
+        if (droppedThisPass > 0 || invalidThisPass > 0)
+            ESP_LOGW(TAG, "CS%d: %u new dropped (total %u), %u new invalid (total %u)",
+                     (int)_pin[i], (unsigned)droppedThisPass, (unsigned)_dropped[i],
+                     (unsigned)invalidThisPass, (unsigned)_invalidTotal[i]);
+
         return sawValid;
     }
 
     // Process one CRC-valid packet at `p`. Updates the drop counter, and for
-    // ENTRY packets de-duplicates by seq and dispatches the record.
-    void handlePacket(int i, const uint8_t* p)
+    // ENTRY packets de-duplicates by seq and dispatches the record. Returns
+    // how many new drops the slave reported in this packet (0 most of the
+    // time) so the caller can fold it into one per-pass summary line.
+    uint16_t handlePacket(int i, const uint8_t* p)
     {
         logproto::Header h;
         memcpy(&h, p, sizeof(h));            // p may be unaligned; copy out fields
 
         if (!logproto::isEntry(h))
-            return;                          // NoEntry heartbeat: presence only
+            return 0;                        // NoEntry heartbeat: presence only
 
         // The stream re-presents old ENTRY packets as the slave's ring laps, so
         // only deliver a seq we have not delivered before.
         if (_haveSeq[i] && (int32_t)(h.seq - _lastSeq[i]) <= 0)
-            return;
+        {
+            ++_duplicates[i];
+            return 0;
+        }
         if (_haveSeq[i] && h.seq != _lastSeq[i] + 1)
             ESP_LOGW(TAG, "CS%d: seq gap %u -> %u (records missed)",
                      (int)_pin[i], (unsigned)_lastSeq[i], (unsigned)h.seq);
@@ -153,12 +191,10 @@ private:
         // Only ENTRY packets carry a live drop count (NoEntry reports 0). Read it
         // here, after dedup, so it stays monotonic: a rise means the slave
         // discarded records we will never receive.
+        uint16_t delta = 0;
         if (h.dropped != _dropped[i])
         {
-            uint16_t delta = (uint16_t)(h.dropped - _dropped[i]);
-            ESP_LOGW(TAG, "CS%d: slave dropped %u records (buffer overflow)",
-                     (int)_pin[i], (unsigned)delta);
-            _timer.addDropped(delta);
+            delta       = (uint16_t)(h.dropped - _dropped[i]);
             _dropped[i] = h.dropped;
         }
 
@@ -175,6 +211,21 @@ private:
         rec.len           = len;
         dispatch(rec);
         _records[i]++;
+        noteObjectId(i, h.objectId);
+        return delta;
+    }
+
+    // Add h's 4-byte objectId to device i's seen-set if it is not already
+    // there and there is room (see MAX_OBJECT_IDS). Only called for records
+    // that were actually handled (new, non-duplicate ENTRY), matching what
+    // logStatus() reports alongside processed_entries.
+    void noteObjectId(int i, const char objectId[4])
+    {
+        for (int k = 0; k < _objectIdCount[i]; ++k)
+            if (memcmp(_objectIds[i][k], objectId, 4) == 0)
+                return;
+        if (_objectIdCount[i] < MAX_OBJECT_IDS)
+            memcpy(_objectIds[i][_objectIdCount[i]++], objectId, 4);
     }
 
     // Fan one record out to every registered sink, timing each write().
@@ -187,10 +238,13 @@ private:
     // fresh slave's early records are not skipped and stale bytes are dropped).
     void resetDevice(int i)
     {
-        _accLen[i]  = 0;
-        _haveSeq[i] = false;
-        _lastSeq[i] = 0;
-        _dropped[i] = 0;
+        _accLen[i]       = 0;
+        _haveSeq[i]      = false;
+        _lastSeq[i]      = 0;
+        _dropped[i]      = 0;
+        _invalidTotal[i] = 0;
+        _duplicates[i]   = 0;
+        _objectIdCount[i] = 0;
     }
 
     // Reap device i's previously queued transfer, detach it, then parse the block
@@ -398,9 +452,35 @@ public:
 
         for (int i = 0; i < _count; ++i)
         {
-            ESP_LOGI(TAG, "  CS%d: present=%d processed_entries=%u dropped_messages=%u",
+            char objIds[MAX_OBJECT_IDS * 5]; // "XXXX," per entry, worst case
+            formatObjectIds(i, objIds, sizeof(objIds));
+
+            ESP_LOGI(TAG, "  CS%d: present=%d processed_entries=%u duplicates=%u "
+                          "dropped_messages=%u invalid_messages=%u unique_objectids=%d [%s]",
                      (int)_pin[i], _present[i] ? 1 : 0,
-                     (unsigned)_records[i], (unsigned)_dropped[i]);
+                     (unsigned)_records[i], (unsigned)_duplicates[i],
+                     (unsigned)_dropped[i], (unsigned)_invalidTotal[i],
+                     _objectIdCount[i], objIds);
         }
+    }
+
+private:
+    // Render device i's seen objectId set as a comma-separated list, e.g.
+    // "LGHT,TIME". Each id is exactly 4 raw chars (not NUL-terminated in
+    // storage), hence the explicit %.4s rather than treating it as a C string.
+    void formatObjectIds(int i, char* out, size_t cap) const
+    {
+        int n = 0;
+        for (int k = 0; k < _objectIdCount[i] && n < (int)cap; ++k)
+        {
+            if (k > 0)
+                n += snprintf(out + n, cap - n, ",");
+            if (n < (int)cap)
+                n += snprintf(out + n, cap - n, "%.4s", _objectIds[i][k]);
+        }
+        if (n < (int)cap)
+            out[n] = '\0';
+        else
+            out[cap - 1] = '\0';
     }
 };

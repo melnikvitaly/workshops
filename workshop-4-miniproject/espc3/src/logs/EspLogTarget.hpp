@@ -18,9 +18,9 @@ public:
     {
         char val[48];
         formatLogValue(val, sizeof(val), rec);
-        ESP_LOG_LEVEL(_level, TAG, "CS%d #%u up=%u %.4s=%s",
+        ESP_LOG_LEVEL(_level, TAG, "CS%d #%u up=%u col=%lld %.4s=%s",
                       (int)rec.cs, (unsigned)rec.seq, (unsigned)rec.eventTimeMs,
-                      rec.objectId, val);
+                      (long long)rec.collectedAtUs, rec.objectId, val);
     }
 
     const char* name() const override { return "esplog"; }

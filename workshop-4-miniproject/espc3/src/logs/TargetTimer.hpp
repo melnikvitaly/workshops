@@ -6,28 +6,20 @@
 
 // Times each target's write() and periodically logs the worst (max) time seen
 // per target, so a slow sink (e.g. an SD write stalling the collector's task)
-// shows up without flooding the console on every single record. Also tallies
-// dropped-record notifications (slave ring overflow) the collector reports in
-// via addDropped(), on the same interval, so both "how slow are we" and "how
-// much are we losing" show up in one periodic line instead of two independent
-// cadences.
+// shows up without flooding the console on every single record. Reports only
+// on the targets — slave-side stats (dropped/invalid message counts) are the
+// collector's own concern, reported per-device right after processing that
+// slave's block, not on this class's timing cadence.
 class TargetTimer
 {
 public:
     static constexpr int64_t REPORT_INTERVAL_US = 5'000'000;
     static constexpr int     MAX_TRACKED        = 8;
 
-    // Record that the slave reported n more dropped records since we last
-    // heard from it (ring overflow). Accumulated into the next periodic
-    // report, not logged immediately — the collector still logs each
-    // occurrence at WARN level on its own for real-time visibility.
-    void addDropped(uint32_t n) { _droppedSinceReport += n; }
-
     // Writes rec to every target in targets[0..count), timing each write() in
     // microseconds and tracking the worst time per target since the last
     // report. Emits one ESP_LOG summary line at most once every
-    // REPORT_INTERVAL_US, then resets the per-target max and dropped tally
-    // for the next window.
+    // REPORT_INTERVAL_US, then resets the per-target max for the next window.
     void dispatch(LogsTarget* const* targets, int count, const LogRecord& rec)
     {
         if (count > MAX_TRACKED)
@@ -52,15 +44,13 @@ public:
         _lastReportUs = now;
 
         char line[192];
-        int n = snprintf(line, sizeof(line), "%u records, %u dropped, max write time:",
-                         (unsigned)_records, (unsigned)_droppedSinceReport);
+        int n = snprintf(line, sizeof(line), "%u records, max write time:", (unsigned)_records);
         for (int i = 0; i < _trackedCount && n < (int)sizeof(line); ++i)
             n += snprintf(line + n, sizeof(line) - n, " %s=%lldus",
                           _name[i], (long long)_maxUs[i]);
         ESP_LOGI(TAG, "%s", line);
 
         _records = 0;
-        _droppedSinceReport = 0;
         for (int i = 0; i < MAX_TRACKED; ++i)
             _maxUs[i] = 0;
     }
@@ -72,6 +62,5 @@ private:
     int64_t     _maxUs[MAX_TRACKED] = {};
     int         _trackedCount       = 0;
     uint32_t    _records            = 0;
-    uint32_t    _droppedSinceReport = 0;
     int64_t     _lastReportUs       = 0;
 };

@@ -10,7 +10,11 @@
 // LogsTarget that shows the most recent records on a 128x64 SSD1306 OLED over
 // I2C. Keeps a rolling window of the last 8 lines (one per 8-pixel page row) and
 // redraws the whole screen on each record. One compact line per record:
-//   "<uptime_s> OBJ v"  — slave uptime seconds, 4-char object id, value.
+//   "<uptime_s> C<cs> #<seq> OBJ v col=<us>"  — slave uptime seconds, source CS
+//   pin, seq, 4-char object id, value, master collection time. Same fields as
+//   the text sinks (UartTarget/SdCardTarget/EspLogTarget); the screen is only
+//   21 chars wide (COLS) so pushRow() clips the line, typically trimming the
+//   trailing col= field first since it's the least useful at a glance.
 //
 // Self-contained: it owns the SSD1306 command set, a 5x7 font, and a 1 KB frame
 // buffer. Give it an initialised I2cBus and its 7-bit address.
@@ -75,11 +79,13 @@ public:
         char val[24];
         formatValue(val, sizeof(val), rec);
 
-        // Full line into a buffer that can't overflow; pushRow() clips it to the
-        // screen width (COLS) when it stores the row.
-        char line[48];
-        snprintf(line, sizeof(line), "%us %.4s %s",
-                 (unsigned)(rec.eventTimeMs / 1000), rec.objectId, val);
+        // Full line into a buffer that can't overflow (sized for the worst-case
+        // formatted width, well past COLS); pushRow() clips it to the screen
+        // width (COLS) when it stores the row.
+        char line[96];
+        snprintf(line, sizeof(line), "%us C%d #%u %.4s %s col=%lld",
+                 (unsigned)(rec.eventTimeMs / 1000), (int)rec.cs, (unsigned)rec.seq,
+                 rec.objectId, val, (long long)rec.collectedAtUs);
 
         pushRow(line);
         render();

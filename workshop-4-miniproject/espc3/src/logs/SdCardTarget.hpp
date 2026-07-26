@@ -77,9 +77,9 @@ public:
         char val[48];
         formatLogValue(val, sizeof(val), rec);
         errno = 0;
-        int n = fprintf(_file, "[up=%u] CS%d #%u %.4s=%s\n",
-                        (unsigned)rec.eventTimeMs, (int)rec.cs, (unsigned)rec.seq,
-                        rec.objectId, val);
+        int n = fprintf(_file, "[up=%u col=%lld] CS%d #%u %.4s=%s\n",
+                        (unsigned)rec.eventTimeMs, (long long)rec.collectedAtUs,
+                        (int)rec.cs, (unsigned)rec.seq, rec.objectId, val);
         if (n < 0)
         {
             ESP_LOGE(TAG, "fprintf failed: %s", strerror(errno));

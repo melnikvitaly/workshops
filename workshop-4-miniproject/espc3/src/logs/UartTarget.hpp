@@ -53,12 +53,13 @@ public:
         if (!_ready)
             return;
 
-        // "[up=<ms>] CS<pin> #<id> <objId>=<value>\r\n" — up= is the slave's raw
-        // uptime stamp; the value is rendered per its ValueType.
+        // "[up=<ms> col=<us>] CS<pin> #<id> <objId>=<value>\r\n" — up= is the
+        // slave's raw uptime stamp, col= is the master's own collection time
+        // (esp_timer, us since boot); the value is rendered per its ValueType.
         char line[128];
-        int n = snprintf(line, sizeof(line), "[up=%u] CS%d #%u %.4s=",
-                         (unsigned)rec.eventTimeMs, (int)rec.cs,
-                         (unsigned)rec.seq, rec.objectId);
+        int n = snprintf(line, sizeof(line), "[up=%u col=%lld] CS%d #%u %.4s=",
+                         (unsigned)rec.eventTimeMs, (long long)rec.collectedAtUs,
+                         (int)rec.cs, (unsigned)rec.seq, rec.objectId);
         n += formatLogValue(line + n, sizeof(line) - n, rec);
         if (n < 0)
             return;
