@@ -2,6 +2,7 @@
 #include "log_emission.h"
 #include "ds1307.h"
 #include "config.h"
+#include "main.h"   // Error_Handler()
 
 // Peripherals owned by CubeMX (main.c): ADC1 is configured for TIM2-triggered
 // circular DMA (hdma_adc1, DMA2 Stream0), TIM2 paces the sampling, hi2c1 talks
@@ -33,9 +34,18 @@ void SensorStream_Init(void)
 {
     // TIM2 (TRGO on Update Event), ADC1 (T2-triggered) and the circular ADC DMA
     // are all configured by CubeMX. Arm the DMA, then start TIM2 so its TRGO
-    // paces the conversions.
-    HAL_ADC_Start_DMA(&hadc1, (uint32_t *)g_adc, ADC_BUF_LEN);
-    HAL_TIM_Base_Start(&htim2);
+    // paces the conversions. Same failure policy as the MX_*_Init functions in
+    // main.c: an init-time HAL failure here is unrecoverable (no ADC feed for
+    // the rest of the run), so it goes to Error_Handler() rather than silently
+    // leaving g_adc unfed.
+    if (HAL_ADC_Start_DMA(&hadc1, (uint32_t *)g_adc, ADC_BUF_LEN) != HAL_OK)
+    {
+        Error_Handler();
+    }
+    if (HAL_TIM_Base_Start(&htim2) != HAL_OK)
+    {
+        Error_Handler();
+    }
 }
 
 // --------------------------------------------------------------------------

@@ -1,4 +1,5 @@
 #include "log_emission.h"
+#include "main.h"   // Error_Handler()
 #include <string.h>
 
 // ---------------------------------------------------------------------------
@@ -224,9 +225,15 @@ static void spi_rx_debug_init(void)
     hdma_spi1_rx.Init.Mode                = DMA_CIRCULAR;
     hdma_spi1_rx.Init.Priority            = DMA_PRIORITY_LOW;
     hdma_spi1_rx.Init.FIFOMode            = DMA_FIFOMODE_DISABLE;
-    HAL_DMA_Init(&hdma_spi1_rx);
-    HAL_DMA_Start(&hdma_spi1_rx, (uint32_t)&hspi1.Instance->DR,
-                  (uint32_t)g_spiRxDebug, SPI_RX_DEBUG_LEN);
+    if (HAL_DMA_Init(&hdma_spi1_rx) != HAL_OK)
+    {
+        Error_Handler();
+    }
+    if (HAL_DMA_Start(&hdma_spi1_rx, (uint32_t)&hspi1.Instance->DR,
+                      (uint32_t)g_spiRxDebug, SPI_RX_DEBUG_LEN) != HAL_OK)
+    {
+        Error_Handler();
+    }
     SET_BIT(hspi1.Instance->CR2, SPI_CR2_RXDMAEN);
 }
 
@@ -433,8 +440,11 @@ void LogEmission_Init(void)
     hdma_spi1_tx.XferCpltCallback     = stream_tx_lap_cb;
     hdma_spi1_tx.XferHalfCpltCallback = NULL;  // half-transfer IRQ stays off
     hdma_spi1_tx.XferErrorCallback    = NULL;
-    HAL_DMA_Start_IT(&hdma_spi1_tx, (uint32_t)g_stream,
-                     (uint32_t)&hspi1.Instance->DR, STREAM_CAP);
+    if (HAL_DMA_Start_IT(&hdma_spi1_tx, (uint32_t)g_stream,
+                         (uint32_t)&hspi1.Instance->DR, STREAM_CAP) != HAL_OK)
+    {
+        Error_Handler();  // no TX DMA means no SPI stream at all: unrecoverable
+    }
     SET_BIT(hspi1.Instance->CR2, SPI_CR2_TXDMAEN);
     __HAL_SPI_ENABLE(&hspi1);
 

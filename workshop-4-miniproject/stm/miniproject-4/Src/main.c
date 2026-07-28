@@ -110,9 +110,15 @@ static void poll_light_log(void) {
     // останнє усереднене значення освітлення в EEPROM раз на LOG_INTERVAL_MS.
     uint8_t light_percent = SensorStream_LatestLightPercent();
     if (current_address <= EEPROM_DATA_END) {
-        EEPROM_WriteByte(&hi2c1, current_address, light_percent);
-        current_address++;                                  // зсуваємо вказівник
-        EEPROM_SaveNextAddress(&hi2c1, current_address);    // і зберігаємо його
+        // Просуваємо (і зберігаємо) вказівник лише якщо байт справді записався:
+        // якщо просто ігнорувати статус, зірваний обмін (NACK/таймаут) мовчки
+        // лишає непрописаний байт, а вказівник вже стоїть за ним — журнал
+        // назавжди має дірку. Провал тут просто повторить спробу на цю саму
+        // адресу наступного разу.
+        if (EEPROM_WriteByte(&hi2c1, current_address, light_percent) == HAL_OK) {
+            current_address++;                                  // зсуваємо вказівник
+            EEPROM_SaveNextAddress(&hi2c1, current_address);    // і зберігаємо його
+        }
     }
 }
 

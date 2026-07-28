@@ -60,6 +60,15 @@ public:
         int n = snprintf(line, sizeof(line), "[up=%u col=%lld] CS%d #%u %.4s=",
                          (unsigned)rec.eventTimeMs, (long long)rec.collectedAtUs,
                          (int)rec.cs, (unsigned)rec.seq, rec.objectId);
+        // snprintf returns the length that *would* have been written, which can
+        // exceed sizeof(line) on truncation; clamp before using it as an
+        // offset/remaining-capacity into `line`, otherwise an over-long header
+        // would compute a huge "sizeof(line) - n" and hand formatLogValue an
+        // out-of-bounds pointer.
+        if (n < 0)
+            return;
+        if (n > (int)sizeof(line))
+            n = sizeof(line);
         n += formatLogValue(line + n, sizeof(line) - n, rec);
         if (n < 0)
             return;

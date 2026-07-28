@@ -23,10 +23,15 @@ static inline uint8_t EEPROM_ReadByte(I2C_HandleTypeDef *hi2c, uint16_t mem_addr
     return data;
 }
 
-/* Запис 1 байта */
-static inline void EEPROM_WriteByte(I2C_HandleTypeDef *hi2c, uint16_t mem_address, uint8_t data) {
-    HAL_I2C_Mem_Write(hi2c, EEPROM_ADDR, mem_address, I2C_MEMADD_SIZE_16BIT, &data, 1, 100);
-    HAL_Delay(5); /* Затримка 5 мс для фізичного запису в EEPROM (обов'язково!) */
+/* Запис 1 байта. Повертає HAL-статус: виклик мусить перевіряти його перед тим,
+ * як просувати вказівник журналу — інакше зірваний обмін (NACK/таймаут) мовчки
+ * лишає непрописаний байт, а вказівник вже вказує далі на нього. */
+static inline HAL_StatusTypeDef EEPROM_WriteByte(I2C_HandleTypeDef *hi2c, uint16_t mem_address, uint8_t data) {
+    HAL_StatusTypeDef ret = HAL_I2C_Mem_Write(hi2c, EEPROM_ADDR, mem_address, I2C_MEMADD_SIZE_16BIT, &data, 1, 100);
+    if (ret == HAL_OK) {
+        HAL_Delay(5); /* Затримка 5 мс для фізичного запису в EEPROM (обов'язково!) */
+    }
+    return ret;
 }
 
 /* Читання вказівника (адреси наступного запису) з перших двох байтів пам'яті */
@@ -44,14 +49,17 @@ static inline uint16_t EEPROM_GetNextAddress(I2C_HandleTypeDef *hi2c) {
     return ptr;
 }
 
-/* Збереження нового вказівника */
-static inline void EEPROM_SaveNextAddress(I2C_HandleTypeDef *hi2c, uint16_t ptr) {
+/* Збереження нового вказівника. Повертає HAL-статус (див. EEPROM_WriteByte). */
+static inline HAL_StatusTypeDef EEPROM_SaveNextAddress(I2C_HandleTypeDef *hi2c, uint16_t ptr) {
     uint8_t buf[2];
     buf[0] = (ptr >> 8) & 0xFF; /* MSB (старший байт) */
     buf[1] = ptr & 0xFF;        /* LSB (молодший байт) */
 
-    HAL_I2C_Mem_Write(hi2c, EEPROM_ADDR, 0x0000, I2C_MEMADD_SIZE_16BIT, buf, 2, 100);
-    HAL_Delay(5);
+    HAL_StatusTypeDef ret = HAL_I2C_Mem_Write(hi2c, EEPROM_ADDR, 0x0000, I2C_MEMADD_SIZE_16BIT, buf, 2, 100);
+    if (ret == HAL_OK) {
+        HAL_Delay(5);
+    }
+    return ret;
 }
 
 #endif /* EEPROM_H */

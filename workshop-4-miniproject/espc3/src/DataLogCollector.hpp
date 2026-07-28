@@ -380,6 +380,9 @@ public:
                      int clockHz = 1'000'000)
         : _bus(bus), _count(count < MAX_DEVICES ? count : MAX_DEVICES)
     {
+        if (count > MAX_DEVICES)
+            ESP_LOGE(TAG, "%d CS pins given, only %d supported (MAX_DEVICES); "
+                          "the rest are silently dropped", count, MAX_DEVICES);
         for (int i = 0; i < _count; ++i)
         {
             _pin[i]     = csPins[i];

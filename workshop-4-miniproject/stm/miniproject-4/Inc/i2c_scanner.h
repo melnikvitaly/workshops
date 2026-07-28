@@ -48,8 +48,20 @@ static inline int I2CScanner_ScanToString(I2C_HandleTypeDef *hi2c, char *out, si
     const int shown = (found < maxShown) ? found : maxShown;
     int pos = 0;
     out[0] = '\0';
-    for (int i = 0; i < shown; ++i) {
-        pos += snprintf(out + pos, outLen - pos, "%s0x%02X", (i ? " " : ""), addrs[i]);
+    /* pos must never exceed outLen: outLen is size_t, so a later "outLen - pos"
+     * with pos > outLen would underflow to a huge unsigned size and hand
+     * snprintf a bogus length, overrunning the buffer. snprintf's return value
+     * is how many bytes it WOULD have written, which can exceed the space
+     * given on truncation, so clamp pos back down every iteration. */
+    for (int i = 0; i < shown && (size_t)pos < outLen; ++i) {
+        int n = snprintf(out + pos, outLen - pos, "%s0x%02X", (i ? " " : ""), addrs[i]);
+        if (n < 0) {
+            break;
+        }
+        pos += n;
+        if ((size_t)pos > outLen) {
+            pos = (int)outLen;
+        }
     }
     if (found == 0) {
         snprintf(out, outLen, "0x00");  /* нічого не знайдено */
