@@ -10,5 +10,4 @@ Release/
 workshop-5-1/kicad/datasheets
 workshop-5-1/kicad/kicad-backups
 workshop-5-1/kicad/analysis/
-workshop-5-1/kicad/~kicad.kicad_sch.lck
-workshop-5-1/kicad/~kicad.kicad_pro.lck
+workshop-5-1/kicad/~*.lck
