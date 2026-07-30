@@ -4,7 +4,11 @@
 .vscode/launch.json
 .vscode/ipch
 tmp/
-workshop-2-mini-project/out.txt
 .metadata
 Debug/
 Release/
+workshop-5-1/kicad/datasheets
+workshop-5-1/kicad/kicad-backups
+workshop-5-1/kicad/analysis/
+workshop-5-1/kicad/~kicad.kicad_sch.lck
+workshop-5-1/kicad/~kicad.kicad_pro.lck

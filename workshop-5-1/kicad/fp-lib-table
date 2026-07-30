@@ -1,0 +1,10 @@
+(fp_lib_table
+	(version 7)
+	(lib
+		(name "workshop")
+		(type "KiCad")
+		(uri "${KIPRJMOD}/workshop.pretty")
+		(options "")
+		(descr "Project footprints for workshop-5-1")
+	)
+)

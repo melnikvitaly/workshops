@@ -1,0 +1,10 @@
+(sym_lib_table
+	(version 7)
+	(lib
+		(name "workshop")
+		(type "KiCad")
+		(uri "${KIPRJMOD}/workshop.kicad_sym")
+		(options "")
+		(descr "Project symbols for workshop-5-1")
+	)
+)
