@@ -83,8 +83,14 @@ void LogEmission_AddDateTime(const char objectId[LOGEMIT_OBJID_LEN],
 // a second by LogEmission_ActivityPoll() over the actual elapsed time, so they
 // stay honest even when the main loop overshoots (e.g. a blocking OLED flush).
 typedef struct {
-    uint32_t packetsPerSec;  // DataEntries queued in the last full window
-    uint32_t bytesPerSec;    // bytes the TX DMA handed to SPI1 in that window
+    // Producer side: DataEntries this board queued into the stream in the last
+    // full window ("PP" on the OLED). Independent of the master — it stays
+    // non-zero with no master attached, the records simply pile up unread.
+    uint32_t producedPacketsPerSec;
+    // Consumer side: bytes the TX DMA handed to SPI1 in that window. SPI1 is a
+    // slave, so this only advances while the master is clocking — zero here with
+    // a non-zero rate above means "logging, but nobody is reading".
+    uint32_t bytesPerSec;
     uint32_t totalPackets;   // DataEntries queued since boot
     // Bytes clocked out since boot, counted in whole ring laps — the partial lap
     // in progress is not included, so this trails the truth by up to one ring and

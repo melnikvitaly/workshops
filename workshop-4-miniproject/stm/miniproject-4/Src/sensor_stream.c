@@ -12,8 +12,10 @@ extern TIM_HandleTypeDef htim2;
 extern I2C_HandleTypeDef hi2c1;
 
 #define ADC_BUF_LEN LIGHT_ADC_BUF_LEN
-#define ADC_HALF    (ADC_BUF_LEN / 2)
-#define ADC_MAX_RAW 4095u
+#define ADC_HALVES  2u                 // DMA рапортує про буфер двома половинами
+#define ADC_HALF    (ADC_BUF_LEN / ADC_HALVES)
+#define ADC_MAX_RAW 4095u              // повна шкала 12-бітного АЦП
+#define PERCENT_FULL 100u              // повна шкала у відсотках
 
 // Circular DMA target for the ADC (filled by hdma_adc1). TIM2 clocks one
 // conversion per tick; the DMA raises half/full interrupts as it wraps.
@@ -68,7 +70,7 @@ static void emit_light(uint32_t start)
 
     // The coarse percent is still what the hourly EEPROM archive stores (one byte
     // per sample there), so keep maintaining it for SensorStream_LatestLightPercent().
-    g_lightPercent = (uint8_t)((avg * 100u) / ADC_MAX_RAW);
+    g_lightPercent = (uint8_t)((avg * PERCENT_FULL) / ADC_MAX_RAW);
 }
 
 static void emit_rtc(void)

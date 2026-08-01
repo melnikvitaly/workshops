@@ -1,0 +1,1220 @@
+(kicad_sch
+	(version 20260306)
+	(generator "eeschema")
+	(generator_version "10.0")
+	(uuid "574039e7-9b5a-5f91-b71e-969923776706")
+	(paper "A3")
+	(title_block
+		(title "Workshop 4 mini-project - system block diagram")
+		(date "2026-08-01")
+		(rev "A")
+		(company "Visualization only - not for PCB fabrication")
+	)
+	(lib_symbols
+	)
+	(text "Workshop 4 mini-project - system block diagram"
+		(exclude_from_sim yes)
+		(at 10 15 0)
+		(effects
+			(font
+				(size 4.5 4.5)
+				(bold yes)
+			)
+			(justify left bottom)
+		)
+		(uuid "181a4533-b074-5f90-b5dd-a4c3abb08266")
+	)
+	(text "High-level topology only: nodes, buses and log sinks. Pin-level detail, packet format and DMA maps are on miniproject-4.kicad_sch."
+		(exclude_from_sim yes)
+		(at 10 21 0)
+		(effects
+			(font
+				(size 2 2)
+			)
+			(justify left bottom)
+		)
+		(uuid "c80be2d5-8643-51ea-9da3-360e25fb3efa")
+	)
+	(text "VISUALIZATION ONLY - block diagram, no netlist. Not intended for PCB fabrication."
+		(exclude_from_sim yes)
+		(at 10 25.5 0)
+		(effects
+			(font
+				(size 2 2)
+				(color 170 40 40 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "a6a45826-a551-5fd3-8c0f-5fbd3cfde67b")
+	)
+	(rectangle
+		(start 10 32)
+		(end 204 196)
+		(stroke
+			(width 0.5)
+			(type dash)
+			(color 30 90 160 1)
+		)
+		(fill
+			(type none)
+		)
+		(uuid "a38c3a5e-4741-51d2-8f2c-f2eebf5dc8ee")
+	)
+	(text "STM32F401 NODE  -  I2C application + SPI log slave"
+		(exclude_from_sim yes)
+		(at 13 38.5 0)
+		(effects
+			(font
+				(size 2.6 2.6)
+				(color 30 90 160 1)
+				(bold yes)
+			)
+			(justify left bottom)
+		)
+		(uuid "6c5653f9-d1f5-5642-9c30-980c3a3fc304")
+	)
+	(rectangle
+		(start 212 32)
+		(end 406 196)
+		(stroke
+			(width 0.5)
+			(type dash)
+			(color 30 90 160 1)
+		)
+		(fill
+			(type none)
+		)
+		(uuid "5254b624-febc-5108-a01d-c4e5e84b316a")
+	)
+	(text "ESP32-C3 NODE  -  SPI master, collector and log sinks"
+		(exclude_from_sim yes)
+		(at 215 38.5 0)
+		(effects
+			(font
+				(size 2.6 2.6)
+				(color 30 90 160 1)
+				(bold yes)
+			)
+			(justify left bottom)
+		)
+		(uuid "7371b8e3-4e11-512e-8cd0-c0e7976edef8")
+	)
+	(rectangle
+		(start 18 52)
+		(end 80 80)
+		(stroke
+			(width 0.35)
+			(type solid)
+			(color 60 60 60 1)
+		)
+		(fill
+			(type color)
+			(color 247 247 243 1)
+		)
+		(uuid "8ed31537-57c6-5dbc-945a-8f5434a7d2b1")
+	)
+	(text "Light sensor"
+		(exclude_from_sim yes)
+		(at 21 58.5 0)
+		(effects
+			(font
+				(size 2.2 2.2)
+				(color 60 60 60 1)
+				(bold yes)
+			)
+			(justify left bottom)
+		)
+		(uuid "9b0bf7db-6e4e-5da2-ba0c-01a060ee80dd")
+	)
+	(text "GL5528 LDR + 10k"
+		(exclude_from_sim yes)
+		(at 21 64 0)
+		(effects
+			(font
+				(size 1.5 1.5)
+				(color 60 60 60 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "90b89d15-e62b-5315-b3ce-12a7eeff28cd")
+	)
+	(text "resistive divider"
+		(exclude_from_sim yes)
+		(at 21 66.2 0)
+		(effects
+			(font
+				(size 1.5 1.5)
+				(color 60 60 60 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "1a6ad48e-30ef-5ef0-920f-08a87f8c03ba")
+	)
+	(rectangle
+		(start 96 52)
+		(end 178 92)
+		(stroke
+			(width 0.35)
+			(type solid)
+			(color 60 60 60 1)
+		)
+		(fill
+			(type color)
+			(color 247 247 243 1)
+		)
+		(uuid "f883908a-ba72-537d-9a06-0bd59e7a3ce2")
+	)
+	(text "STM32F401CCU6"
+		(exclude_from_sim yes)
+		(at 99 58.5 0)
+		(effects
+			(font
+				(size 2.2 2.2)
+				(color 60 60 60 1)
+				(bold yes)
+			)
+			(justify left bottom)
+		)
+		(uuid "628ab4dc-3c96-5c13-a689-61c945821464")
+	)
+	(text "WeAct Black Pill, HSI 16 MHz"
+		(exclude_from_sim yes)
+		(at 99 64 0)
+		(effects
+			(font
+				(size 1.5 1.5)
+				(color 60 60 60 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "6286ba1c-38e4-53cf-a0c2-8f5d2f663871")
+	)
+	(text "ADC1_IN0, TIM2 TRGO 200 Hz"
+		(exclude_from_sim yes)
+		(at 99 68.4 0)
+		(effects
+			(font
+				(size 1.5 1.5)
+				(color 60 60 60 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "89b37af9-9e9c-577d-bd3e-603ca32f2124")
+	)
+	(text "DMA2 S0 -> 20-sample ring"
+		(exclude_from_sim yes)
+		(at 99 70.6 0)
+		(effects
+			(font
+				(size 1.5 1.5)
+				(color 60 60 60 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "9e6b41e0-4eed-5dca-b793-e2095b951809")
+	)
+	(text "avg 10 -> LGHT @ 20 rec/s"
+		(exclude_from_sim yes)
+		(at 99 72.8 0)
+		(effects
+			(font
+				(size 1.5 1.5)
+				(color 60 60 60 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "2c2e9492-fe18-53dc-8e8d-1538b14e5500")
+	)
+	(text "SPI1 slave, hardware NSS"
+		(exclude_from_sim yes)
+		(at 99 77.2 0)
+		(effects
+			(font
+				(size 1.5 1.5)
+				(color 60 60 60 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "5994eddf-8954-5d54-b433-0b18350d37c5")
+	)
+	(text "DMA2 S3 circular TX, free-run"
+		(exclude_from_sim yes)
+		(at 99 79.4 0)
+		(effects
+			(font
+				(size 1.5 1.5)
+				(color 60 60 60 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "b9e47715-93ac-5d28-a873-1f68cbdc8694")
+	)
+	(text "DMA2 S2 circular RX (debug)"
+		(exclude_from_sim yes)
+		(at 99 81.6 0)
+		(effects
+			(font
+				(size 1.5 1.5)
+				(color 60 60 60 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "7644dbd2-3c4d-5bac-b3aa-1b969c6006de")
+	)
+	(polyline
+		(pts
+			(xy 80 66) (xy 96 66)
+		)
+		(stroke
+			(width 0.35)
+			(type solid)
+			(color 140 100 40 1)
+		)
+		(uuid "f54ceae5-5f58-5621-98da-263bd365548d")
+	)
+	(polyline
+		(pts
+			(xy 96 66) (xy 94.0947 67.1)
+		)
+		(stroke
+			(width 0.35)
+			(type solid)
+			(color 140 100 40 1)
+		)
+		(uuid "2d9ecf2a-7bb3-53e7-9a67-eb15964120f5")
+	)
+	(polyline
+		(pts
+			(xy 96 66) (xy 94.0947 64.9)
+		)
+		(stroke
+			(width 0.35)
+			(type solid)
+			(color 140 100 40 1)
+		)
+		(uuid "beacca3d-7f0c-503d-a3f2-1a6d7e224335")
+	)
+	(text "LIGHT_A"
+		(exclude_from_sim yes)
+		(at 82 63.5 0)
+		(effects
+			(font
+				(size 1.4 1.4)
+				(color 140 100 40 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "c08e5411-2176-59e2-b333-9460371dc62b")
+	)
+	(rectangle
+		(start 18 92)
+		(end 80 114)
+		(stroke
+			(width 0.35)
+			(type solid)
+			(color 60 60 60 1)
+		)
+		(fill
+			(type color)
+			(color 247 247 243 1)
+		)
+		(uuid "d3b9103b-f175-50fd-a4dc-fc10e68a9655")
+	)
+	(text "PC13 activity LED"
+		(exclude_from_sim yes)
+		(at 21 98.5 0)
+		(effects
+			(font
+				(size 2.2 2.2)
+				(color 60 60 60 1)
+				(bold yes)
+			)
+			(justify left bottom)
+		)
+		(uuid "99c4e835-6ba6-5018-a288-525f0da27b03")
+	)
+	(text "active low, pulsed"
+		(exclude_from_sim yes)
+		(at 21 104 0)
+		(effects
+			(font
+				(size 1.5 1.5)
+				(color 60 60 60 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "b94ac9fe-8e13-5147-877a-1da77c5cd2cf")
+	)
+	(text "on SPI traffic"
+		(exclude_from_sim yes)
+		(at 21 106.2 0)
+		(effects
+			(font
+				(size 1.5 1.5)
+				(color 60 60 60 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "8f5a9c58-527a-5af8-9fc9-a90e90719e7c")
+	)
+	(polyline
+		(pts
+			(xy 96 84) (xy 88 84) (xy 88 103) (xy 80 103)
+		)
+		(stroke
+			(width 0.35)
+			(type solid)
+			(color 140 100 40 1)
+		)
+		(uuid "acd479f1-7468-5733-bee1-44193a373f57")
+	)
+	(polyline
+		(pts
+			(xy 80 103) (xy 81.9053 101.9)
+		)
+		(stroke
+			(width 0.35)
+			(type solid)
+			(color 140 100 40 1)
+		)
+		(uuid "10d3895c-f4d9-500a-8ea2-fadd8ba3ae05")
+	)
+	(polyline
+		(pts
+			(xy 80 103) (xy 81.9053 104.1)
+		)
+		(stroke
+			(width 0.35)
+			(type solid)
+			(color 140 100 40 1)
+		)
+		(uuid "b7a80bab-79cf-5a28-b0a3-d5bb90cd5166")
+	)
+	(polyline
+		(pts
+			(xy 34 140) (xy 190 140)
+		)
+		(stroke
+			(width 1.4)
+			(type solid)
+			(color 170 60 40 1)
+		)
+		(uuid "96e957b8-da26-59d0-beca-45cb7efa3d4d")
+	)
+	(text "I2C1 - PB6 SCL / PB7 SDA"
+		(exclude_from_sim yes)
+		(at 34 132.5 0)
+		(effects
+			(font
+				(size 2.2 2.2)
+				(color 170 60 40 1)
+				(bold yes)
+			)
+			(justify left bottom)
+		)
+		(uuid "8f509c0b-635d-537f-be1f-02da4c22a31c")
+	)
+	(text "100 kHz, blocking HAL, CPU-driven. Three addresses on one bus."
+		(exclude_from_sim yes)
+		(at 34 136.8 0)
+		(effects
+			(font
+				(size 1.5 1.5)
+				(color 170 60 40 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "5be373e0-1c23-5e0c-971d-f9002685c3c4")
+	)
+	(polyline
+		(pts
+			(xy 120 92) (xy 120 140)
+		)
+		(stroke
+			(width 0.4)
+			(type solid)
+			(color 170 60 40 1)
+		)
+		(uuid "53cd801b-a07e-5a48-947c-c975c3c54767")
+	)
+	(rectangle
+		(start 30 154)
+		(end 122 180)
+		(stroke
+			(width 0.35)
+			(type solid)
+			(color 60 60 60 1)
+		)
+		(fill
+			(type color)
+			(color 247 247 243 1)
+		)
+		(uuid "88dc1b2b-c075-5df3-867d-aa47458d3ac0")
+	)
+	(text "Tiny RTC module"
+		(exclude_from_sim yes)
+		(at 33 160.5 0)
+		(effects
+			(font
+				(size 2.2 2.2)
+				(color 60 60 60 1)
+				(bold yes)
+			)
+			(justify left bottom)
+		)
+		(uuid "cd95b043-0c4d-5767-9c4b-26232fdafa72")
+	)
+	(text "DS1307 RTC - 0x68"
+		(exclude_from_sim yes)
+		(at 33 166 0)
+		(effects
+			(font
+				(size 1.5 1.5)
+				(color 60 60 60 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "bb26b783-0e20-51da-98c4-9847760a4977")
+	)
+	(text "    +56 B NV-SRAM, CR2032 backup"
+		(exclude_from_sim yes)
+		(at 33 168.2 0)
+		(effects
+			(font
+				(size 1.5 1.5)
+				(color 60 60 60 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "dbd65dce-5830-53e1-bbcf-dbe1d150a30c")
+	)
+	(text "AT24C32 EEPROM - 0x50"
+		(exclude_from_sim yes)
+		(at 33 170.4 0)
+		(effects
+			(font
+				(size 1.5 1.5)
+				(color 60 60 60 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "d123f64d-1e60-59ba-8ef6-70dc3990bd14")
+	)
+	(text "    4 KB, hourly light archive"
+		(exclude_from_sim yes)
+		(at 33 172.6 0)
+		(effects
+			(font
+				(size 1.5 1.5)
+				(color 60 60 60 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "df5c7897-8b54-56d3-9416-e397c41355bf")
+	)
+	(polyline
+		(pts
+			(xy 68 140) (xy 68 154)
+		)
+		(stroke
+			(width 0.4)
+			(type solid)
+			(color 170 60 40 1)
+		)
+		(uuid "75f1e0ca-9651-59f2-a9e5-e277c70663cf")
+	)
+	(rectangle
+		(start 134 154)
+		(end 190 176)
+		(stroke
+			(width 0.35)
+			(type solid)
+			(color 60 60 60 1)
+		)
+		(fill
+			(type color)
+			(color 247 247 243 1)
+		)
+		(uuid "793b0bf7-ac30-54b9-9b68-d27f228ab3a4")
+	)
+	(text "SSD1306 OLED"
+		(exclude_from_sim yes)
+		(at 137 160.5 0)
+		(effects
+			(font
+				(size 2.2 2.2)
+				(color 60 60 60 1)
+				(bold yes)
+			)
+			(justify left bottom)
+		)
+		(uuid "98cba4e1-c7e8-5e96-9a87-f2c7f1e72084")
+	)
+	(text "0x3C, 128x64"
+		(exclude_from_sim yes)
+		(at 137 166 0)
+		(effects
+			(font
+				(size 1.5 1.5)
+				(color 60 60 60 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "6793d6de-f5b2-545a-914c-e326dba59efc")
+	)
+	(text "1 Hz status frame"
+		(exclude_from_sim yes)
+		(at 137 168.2 0)
+		(effects
+			(font
+				(size 1.5 1.5)
+				(color 60 60 60 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "4bb266a5-aff1-59bf-9922-372048f27043")
+	)
+	(polyline
+		(pts
+			(xy 162 140) (xy 162 154)
+		)
+		(stroke
+			(width 0.4)
+			(type solid)
+			(color 170 60 40 1)
+		)
+		(uuid "9f668143-7174-58ee-94a1-906573c81acd")
+	)
+	(polyline
+		(pts
+			(xy 178 72) (xy 198 72) (xy 198 208)
+		)
+		(stroke
+			(width 0.4)
+			(type solid)
+			(color 170 60 40 1)
+		)
+		(uuid "0ad03e92-20a1-5c8f-b875-9e7b53282a6a")
+	)
+	(text "SPI1 slave"
+		(exclude_from_sim yes)
+		(at 180 69 0)
+		(effects
+			(font
+				(size 1.4 1.4)
+				(color 170 60 40 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "660584d6-750a-57d9-8b28-41584b39f565")
+	)
+	(rectangle
+		(start 236 52)
+		(end 320 92)
+		(stroke
+			(width 0.35)
+			(type solid)
+			(color 60 60 60 1)
+		)
+		(fill
+			(type color)
+			(color 247 247 243 1)
+		)
+		(uuid "258f2adb-9bb5-5d59-9872-fda8cb360e98")
+	)
+	(text "ESP32-C3-DevKitM-1"
+		(exclude_from_sim yes)
+		(at 239 58.5 0)
+		(effects
+			(font
+				(size 2.2 2.2)
+				(color 60 60 60 1)
+				(bold yes)
+			)
+			(justify left bottom)
+		)
+		(uuid "968bb006-b3ec-5ca7-a3a6-1e056f5a7cf4")
+	)
+	(text "SPI2 (FSPI) master + collector"
+		(exclude_from_sim yes)
+		(at 239 64 0)
+		(effects
+			(font
+				(size 1.5 1.5)
+				(color 60 60 60 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "6fc3f984-c898-59b2-9a01-16a4ae1d26df")
+	)
+	(text "CS scan / hot-plug detect"
+		(exclude_from_sim yes)
+		(at 239 68.4 0)
+		(effects
+			(font
+				(size 1.5 1.5)
+				(color 60 60 60 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "7dc07ba7-2432-5a6c-9a65-b0cb53fab58c")
+	)
+	(text "512-byte DMA blocks, ping-pong"
+		(exclude_from_sim yes)
+		(at 239 70.6 0)
+		(effects
+			(font
+				(size 1.5 1.5)
+				(color 60 60 60 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "adcd1124-f915-5881-8375-7fddaff66456")
+	)
+	(text "parse packets, CRC, seq / drops"
+		(exclude_from_sim yes)
+		(at 239 72.8 0)
+		(effects
+			(font
+				(size 1.5 1.5)
+				(color 60 60 60 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "0a7bee7f-940b-5649-b4e2-38cf0839f5d6")
+	)
+	(text "IO4 SCK   IO6 MOSI   IO5 MISO"
+		(exclude_from_sim yes)
+		(at 239 77.2 0)
+		(effects
+			(font
+				(size 1.5 1.5)
+				(color 60 60 60 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "01bdd010-2d15-5ed9-8012-4cb7fb81cdd6")
+	)
+	(text "IO7 CS0 (STM)  IO3 CS3 (SD)"
+		(exclude_from_sim yes)
+		(at 239 79.4 0)
+		(effects
+			(font
+				(size 1.5 1.5)
+				(color 60 60 60 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "f746ab2d-6b1e-5ab6-9a8d-c47ceb554816")
+	)
+	(text "33R series damping on SCK"
+		(exclude_from_sim yes)
+		(at 239 81.6 0)
+		(effects
+			(font
+				(size 1.5 1.5)
+				(color 60 60 60 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "69fe7dec-429e-5adc-84f3-e774dc6ef608")
+	)
+	(rectangle
+		(start 338 52)
+		(end 402 76)
+		(stroke
+			(width 0.35)
+			(type solid)
+			(color 60 60 60 1)
+		)
+		(fill
+			(type color)
+			(color 247 247 243 1)
+		)
+		(uuid "4c37d896-a92e-5883-bebd-7e3aec1e75b8")
+	)
+	(text "UART1 log sink"
+		(exclude_from_sim yes)
+		(at 341 58.5 0)
+		(effects
+			(font
+				(size 2.2 2.2)
+				(color 60 60 60 1)
+				(bold yes)
+			)
+			(justify left bottom)
+		)
+		(uuid "d80b43d4-61fa-5548-9a23-2486bbf51f5f")
+	)
+	(text "IO0 TX @ 115200 8N1"
+		(exclude_from_sim yes)
+		(at 341 64 0)
+		(effects
+			(font
+				(size 1.5 1.5)
+				(color 60 60 60 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "b31c1c31-66ec-50e4-96a0-bffe09449050")
+	)
+	(text "header: TX / GND"
+		(exclude_from_sim yes)
+		(at 341 66.2 0)
+		(effects
+			(font
+				(size 1.5 1.5)
+				(color 60 60 60 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "56329b71-cb56-5467-b525-beafeb0eb4d5")
+	)
+	(polyline
+		(pts
+			(xy 320 64) (xy 338 64)
+		)
+		(stroke
+			(width 0.35)
+			(type solid)
+			(color 140 100 40 1)
+		)
+		(uuid "df6aba7c-757d-50f0-a9a9-af572384a09c")
+	)
+	(polyline
+		(pts
+			(xy 338 64) (xy 336.0947 65.1)
+		)
+		(stroke
+			(width 0.35)
+			(type solid)
+			(color 140 100 40 1)
+		)
+		(uuid "256d6637-160d-52ea-b89b-f3939ce5b131")
+	)
+	(polyline
+		(pts
+			(xy 338 64) (xy 336.0947 62.9)
+		)
+		(stroke
+			(width 0.35)
+			(type solid)
+			(color 140 100 40 1)
+		)
+		(uuid "3aa76b7c-eb15-589b-b6d5-036536fbda2c")
+	)
+	(text "ESP_UART1_TX"
+		(exclude_from_sim yes)
+		(at 321 61.5 0)
+		(effects
+			(font
+				(size 1.4 1.4)
+				(color 140 100 40 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "96563031-439c-530b-a4c3-523dd104f361")
+	)
+	(rectangle
+		(start 338 88)
+		(end 402 110)
+		(stroke
+			(width 0.35)
+			(type solid)
+			(color 60 60 60 1)
+		)
+		(fill
+			(type color)
+			(color 247 247 243 1)
+		)
+		(uuid "a4c8696f-3e67-5e3e-8f1f-4c3b5e8d3fd1")
+	)
+	(text "IO8 activity LED"
+		(exclude_from_sim yes)
+		(at 341 94.5 0)
+		(effects
+			(font
+				(size 2.2 2.2)
+				(color 60 60 60 1)
+				(bold yes)
+			)
+			(justify left bottom)
+		)
+		(uuid "76321a35-2e2c-59a5-836e-eabac95e6867")
+	)
+	(text "active low, 15 ms"
+		(exclude_from_sim yes)
+		(at 341 100 0)
+		(effects
+			(font
+				(size 1.5 1.5)
+				(color 60 60 60 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "40ab2495-cdb6-59ab-b5f1-e8b1dd74ccea")
+	)
+	(text "pulse per block"
+		(exclude_from_sim yes)
+		(at 341 102.2 0)
+		(effects
+			(font
+				(size 1.5 1.5)
+				(color 60 60 60 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "4274a279-bd69-5105-a1d1-8315eddeccb0")
+	)
+	(polyline
+		(pts
+			(xy 320 84) (xy 329 84) (xy 329 99) (xy 338 99)
+		)
+		(stroke
+			(width 0.35)
+			(type solid)
+			(color 140 100 40 1)
+		)
+		(uuid "119ac39d-27b9-5e1c-aef4-0fcc628d68e9")
+	)
+	(polyline
+		(pts
+			(xy 338 99) (xy 336.0947 100.1)
+		)
+		(stroke
+			(width 0.35)
+			(type solid)
+			(color 140 100 40 1)
+		)
+		(uuid "0b1396b0-23ad-5c87-bbd2-3563d3471e3d")
+	)
+	(polyline
+		(pts
+			(xy 338 99) (xy 336.0947 97.9)
+		)
+		(stroke
+			(width 0.35)
+			(type solid)
+			(color 140 100 40 1)
+		)
+		(uuid "19016811-c200-5b1b-86ab-4f123c7dff5d")
+	)
+	(polyline
+		(pts
+			(xy 258 92) (xy 258 144)
+		)
+		(stroke
+			(width 0.4)
+			(type dash)
+			(color 150 150 150 1)
+		)
+		(uuid "bc675ea3-7b70-5e97-b734-b7e6f239790b")
+	)
+	(text "I2C0 - IO9 / IO10, 400 kHz"
+		(exclude_from_sim yes)
+		(at 260 131 0)
+		(effects
+			(font
+				(size 1.4 1.4)
+				(color 150 150 150 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "fb7597ce-d68b-5639-b84c-b13f4262d89a")
+	)
+	(rectangle
+		(start 220 144)
+		(end 292 168)
+		(stroke
+			(width 0.35)
+			(type dash)
+			(color 150 150 150 1)
+		)
+		(fill
+			(type none)
+		)
+		(uuid "7cbc63c0-005a-5dbb-81da-212b524a83a0")
+	)
+	(text "SSD1306 OLED - not fitted"
+		(exclude_from_sim yes)
+		(at 223 150.5 0)
+		(effects
+			(font
+				(size 2.2 2.2)
+				(color 150 150 150 1)
+				(bold yes)
+			)
+			(justify left bottom)
+		)
+		(uuid "13641bbd-2929-51af-8b39-2f779a574756")
+	)
+	(text "sink is compiled in, but no"
+		(exclude_from_sim yes)
+		(at 223 156 0)
+		(effects
+			(font
+				(size 1.5 1.5)
+				(color 150 150 150 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "db150692-0e9b-52f2-8b87-5475eadd60df")
+	)
+	(text "display on this rig; pins spare"
+		(exclude_from_sim yes)
+		(at 223 158.2 0)
+		(effects
+			(font
+				(size 1.5 1.5)
+				(color 150 150 150 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "69dc619f-0cd7-5725-8663-c96fb3e68613")
+	)
+	(rectangle
+		(start 326 140)
+		(end 402 164)
+		(stroke
+			(width 0.35)
+			(type solid)
+			(color 60 60 60 1)
+		)
+		(fill
+			(type color)
+			(color 247 247 243 1)
+		)
+		(uuid "851f6111-d9a6-554d-90b0-ca05c5cfc7ba")
+	)
+	(text "microSD card"
+		(exclude_from_sim yes)
+		(at 329 146.5 0)
+		(effects
+			(font
+				(size 2.2 2.2)
+				(color 60 60 60 1)
+				(bold yes)
+			)
+			(justify left bottom)
+		)
+		(uuid "314df1b5-d249-5443-9184-4846bba288de")
+	)
+	(text "FAT32 (SDSPI + FATFS)"
+		(exclude_from_sim yes)
+		(at 329 152 0)
+		(effects
+			(font
+				(size 1.5 1.5)
+				(color 60 60 60 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "f5affbac-f5d0-5538-8e6a-e695430a83ef")
+	)
+	(text "datalog.txt, append + fflush"
+		(exclude_from_sim yes)
+		(at 329 154.2 0)
+		(effects
+			(font
+				(size 1.5 1.5)
+				(color 60 60 60 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "86e924f3-5d1f-5cd4-b227-47ba15a74922")
+	)
+	(text "own CS, synchronous - no DMA"
+		(exclude_from_sim yes)
+		(at 329 156.4 0)
+		(effects
+			(font
+				(size 1.5 1.5)
+				(color 60 60 60 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "0354a125-21f0-5ecf-9b23-fedf65bbffc4")
+	)
+	(polyline
+		(pts
+			(xy 302 92) (xy 302 208)
+		)
+		(stroke
+			(width 0.4)
+			(type solid)
+			(color 170 60 40 1)
+		)
+		(uuid "c4d28118-a47a-53f9-98fd-9e5ca25ebabf")
+	)
+	(polyline
+		(pts
+			(xy 364 164) (xy 364 208)
+		)
+		(stroke
+			(width 0.4)
+			(type solid)
+			(color 170 60 40 1)
+		)
+		(uuid "6d0a8c84-531e-517a-9195-36c3ff1633b3")
+	)
+	(polyline
+		(pts
+			(xy 40 208) (xy 396 208)
+		)
+		(stroke
+			(width 1.4)
+			(type solid)
+			(color 170 60 40 1)
+		)
+		(uuid "e9b69831-18ce-5904-a7c6-4ed011a719cc")
+	)
+	(text "SPI BUS  -  SCK / MOSI / MISO shared, one CS per slave"
+		(exclude_from_sim yes)
+		(at 40 200.5 0)
+		(effects
+			(font
+				(size 2.2 2.2)
+				(color 170 60 40 1)
+				(bold yes)
+			)
+			(justify left bottom)
+		)
+		(uuid "ac0ca424-e3cf-5607-abd3-b4f2f44b57c2")
+	)
+	(text "mode 0 (CPOL=0, CPHA=0), MSB first, 8-bit, 2 MHz"
+		(exclude_from_sim yes)
+		(at 40 204.8 0)
+		(effects
+			(font
+				(size 1.5 1.5)
+				(color 170 60 40 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "4992e24e-935c-5e56-b31b-501767a44056")
+	)
+	(text "SPI_MISO + SPI_CS0_STM"
+		(exclude_from_sim yes)
+		(at 200 213 0)
+		(effects
+			(font
+				(size 1.4 1.4)
+				(color 170 60 40 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "073a7e92-1b4f-5fe6-bcc0-693dd509b611")
+	)
+	(text "master - clocks the bus, CS selects the slave"
+		(exclude_from_sim yes)
+		(at 304 213 0)
+		(effects
+			(font
+				(size 1.4 1.4)
+				(color 170 60 40 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "27e10ac3-a6f1-5b9e-8efa-4abd32f8340e")
+	)
+	(text "SPI_CS3_SD"
+		(exclude_from_sim yes)
+		(at 366 213 0)
+		(effects
+			(font
+				(size 1.4 1.4)
+				(color 170 60 40 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "4a06e255-b333-5f20-bc86-1cc4ad3dca02")
+	)
+	(polyline
+		(pts
+			(xy 96 208) (xy 96 220)
+		)
+		(stroke
+			(width 0.4)
+			(type dash)
+			(color 150 150 150 1)
+		)
+		(uuid "218a6dad-659d-5516-a59e-d60358070afb")
+	)
+	(rectangle
+		(start 44 220)
+		(end 148 242)
+		(stroke
+			(width 0.35)
+			(type dash)
+			(color 150 150 150 1)
+		)
+		(fill
+			(type none)
+		)
+		(uuid "8b261631-e4d0-5471-9493-36188dbb07f2")
+	)
+	(text "ESP32-S3 laser node - planned"
+		(exclude_from_sim yes)
+		(at 47 226.5 0)
+		(effects
+			(font
+				(size 2.2 2.2)
+				(color 150 150 150 1)
+				(bold yes)
+			)
+			(justify left bottom)
+		)
+		(uuid "fd9fc68f-fb77-5e8f-9331-883d408abfb6")
+	)
+	(text "a second SPI slave on a spare CS;"
+		(exclude_from_sim yes)
+		(at 47 232 0)
+		(effects
+			(font
+				(size 1.5 1.5)
+				(color 150 150 150 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "8c0df991-3882-5b32-952f-eb493f783965")
+	)
+	(text "not wired on this rig"
+		(exclude_from_sim yes)
+		(at 47 234.2 0)
+		(effects
+			(font
+				(size 1.5 1.5)
+				(color 150 150 150 1)
+			)
+			(justify left bottom)
+		)
+		(uuid "620da7c8-3259-5c2a-ae6a-238a5080dfed")
+	)
+	(text_box "HOW TO READ THIS SHEET\nBoxes are nodes, thick lines are buses. Everything touching a bus line shares the same physical\nwires and is selected by address (I2C) or by CS (SPI); slaves never talk to each other. Dashed\ngrey means present in firmware but not fitted on this rig.\n\nLog stream  One-way and best effort: the master clocks 0xFF filler on MOSI, slaves present\n            self-framed packets on MISO. No ack, no time sync, no command set.\nRecords     TIME (VT_DATETIME, 1 Hz from the DS1307) and LGHT (ADC average, 20 Hz).\nRates       The slave emits ~470 B/s; the master drains ~125 KB/s in 512-byte blocks.\nGround      Two separate builds and two separate power domains. Tie the grounds together.\nCS lines    Drive every CS high straight after bus init. A floating NSS let the STM32 drive\n            MISO during an SD transaction and corrupted the mount; pull-ups are the fuller fix."
+		(exclude_from_sim yes)
+		(at 14 243 0)
+		(size 212 33)
+		(margins 1.27 1.27 1.27 1.27)
+		(stroke
+			(width 0.2)
+			(type solid)
+			(color 60 60 60 1)
+		)
+		(fill
+			(type none)
+		)
+		(effects
+			(font
+				(size 1.5 1.5)
+			)
+			(justify left top)
+		)
+		(uuid "c2bfde61-9824-5a9f-aec6-e83fdd6e1ee9")
+	)
+	(sheet_instances
+		(path "/"
+			(page "1")
+		)
+	)
+	(embedded_fonts no)
+)

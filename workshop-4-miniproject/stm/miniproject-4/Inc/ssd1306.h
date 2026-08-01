@@ -33,7 +33,54 @@
 
 #define SSD1306_CTRL_CMD   0x00   /* далі йдуть команди */
 #define SSD1306_CTRL_DATA  0x40   /* далі йдуть дані (GDDRAM) */
-#define SSD1306_MAX_BUFFER (128 * 64 / 8)
+
+/* --- Геометрія GDDRAM --- */
+#define SSD1306_PAGE_HEIGHT 8     /* рядків пікселів в одному байті (сторінка) */
+#define SSD1306_MAX_WIDTH   128   /* найбільша підтримана ширина панелі */
+#define SSD1306_MAX_HEIGHT  64    /* найбільша підтримана висота панелі */
+#define SSD1306_HEIGHT_32   32    /* висота, для якої потрібні інші multiplex/COM pins */
+#define SSD1306_MAX_BUFFER  (SSD1306_MAX_WIDTH * SSD1306_MAX_HEIGHT / SSD1306_PAGE_HEIGHT)
+#define SSD1306_FIRST_COLUMN 0    /* ліва колонка вікна запису */
+#define SSD1306_FIRST_PAGE   0    /* верхня сторінка вікна запису */
+
+/* --- Візерунки заповнення кадрового буфера (SSD1306_Clear) --- */
+#define SSD1306_FILL_BLANK 0x00   /* усі пікселі згашені */
+#define SSD1306_FILL_SOLID 0xFF   /* усі пікселі засвічені */
+
+/* --- Коди команд (нумерація — кроки з плану ініціалізації вище) --- */
+#define SSD1306_CMD_DISPLAY_OFF        0xAE  /* 1  */
+#define SSD1306_CMD_SET_MULTIPLEX      0xA8  /* 2  */
+#define SSD1306_CMD_SET_DISPLAY_OFFSET 0xD3  /* 3  */
+#define SSD1306_CMD_SET_START_LINE     0x40  /* 4  (start line = 0) */
+#define SSD1306_CMD_SET_MEM_MODE       0x20  /* 5  */
+#define SSD1306_CMD_SEG_REMAP          0xA1  /* 6  дзеркало по X */
+#define SSD1306_CMD_COM_SCAN_DEC       0xC8  /* 7  дзеркало по Y */
+#define SSD1306_CMD_SET_COM_PINS       0xDA  /* 8  */
+#define SSD1306_CMD_SET_CONTRAST       0x81  /* 9  */
+#define SSD1306_CMD_SET_PRECHARGE      0xD9  /* 10 */
+#define SSD1306_CMD_SET_VCOM_DETECT    0xDB  /* 11 */
+#define SSD1306_CMD_RESUME_RAM         0xA4  /* 12 */
+#define SSD1306_CMD_NORMAL_DISPLAY     0xA6  /* 13 */
+#define SSD1306_CMD_INVERT_DISPLAY     0xA7  /* 13' інверсія */
+#define SSD1306_CMD_CHARGE_PUMP        0x8D  /* 14 */
+#define SSD1306_CMD_DISPLAY_ON         0xAF  /* 15 */
+#define SSD1306_CMD_SET_COL_ADDR       0x21  /* вікно запису: колонки */
+#define SSD1306_CMD_SET_PAGE_ADDR      0x22  /* вікно запису: сторінки */
+
+/* --- Аргументи команд --- */
+#define SSD1306_MEM_MODE_HORIZONTAL   0x00  /* до п.5: горизонтальна адресація */
+#define SSD1306_DISPLAY_OFFSET_NONE   0x00  /* до п.3 */
+#define SSD1306_MULTIPLEX_32ROW       0x1F  /* до п.2 для панелі 128x32 */
+#define SSD1306_MULTIPLEX_64ROW       0x3F  /* до п.2 для панелі 128x64 */
+#define SSD1306_COM_PINS_32ROW        0x02  /* до п.8 для панелі 128x32 */
+#define SSD1306_COM_PINS_64ROW        0x12  /* до п.8 для панелі 128x64 */
+#define SSD1306_CONTRAST_DEFAULT      0x7F  /* до п.9: середина діапазону */
+#define SSD1306_PRECHARGE_DEFAULT     0xF1  /* до п.10 */
+#define SSD1306_VCOM_DESELECT_DEFAULT 0x40  /* до п.11 */
+#define SSD1306_CHARGE_PUMP_ON        0x14  /* до п.14 */
+
+/* Скільки чекати після ввімкнення charge pump, доки підніметься напруга панелі. */
+#define SSD1306_CHARGE_PUMP_DELAY_MS 100
 
 /* Таймаут одного I2C-обміну (мс). Це дедлайн на ВЕСЬ обмін, а не на байт:
  * HAL_I2C_Mem_Write бере tickstart один раз і звіряє з ним кожне очікування
@@ -79,9 +126,9 @@ static inline void SSD1306_DrawPixel(Ssd1306 *d, int16_t x, int16_t y, uint8_t o
     if (x < 0 || y < 0 || x >= d->width || y >= d->height) {
         return;
     }
-    /* Сторінкова упаковка: байт містить 8 пікселів по вертикалі. */
-    uint16_t index = (uint16_t)x + (uint16_t)(y / 8) * d->width;
-    uint8_t  bit   = (uint8_t)(1 << (y & 0x07));
+    /* Сторінкова упаковка: байт містить SSD1306_PAGE_HEIGHT пікселів по вертикалі. */
+    uint16_t index = (uint16_t)x + (uint16_t)(y / SSD1306_PAGE_HEIGHT) * d->width;
+    uint8_t  bit   = (uint8_t)(1 << (y & (SSD1306_PAGE_HEIGHT - 1)));
     if (on) {
         d->buffer[index] |= bit;
     } else {
@@ -92,8 +139,10 @@ static inline void SSD1306_DrawPixel(Ssd1306 *d, int16_t x, int16_t y, uint8_t o
 /* Виставляємо вікно запису на весь екран і відправляємо буфер. */
 static inline HAL_StatusTypeDef SSD1306_Flush(Ssd1306 *d) {
     const uint8_t window[] = {
-        0x21, 0x00, (uint8_t)(d->width - 1),       /* column 0..W-1 */
-        0x22, 0x00, (uint8_t)(d->height / 8 - 1),  /* page 0..pages-1 */
+        SSD1306_CMD_SET_COL_ADDR,  SSD1306_FIRST_COLUMN,
+        (uint8_t)(d->width - 1),                                  /* column 0..W-1 */
+        SSD1306_CMD_SET_PAGE_ADDR, SSD1306_FIRST_PAGE,
+        (uint8_t)(d->height / SSD1306_PAGE_HEIGHT - 1),           /* page 0..pages-1 */
     };
     HAL_StatusTypeDef ret = SSD1306_Commands(d, window, sizeof(window));
     if (ret != HAL_OK) {
@@ -110,40 +159,42 @@ static inline void SSD1306_Setup(Ssd1306 *d, I2C_HandleTypeDef *hi2c, uint8_t ad
     d->width  = width;
     d->height = height;
     d->ready  = 0;  /* готовність виставляє SSD1306_Init */
-    d->bufferLen = (uint16_t)((uint16_t)width * height / 8);
+    d->bufferLen = (uint16_t)((uint16_t)width * height / SSD1306_PAGE_HEIGHT);
     if (d->bufferLen > SSD1306_MAX_BUFFER) {
         d->bufferLen = SSD1306_MAX_BUFFER;
     }
-    SSD1306_Clear(d, 0x00);
+    SSD1306_Clear(d, SSD1306_FILL_BLANK);
 }
 
 /* Повний план ініціалізації. I2C має бути ініціалізовано ЗОВНІ до виклику. */
 static inline HAL_StatusTypeDef SSD1306_Init(Ssd1306 *d) {
-    const uint8_t multiplex = (d->height == 32) ? 0x1F : 0x3F;  /* п.2 */
-    const uint8_t comPins   = (d->height == 32) ? 0x02 : 0x12;  /* п.8 */
+    const uint8_t multiplex = (d->height == SSD1306_HEIGHT_32) ? SSD1306_MULTIPLEX_32ROW
+                                                               : SSD1306_MULTIPLEX_64ROW;
+    const uint8_t comPins   = (d->height == SSD1306_HEIGHT_32) ? SSD1306_COM_PINS_32ROW
+                                                               : SSD1306_COM_PINS_64ROW;
     const uint8_t seq[] = {
-        0xAE,                  /* 1. Display OFF */
-        0xA8, multiplex,       /* 2. Set multiplex ratio */
-        0xD3, 0x00,            /* 3. Set display offset = 0 */
-        0x40,                  /* 4. Set start line = 0 */
-        0x20, 0x00,            /* 5. Addressing mode = Horizontal */
-        0xA1,                  /* 6. Segment remap (дзеркало по X) */
-        0xC8,                  /* 7. COM scan direction (дзеркало по Y) */
-        0xDA, comPins,         /* 8. COM pins config */
-        0x81, 0x7F,            /* 9. Contrast */
-        0xD9, 0xF1,            /* 10. Pre-charge period */
-        0xDB, 0x40,            /* 11. VCOMH deselect level */
-        0xA4,                  /* 12. Resume to RAM content */
-        0xA6,                  /* 13. Normal (не інверсний) режим */
-        0x8D, 0x14,            /* 14. Charge pump ON */
-        0xAF,                  /* 15. Display ON */
+        SSD1306_CMD_DISPLAY_OFF,                                    /* 1  */
+        SSD1306_CMD_SET_MULTIPLEX,      multiplex,                  /* 2  */
+        SSD1306_CMD_SET_DISPLAY_OFFSET, SSD1306_DISPLAY_OFFSET_NONE,/* 3  */
+        SSD1306_CMD_SET_START_LINE,                                 /* 4  */
+        SSD1306_CMD_SET_MEM_MODE,       SSD1306_MEM_MODE_HORIZONTAL,/* 5  */
+        SSD1306_CMD_SEG_REMAP,                                      /* 6  */
+        SSD1306_CMD_COM_SCAN_DEC,                                   /* 7  */
+        SSD1306_CMD_SET_COM_PINS,       comPins,                    /* 8  */
+        SSD1306_CMD_SET_CONTRAST,       SSD1306_CONTRAST_DEFAULT,   /* 9  */
+        SSD1306_CMD_SET_PRECHARGE,      SSD1306_PRECHARGE_DEFAULT,  /* 10 */
+        SSD1306_CMD_SET_VCOM_DETECT,    SSD1306_VCOM_DESELECT_DEFAULT, /* 11 */
+        SSD1306_CMD_RESUME_RAM,                                     /* 12 */
+        SSD1306_CMD_NORMAL_DISPLAY,                                 /* 13 */
+        SSD1306_CMD_CHARGE_PUMP,        SSD1306_CHARGE_PUMP_ON,     /* 14 */
+        SSD1306_CMD_DISPLAY_ON,                                     /* 15 */
     };
     HAL_StatusTypeDef ret = SSD1306_Commands(d, seq, sizeof(seq));
     if (ret != HAL_OK) {
         return ret;
     }
-    HAL_Delay(100);  /* даємо charge pump стабілізуватись */
-    SSD1306_Clear(d, 0x00);
+    HAL_Delay(SSD1306_CHARGE_PUMP_DELAY_MS);  /* даємо charge pump стабілізуватись */
+    SSD1306_Clear(d, SSD1306_FILL_BLANK);
     ret = SSD1306_Flush(d);
     d->ready = (ret == HAL_OK);  /* дисплей готовий лише за успішної ініціалізації */
     return ret;
@@ -151,13 +202,13 @@ static inline HAL_StatusTypeDef SSD1306_Init(Ssd1306 *d) {
 
 /* --- Зручні налаштування --- */
 static inline HAL_StatusTypeDef SSD1306_SetContrast(Ssd1306 *d, uint8_t value) {
-    const uint8_t seq[] = {0x81, value};
+    const uint8_t seq[] = {SSD1306_CMD_SET_CONTRAST, value};
     return SSD1306_Commands(d, seq, sizeof(seq));
 }
-static inline HAL_StatusTypeDef SSD1306_DisplayOn(Ssd1306 *d)  { return SSD1306_Command(d, 0xAF); }
-static inline HAL_StatusTypeDef SSD1306_DisplayOff(Ssd1306 *d) { return SSD1306_Command(d, 0xAE); }
+static inline HAL_StatusTypeDef SSD1306_DisplayOn(Ssd1306 *d)  { return SSD1306_Command(d, SSD1306_CMD_DISPLAY_ON); }
+static inline HAL_StatusTypeDef SSD1306_DisplayOff(Ssd1306 *d) { return SSD1306_Command(d, SSD1306_CMD_DISPLAY_OFF); }
 static inline HAL_StatusTypeDef SSD1306_Invert(Ssd1306 *d, uint8_t on) {
-    return SSD1306_Command(d, on ? 0xA7 : 0xA6);
+    return SSD1306_Command(d, on ? SSD1306_CMD_INVERT_DISPLAY : SSD1306_CMD_NORMAL_DISPLAY);
 }
 
 /* Малювання тексту винесено в окремий модуль TextRenderer (text_renderer.h),

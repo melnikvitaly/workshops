@@ -14,6 +14,29 @@ generated — keep hand-written code inside the `/* USER CODE BEGIN/END */` guar
 so it survives regeneration. Firmware settings (I2C addresses, log intervals,
 layout) are centralized in `Inc/config.h`.
 
+## Module layout
+
+`main.c` is a bootstrap only: CubeMX peripheral init (`MX_*_Init`,
+`SystemClock_Config`, `Error_Handler`) plus a non-blocking loop that calls one
+`*_Poll()` per module. Application state and logic live in the modules — put new
+code there, not in `main.c`:
+
+- `display_ui.c` — owns the `Ssd1306` object and the frame (clock / I2C
+  addresses / light / SPI rates); also drives the periodic bus scan that feeds
+  the address line, and re-inits the display after a failed I2C exchange.
+- `light_archive.c` — the hourly light byte into the external EEPROM, incl. the
+  next-write pointer stored in the EEPROM itself.
+- `i2c_bus.c` — bit-banged bus release (9 clocks + manual STOP) for a slave that
+  hangs holding SDA, and the full recover (`DeInit` → release → `HAL_I2C_Init`).
+  Called at boot before the first I2C use, and per frame while the OLED is down.
+- `sensor_stream.c` — ADC(DMA)+RTC sampling into the SPI log stream.
+- `log_emission.c` — the SPI log-slave (below).
+
+Modules take the `I2C_HandleTypeDef *` at `*_Init()` rather than reaching for
+`hi2c1`; only `sensor_stream.c` still uses `extern` handles (it owns TIM2/ADC
+glue). Device drivers (`ssd1306`, `ds1307`, `eeprom`, `i2c_scanner`,
+`text_renderer`, `adc`) are header-only `static inline` in `Inc/`.
+
 ## SPI log-slave
 
 The SPI log-slave is **entirely in `Src/log_emission.c` + `Inc/log_emission.h`**

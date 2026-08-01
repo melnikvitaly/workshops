@@ -11,6 +11,26 @@
  *  Власні примітиви (лінія/коло) реалізовані тут, щоб драйвер лишався мінімальним.
  * ============================================================================ */
 
+/* --- Пропорції мордочки (усе, крім вух, прив'язано до "радіуса" голови r) --- */
+#define CAT_EAR_INSET      2   /* наскільки основа вуха відступає від краю кола */
+#define CAT_EAR_DROP       4   /* наскільки основа вуха опущена нижче верху кола */
+#define CAT_EAR_BASE_NUM   2   /* піврозмах основи вуха = r * NUM / DEN */
+#define CAT_EAR_BASE_DEN   3
+#define CAT_EYE_DX_DEN     2   /* очі рознесені на r / DEN від центра */
+#define CAT_EYE_DY_DEN     5   /* і підняті на r / DEN над центром */
+#define CAT_EYE_RADIUS     3
+#define CAT_NOSE_DY_DEN    5   /* ніс опущений на r / DEN під центр */
+#define CAT_NOSE_HALF_W    3   /* півширина основи носа */
+#define CAT_NOSE_HEIGHT    4   /* від основи до кінчика (вершина дивиться вниз) */
+#define CAT_MOUTH_DX       5   /* розмах кутиків рота від кінчика носа */
+#define CAT_MOUTH_DY       3   /* і наскільки вони опущені */
+#define CAT_WHISKERS       3   /* вусів з кожного боку */
+#define CAT_WHISKER_STEP   4   /* вертикальний крок між вусами */
+#define CAT_WHISKER_INSET  6   /* відступ внутрішнього кінця вуса від центра */
+#define CAT_WHISKER_LEN    6   /* наскільки зовнішній кінець виходить за коло */
+#define CAT_WHISKER_TOP_DY 1   /* зсув пучка вусів відносно носа */
+#define CAT_WHISKER_SPREAD 2   /* нахил вуса: зовнішній кінець відхиляється вдвічі */
+
 /* --- Примітиви на основі SSD1306_DrawPixel --- */
 
 static inline void Cat_Line(Ssd1306 *d, int16_t x0, int16_t y0, int16_t x1, int16_t y1) {
@@ -79,43 +99,50 @@ static inline void Cat_Draw(Ssd1306 *d, int16_t cx, int16_t cy, int16_t r,
     if (cx < 0) cx = d->width / 2;
     if (cy < 0) cy = d->height / 2;
 
-    SSD1306_Clear(d, 0x00);
+    SSD1306_Clear(d, SSD1306_FILL_BLANK);
 
     /* --- Голова (коло) --- */
     Cat_Circle(d, cx, cy, r);
 
     /* --- Вуха (трикутники зверху, спираються на коло) --- */
-    const int16_t earH = r;              /* висота вуха */
-    const int16_t earW = (int16_t)(r * 2 / 3);  /* піврозмах основи */
+    const int16_t earH  = r;                                              /* висота вуха */
+    const int16_t earW  = (int16_t)(r * CAT_EAR_BASE_NUM / CAT_EAR_BASE_DEN); /* піврозмах основи */
+    const int16_t earX  = (int16_t)(r - CAT_EAR_INSET);                   /* основа від центра по X */
+    const int16_t earY  = (int16_t)(cy - r + CAT_EAR_DROP);               /* лінія основи вух */
     /* ліве вухо (кінчик ворушиться на earTilt) */
-    Cat_Triangle(d, cx - r + 2,        cy - r + 4,
-                    cx - r + 2 + earW, cy - r + 4,
-                    cx - r + 2 - earTilt, cy - r + 4 - earH);
+    Cat_Triangle(d, cx - earX,           earY,
+                    cx - earX + earW,    earY,
+                    cx - earX - earTilt, earY - earH);
     /* праве вухо (дзеркально) */
-    Cat_Triangle(d, cx + r - 2,        cy - r + 4,
-                    cx + r - 2 - earW, cy - r + 4,
-                    cx + r - 2 + earTilt, cy - r + 4 - earH);
+    Cat_Triangle(d, cx + earX,           earY,
+                    cx + earX - earW,    earY,
+                    cx + earX + earTilt, earY - earH);
 
     /* --- Очі (заповнені кружечки) --- */
-    const int16_t eyeDx = (int16_t)(r / 2);
-    const int16_t eyeDy = (int16_t)(r / 5);
-    Cat_FillCircle(d, cx - eyeDx, cy - eyeDy, 3);
-    Cat_FillCircle(d, cx + eyeDx, cy - eyeDy, 3);
+    const int16_t eyeDx = (int16_t)(r / CAT_EYE_DX_DEN);
+    const int16_t eyeDy = (int16_t)(r / CAT_EYE_DY_DEN);
+    Cat_FillCircle(d, cx - eyeDx, cy - eyeDy, CAT_EYE_RADIUS);
+    Cat_FillCircle(d, cx + eyeDx, cy - eyeDy, CAT_EYE_RADIUS);
 
     /* --- Ніс (маленький трикутник вершиною вниз) --- */
-    const int16_t noseY = (int16_t)(cy + r / 5);
-    Cat_Triangle(d, cx - 3, noseY, cx + 3, noseY, cx, noseY + 4);
+    const int16_t noseY = (int16_t)(cy + r / CAT_NOSE_DY_DEN);
+    const int16_t noseTipY = (int16_t)(noseY + CAT_NOSE_HEIGHT);
+    Cat_Triangle(d, cx - CAT_NOSE_HALF_W, noseY, cx + CAT_NOSE_HALF_W, noseY, cx, noseTipY);
 
-    /* --- Рот (дві дуги-лінії від носа) --- */
-    Cat_Line(d, cx, noseY + 4, cx - 5, noseY + 7);
-    Cat_Line(d, cx, noseY + 4, cx + 5, noseY + 7);
+    /* --- Рот (дві дуги-лінії від кінчика носа) --- */
+    Cat_Line(d, cx, noseTipY, cx - CAT_MOUTH_DX, noseTipY + CAT_MOUTH_DY);
+    Cat_Line(d, cx, noseTipY, cx + CAT_MOUTH_DX, noseTipY + CAT_MOUTH_DY);
 
-    /* --- Вуса (по три з кожного боку) --- */
-    const int16_t wy = (int16_t)(noseY + 1);
-    for (int i = 0; i < 3; ++i) {
-        const int16_t dy = (int16_t)((i - 1) * 4);
-        Cat_Line(d, cx - 6,  wy + dy, cx - r - 6, wy + dy * 2);  /* ліві */
-        Cat_Line(d, cx + 6,  wy + dy, cx + r + 6, wy + dy * 2);  /* праві */
+    /* --- Вуса (по CAT_WHISKERS з кожного боку) --- */
+    const int16_t wy = (int16_t)(noseY + CAT_WHISKER_TOP_DY);
+    for (int i = 0; i < CAT_WHISKERS; ++i) {
+        /* середній вус горизонтальний, крайні розходяться вгору і вниз */
+        const int16_t dy = (int16_t)((i - CAT_WHISKERS / 2) * CAT_WHISKER_STEP);
+        const int16_t outer = (int16_t)(r + CAT_WHISKER_LEN);
+        Cat_Line(d, cx - CAT_WHISKER_INSET, wy + dy,
+                    cx - outer,             wy + dy * CAT_WHISKER_SPREAD);  /* ліві */
+        Cat_Line(d, cx + CAT_WHISKER_INSET, wy + dy,
+                    cx + outer,             wy + dy * CAT_WHISKER_SPREAD);  /* праві */
     }
 
     if (flush) SSD1306_Flush(d);

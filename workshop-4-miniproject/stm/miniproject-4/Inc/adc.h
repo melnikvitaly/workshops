@@ -11,13 +11,15 @@
  *  АЦП-периферію (MX_ADC1_Init) треба ініціалізувати ЗОВНІ до використання.
  * ============================================================================ */
 
-#define ADC_MAX_RAW 4095  /* максимум для 12-бітної роздільності */
+#define ADC_MAX_RAW      4095  /* максимум для 12-бітної роздільності */
+#define ADC_PERCENT_FULL 100   /* повна шкала у відсотках */
+#define ADC_POLL_TIMEOUT 10    /* дедлайн одного перетворення, мс */
 
 /* Одне вимірювання -> сире 12-бітне значення (0..4095).
  * Повертає HAL_OK, а результат кладе у *out. */
 static inline HAL_StatusTypeDef ADC_ReadRaw(ADC_HandleTypeDef *hadc, uint32_t *out) {
     HAL_ADC_Start(hadc);
-    HAL_StatusTypeDef ret = HAL_ADC_PollForConversion(hadc, 10);  /* таймаут 10 мс */
+    HAL_StatusTypeDef ret = HAL_ADC_PollForConversion(hadc, ADC_POLL_TIMEOUT);
     if (ret == HAL_OK) {
         *out = HAL_ADC_GetValue(hadc);
     }
@@ -31,7 +33,7 @@ static inline HAL_StatusTypeDef ADC_ReadPercent(ADC_HandleTypeDef *hadc, uint8_t
     uint32_t raw = 0;
     HAL_StatusTypeDef ret = ADC_ReadRaw(hadc, &raw);
     if (ret == HAL_OK) {
-        *percent = (uint8_t)((raw * 100) / ADC_MAX_RAW);
+        *percent = (uint8_t)((raw * ADC_PERCENT_FULL) / ADC_MAX_RAW);
     }
     return ret;
 }

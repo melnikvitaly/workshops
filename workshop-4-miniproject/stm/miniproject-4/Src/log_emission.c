@@ -16,18 +16,34 @@
 #define LP_HEADER_SIZE  18
 #define LP_CRC_SIZE     2
 #define LP_OBJID_LEN    4
-#define LP_MAX_PACKET   (LP_HEADER_SIZE + 255 + LP_CRC_SIZE)  // 275
+#define LP_MAX_PAYLOAD  255                                  // payloadLen is one byte
+#define LP_MAX_PACKET   (LP_HEADER_SIZE + LP_MAX_PAYLOAD + LP_CRC_SIZE)  // 275
 
-// CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF), identical to the master's.
+// Header field offsets (see LogProtocol.hpp for the same layout on the master).
+#define LP_OFF_MAGIC    0   // uint8   frame marker
+#define LP_OFF_STATUS   1   // uint8   kind + flags
+#define LP_OFF_SEQ      2   // uint32  record id
+#define LP_OFF_DROPPED  6   // uint16  overflow events so far
+#define LP_OFF_UPTIME   8   // uint32  HAL_GetTick() at build time
+#define LP_OFF_OBJID    12  // char[4] source object id
+#define LP_OFF_VTYPE    16  // uint8   LogValueType
+#define LP_OFF_PLEN     17  // uint8   payload length
+
+// CRC-16/CCITT-FALSE, identical to the master's.
+#define CRC16_INIT      0xFFFFu
+#define CRC16_POLY      0x1021u
+#define CRC16_MSB       0x8000u  // bit shifted out on each step
+#define CRC16_BYTE_BITS 8
+
 static uint16_t crc16(const uint8_t *d, uint16_t n)
 {
-    uint16_t crc = 0xFFFF;
+    uint16_t crc = CRC16_INIT;
     for (uint16_t i = 0; i < n; ++i)
     {
-        crc ^= (uint16_t)d[i] << 8;
-        for (int b = 0; b < 8; ++b)
-            crc = (crc & 0x8000) ? (uint16_t)((crc << 1) ^ 0x1021)
-                                 : (uint16_t)(crc << 1);
+        crc ^= (uint16_t)d[i] << CRC16_BYTE_BITS;
+        for (int b = 0; b < CRC16_BYTE_BITS; ++b)
+            crc = (crc & CRC16_MSB) ? (uint16_t)((crc << 1) ^ CRC16_POLY)
+                                    : (uint16_t)(crc << 1);
     }
     return crc;
 }
@@ -40,18 +56,18 @@ static uint16_t build_packet(uint8_t *out, uint8_t status, uint32_t seq,
                              uint8_t vtype, const uint8_t *payload, uint8_t plen)
 {
     uint32_t ts = HAL_GetTick();
-    out[0] = LP_MAGIC;
-    out[1] = status;
-    memcpy(out + 2, &seq, 4);
-    memcpy(out + 6, &dropped, 2);
-    memcpy(out + 8, &ts, 4);
-    if (objId) memcpy(out + 12, objId, LP_OBJID_LEN);
-    else       memset(out + 12, 0, LP_OBJID_LEN);
-    out[16] = vtype;
-    out[17] = plen;
+    out[LP_OFF_MAGIC]  = LP_MAGIC;
+    out[LP_OFF_STATUS] = status;
+    memcpy(out + LP_OFF_SEQ, &seq, sizeof(seq));
+    memcpy(out + LP_OFF_DROPPED, &dropped, sizeof(dropped));
+    memcpy(out + LP_OFF_UPTIME, &ts, sizeof(ts));
+    if (objId) memcpy(out + LP_OFF_OBJID, objId, LP_OBJID_LEN);
+    else       memset(out + LP_OFF_OBJID, 0, LP_OBJID_LEN);
+    out[LP_OFF_VTYPE] = vtype;
+    out[LP_OFF_PLEN]  = plen;
     if (plen) memcpy(out + LP_HEADER_SIZE, payload, plen);
     uint16_t crc = crc16(out, (uint16_t)(LP_HEADER_SIZE + plen));
-    memcpy(out + LP_HEADER_SIZE + plen, &crc, 2);
+    memcpy(out + LP_HEADER_SIZE + plen, &crc, sizeof(crc));
     return (uint16_t)(LP_HEADER_SIZE + plen + LP_CRC_SIZE);
 }
 
@@ -68,6 +84,10 @@ static uint16_t build_packet(uint8_t *out, uint8_t status, uint32_t seq,
 static uint8_t           g_stream[STREAM_CAP];
 static volatile uint16_t g_write   = 0;  // next byte position to write
 static volatile uint32_t g_nextSeq = 1;  // id for the next ENTRY (0 = NoEntry)
+// Saturating: the field is a uint16 on the wire, so stop counting at its max
+// rather than wrapping back to "no losses".
+#define DROPPED_MAX 0xFFFFu
+
 static volatile uint16_t g_dropped = 0;  // bytes-overflowed events (saturating)
 
 // Monotonic (never-wraps-at-STREAM_CAP) count of bytes ever placed into the
@@ -107,10 +127,13 @@ static uint16_t stream_read_index(void)
 static volatile uint32_t g_pktTotal = 0;  // ENTRY packets queued since boot
 static volatile uint32_t g_dmaLaps  = 0;  // full ring laps completed (ISR-owned)
 
-static uint32_t g_windowMs      = 0;      // start of the current 1 s rate window
+#define RATE_WINDOW_MS 1000u   // how long a rate window runs before it is closed
+#define MS_PER_SEC     1000u   // scaling a per-window delta into a per-second rate
+
+static uint32_t g_windowMs      = 0;      // start of the current rate window
 static uint32_t g_pktAtWindow   = 0;
 static uint32_t g_bytesAtWindow = 0;
-static uint32_t g_pktRate       = 0;      // packets/s over the last full window
+static uint32_t g_pktRate       = 0;      // produced packets/s over the last full window
 static uint32_t g_byteRate      = 0;      // bytes/s over the last full window
 
 // DMA2 Stream3 transfer-complete: one more lap of the ring has been clocked out.
@@ -286,7 +309,7 @@ static void stream_write(const uint8_t *p, uint16_t n)
 
     int32_t  rawBacklog = (int32_t)(g_writeTotal - stream_read_total());
     uint32_t backlog     = rawBacklog > 0 ? (uint32_t)rawBacklog : 0;
-    if (backlog + n >= STREAM_CAP && g_dropped != 0xFFFF)
+    if (backlog + n >= STREAM_CAP && g_dropped != DROPPED_MAX)
         g_dropped++;
 
     uint16_t first = (uint16_t)(STREAM_CAP - g_write);
@@ -334,8 +357,8 @@ void LogEmission_AddDateTime(const char objectId[LOGEMIT_OBJID_LEN],
 void LogEmission_AddText(const char objectId[LOGEMIT_OBJID_LEN], const char *text)
 {
     size_t n = strlen(text);
-    if (n > 255)
-        n = 255;
+    if (n > LP_MAX_PAYLOAD)
+        n = LP_MAX_PAYLOAD;
     LogEmission_AddEntry(objectId, LOGVT_STR, text, (uint8_t)n);
 }
 
@@ -369,16 +392,16 @@ void LogEmission_ActivityPoll(void)
         g_pktAtWindow   = g_pktTotal;
         g_bytesAtWindow = stream_bytes_total();
     }
-    else if ((uint32_t)(now - g_windowMs) >= 1000u)
+    else if ((uint32_t)(now - g_windowMs) >= RATE_WINDOW_MS)
     {
         uint32_t dtMs  = now - g_windowMs;
         uint32_t pkt   = g_pktTotal;
         uint32_t bytes = stream_bytes_total();
 
-        g_pktRate  = ((pkt - g_pktAtWindow) * 1000u) / dtMs;
+        g_pktRate  = ((pkt - g_pktAtWindow) * MS_PER_SEC) / dtMs;
         // 64-bit intermediate: the byte delta can reach ~125 000 per second, and
-        // after a long stall (delta * 1000) would overflow 32 bits.
-        g_byteRate = (uint32_t)(((uint64_t)(bytes - g_bytesAtWindow) * 1000u) / dtMs);
+        // after a long stall (delta * MS_PER_SEC) would overflow 32 bits.
+        g_byteRate = (uint32_t)(((uint64_t)(bytes - g_bytesAtWindow) * MS_PER_SEC) / dtMs);
 
         g_windowMs      = now;
         g_pktAtWindow   = pkt;
@@ -390,11 +413,11 @@ void LogEmission_GetStats(LogEmitStats *out)
 {
     if (!out)
         return;
-    out->packetsPerSec = g_pktRate;
-    out->bytesPerSec   = g_byteRate;
-    out->totalPackets  = g_pktTotal;
-    out->totalBytes    = stream_bytes_total();
-    out->dropped       = g_dropped;
+    out->producedPacketsPerSec = g_pktRate;
+    out->bytesPerSec           = g_byteRate;
+    out->totalPackets           = g_pktTotal;
+    out->totalBytes             = stream_bytes_total();
+    out->dropped                = g_dropped;
 }
 
 void LogEmission_Init(void)

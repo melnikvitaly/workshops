@@ -6,6 +6,19 @@
 
 #define I2C_SCANNER_MAX_DEVICES 8  /* ємність внутрішнього буфера адрес */
 
+/* Діапазон 7-бітних адрес, які має сенс пінгувати: 0x00 — загальний виклик
+ * (general call), 0x78..0x7F зарезервовані стандартом I2C. */
+#define I2C_SCANNER_FIRST_ADDR 1
+#define I2C_SCANNER_LAST_ADDR  126
+
+/* Пінг — це START + адреса + STOP. Одна спроба і короткий дедлайн: пристрій або
+ * відповідає ACK одразу, або його немає. Довший таймаут лише розтягнув би скан
+ * (126 адрес) і заблокував головний цикл. */
+#define I2C_SCANNER_PING_TRIALS  1
+#define I2C_SCANNER_PING_TIMEOUT 5
+
+#define I2C_SCANNER_NONE_FOUND "0x00"  /* що показати, якщо шина порожня */
+
 /* ============================================================================
  *  I2C Scanner — header-only, STM32 HAL
  * ============================================================================
@@ -16,7 +29,8 @@
 
 /* Перевірити, чи відповідає пристрій за конкретною 7-бітною адресою */
 static inline int I2CScanner_Ping(I2C_HandleTypeDef *hi2c, uint8_t addr7) {
-    return HAL_I2C_IsDeviceReady(hi2c, (uint16_t)(addr7 << 1), 1, 5) == HAL_OK;
+    return HAL_I2C_IsDeviceReady(hi2c, (uint16_t)(addr7 << 1),
+                                 I2C_SCANNER_PING_TRIALS, I2C_SCANNER_PING_TIMEOUT) == HAL_OK;
 }
 
 /* Просканувати всю шину. Повертає кількість знайдених пристроїв.
@@ -24,7 +38,7 @@ static inline int I2CScanner_Ping(I2C_HandleTypeDef *hi2c, uint8_t addr7) {
  * (не більше maxOut штук), щоб їх можна було показати на екрані. */
 static inline int I2CScanner_Scan(I2C_HandleTypeDef *hi2c, uint8_t *out, int maxOut) {
     int found = 0;
-    for (uint8_t addr = 1; addr < 127; ++addr) {
+    for (uint8_t addr = I2C_SCANNER_FIRST_ADDR; addr <= I2C_SCANNER_LAST_ADDR; ++addr) {
         if (I2CScanner_Ping(hi2c, addr)) {
             if (out && found < maxOut) {
                 out[found] = addr;
@@ -64,7 +78,7 @@ static inline int I2CScanner_ScanToString(I2C_HandleTypeDef *hi2c, char *out, si
         }
     }
     if (found == 0) {
-        snprintf(out, outLen, "0x00");  /* нічого не знайдено */
+        snprintf(out, outLen, I2C_SCANNER_NONE_FOUND);  /* нічого не знайдено */
     }
     return found;
 }

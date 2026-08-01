@@ -14,9 +14,14 @@ Using STM32
 An STM32F401 on the I2C1 bus serves four devices: it logs light readings (ADC)
 from a photoresistor to an external EEPROM once an hour, and shows a cat face,
 the RTC clock and the addresses of devices found on the bus on the OLED. The
-main loop is non-blocking — each helper fires on its own timer (`HAL_GetTick`).
+main loop is non-blocking — each module fires on its own timer (`HAL_GetTick`).
 
-- [Src/main.c](Src/main.c) — entry point; loop of three helpers `poll_light_log` / `poll_i2c_scan` / `poll_frame`
+- [Src/main.c](Src/main.c) — bootstrap only: CubeMX peripheral init, then a loop that polls each module
+- [Src/light_archive.c](Src/light_archive.c) — hourly light log into the external EEPROM (`LightArchive_Poll`)
+- [Src/display_ui.c](Src/display_ui.c) — the OLED frame: clock, bus scan, light, SPI rates (`DisplayUI_Poll`)
+- [Src/i2c_bus.c](Src/i2c_bus.c) — freeing a bus held by a hung slave (9 clocks + STOP) and recovering it
+- [Src/sensor_stream.c](Src/sensor_stream.c) — ADC(DMA)+RTC sampling into the SPI log stream
+- [Src/log_emission.c](Src/log_emission.c) — SPI1 log-slave: protocol, ring buffer, circular TX DMA
 - [Inc/config.h](Inc/config.h) — all settings (addresses, screen layout, periods) in one place
 - [Inc/ds1307.h](Inc/ds1307.h) — DS1307 RTC (0x68): read/write time, `DS1307_ReadTimeString`
 - [Inc/eeprom.h](Inc/eeprom.h) — logging to an AT24Cxx EEPROM (0x50) with a next-write pointer

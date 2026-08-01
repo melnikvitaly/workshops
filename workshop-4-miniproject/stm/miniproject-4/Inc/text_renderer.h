@@ -8,8 +8,12 @@
  * ============================================================================
  *  Використовує лише публічний API Ssd1306 (SSD1306_DrawPixel + d->width), тож
  *  драйвер лишається без знання про шрифти. Підтримує цифри 0-9, великі літери
- *  A-Z, 'x', ':', '/', '-' та пробіл — вистачає і на годинник з адресами I2C
- *  ("0x3C"), і на рядок лічильників ("L1003 P3 B124928").
+ *  A-Z, малі 'x', 'k', 'b', а також ':', '/', '-' та пробіл — вистачає і на
+ *  годинник з адресами I2C ("0x3C"), і на рядок лічильників ("PP21 E0 999kb").
+ *
+ *  ⚠️ Усе, чого немає в таблиці (решта малих літер, крапка, кома...), мовчки
+ *  малюється як пробіл — саме так з екрана й зникали одиниці "kb", доки для них
+ *  не додали гліфи. Додаєте новий рядок — перевірте, що всі його символи тут є.
  *
  *  Приклад:
  *      Text_DrawTextCentered(&oled, 0, "12:00:00", 2);
@@ -21,11 +25,16 @@
 #define TEXT_GLYPH_H     7   /* висота гліфа в пікселях */
 #define TEXT_CHAR_ADV    6   /* крок курсора: гліф 5 + проміжок 1 */
 
+/* Розміри таблиць гліфів: рівно стільки, скільки символів у діапазонах '0'..'9'
+ * та 'A'..'Z' (індексуються як c - '0' і c - 'A'). */
+#define TEXT_DIGIT_COUNT 10
+#define TEXT_ALPHA_COUNT 26
+
 /* Гліфи шрифту 5x7: 5 колонок, біт row (0=верх .. 6=низ).
- * Підтримуються цифри 0-9, великі літери A-Z, 'x', ':', '/', '-' та пробіл.
- * Усе інше малюється як пробіл. */
+ * Підтримуються цифри 0-9, великі літери A-Z, малі 'x', 'k', 'b', а також
+ * ':', '/', '-' та пробіл. Усе інше малюється як пробіл. */
 static inline const uint8_t *Text_GlyphFor(char c) {
-    static const uint8_t digits[10][TEXT_GLYPH_W] = {
+    static const uint8_t digits[TEXT_DIGIT_COUNT][TEXT_GLYPH_W] = {
         {0x3E, 0x51, 0x49, 0x45, 0x3E},  /* 0 */
         {0x00, 0x42, 0x7F, 0x40, 0x00},  /* 1 */
         {0x42, 0x61, 0x51, 0x49, 0x46},  /* 2 */
@@ -38,7 +47,7 @@ static inline const uint8_t *Text_GlyphFor(char c) {
         {0x06, 0x49, 0x49, 0x29, 0x1E},  /* 9 */
     };
     /* Повна велика абетка (A-F ті самі, що були — hex-адреси не змінюються). */
-    static const uint8_t alpha[26][TEXT_GLYPH_W] = {
+    static const uint8_t alpha[TEXT_ALPHA_COUNT][TEXT_GLYPH_W] = {
         {0x7E, 0x11, 0x11, 0x11, 0x7E},  /* A */
         {0x7F, 0x49, 0x49, 0x49, 0x36},  /* B */
         {0x3E, 0x41, 0x41, 0x41, 0x22},  /* C */
@@ -67,6 +76,10 @@ static inline const uint8_t *Text_GlyphFor(char c) {
         {0x61, 0x51, 0x49, 0x45, 0x43},  /* Z */
     };
     static const uint8_t lowerX[TEXT_GLYPH_W] = {0x44, 0x28, 0x10, 0x28, 0x44};  /* x */
+    /* 'k' і 'b' — для одиниць "kb" (кілобіти/с) у рядку лічильників. Великими
+     * писати не можна: "KB" читається як кілобайти, а темп рахується в бітах. */
+    static const uint8_t lowerK[TEXT_GLYPH_W] = {0x00, 0x7F, 0x10, 0x28, 0x44};  /* k */
+    static const uint8_t lowerB[TEXT_GLYPH_W] = {0x7F, 0x48, 0x44, 0x44, 0x38};  /* b */
     static const uint8_t colon[TEXT_GLYPH_W]  = {0x00, 0x36, 0x36, 0x00, 0x00};  /* : */
     static const uint8_t slash[TEXT_GLYPH_W]  = {0x20, 0x10, 0x08, 0x04, 0x02};  /* / */
     static const uint8_t dash[TEXT_GLYPH_W]   = {0x08, 0x08, 0x08, 0x08, 0x08};  /* - */
@@ -75,6 +88,8 @@ static inline const uint8_t *Text_GlyphFor(char c) {
     if (c >= '0' && c <= '9') return digits[c - '0'];
     if (c >= 'A' && c <= 'Z') return alpha[c - 'A'];
     if (c == 'x')             return lowerX;
+    if (c == 'k')             return lowerK;
+    if (c == 'b')             return lowerB;
     if (c == ':')             return colon;
     if (c == '/')             return slash;
     if (c == '-')             return dash;

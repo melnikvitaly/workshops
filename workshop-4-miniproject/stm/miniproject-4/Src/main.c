@@ -11,18 +11,11 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include <stdio.h>
-#include <string.h>
-
-#include "config.h"       // усі налаштування прошивки в одному місці
-
-// Драйвери I2C-пристроїв (порт з workshop-4-2, адаптований під STM32 HAL)
-#include "ds1307.h"        // RTC годинник реального часу (0x68)
-#include "ssd1306.h"       // OLED дисплей (0x3C)
-#include "text_renderer.h" // малює годинник/адреси шрифтом 5x7
-#include "i2c_scanner.h"   // сканер шини I2C
-#include "eeprom.h"        // журнал у зовнішній EEPROM (0x50)
-#include "adc.h"           // вимірювання освітлення через АЦП
+// Прикладні модулі: кожен володіє своїм шматком роботи і сам стежить за своїм
+// таймером. Тут лишається тільки підняти периферію і крутити цикл.
+#include "i2c_bus.h"       // аварійне звільнення/відновлення шини I2C
+#include "light_archive.h" // журнал освітлення у зовнішній EEPROM (0x50)
+#include "display_ui.h"    // кадр на OLED: годинник, адреси, світло, темпи
 #include "log_emission.h"  // SPI-slave: віддає Data Logs ESP32-майстру
 #include "sensor_stream.h" // ADC(DMA)+RTC -> потік Data Logs
 /* USER CODE END Includes */
@@ -54,32 +47,8 @@ DMA_HandleTypeDef hdma_spi1_tx;
 TIM_HandleTypeDef htim2;
 
 /* USER CODE BEGIN PV */
-// Змінні для керування логуванням
-uint32_t last_log_time = 0;
-uint16_t current_address = 0;
-
-// Об'єкти та стан для дисплея / годинника / сканера
-Ssd1306  oled;                 // готовність дисплея зберігає сам драйвер (oled.ready)
-uint32_t last_scan_time = 0;   // коли востаннє сканували шину
-uint32_t last_frame_time = 0;  // коли востаннє оновлювали кадр на екрані
-
-// Скільки разів зривався обмін з дисплеєм по I2C (таймаут/NACK/зайнята шина).
-// Показуємо на екрані як "E<n>": нуль, що тримається, означає, що запасу за
-// часом вистачає; зростання — що шина на межі. Обмежене згори, щоб рядок
-// лічильників не розповзався по ширині.
-#define OLED_FAIL_MAX 9999u
-uint32_t oled_fail_count = 0;
-
-// Рядки одного кадру (показуємо на екрані щокадру). Стан I2C-шини показуємо у
-// hex — так само, як його друкує сканер.
-typedef struct {
-    char devices[DEVICES_STR_LEN];  // "0x3C 0x68 ..." — результат сканування
-    char clock[CLOCK_STR_LEN];      // "HH:MM:SS" — час з RTC
-    char light[LIGHT_STR_LEN];      // "L<АЦП>" — сире значення освітлення
-    char rates[RATES_STR_LEN];      // "P<пакетів/с> E<збоїв I2C> <кбіт/с>kb"
-} FrameData;
-
-FrameData frame = { "0x00", "--:--:--", "L----", "P- E0 -kb" };  // до першого виміру
+// Стан прикладного рівня тримають самі модулі (light_archive, display_ui,
+// sensor_stream, log_emission) — тут лише хендли периферії з CubeMX вище.
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -96,172 +65,10 @@ static void MX_TIM2_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-// Функції роботи з EEPROM винесено в окремий драйвер (Inc/eeprom.h)
-
-// Раз на LOG_INTERVAL_MS виміряти освітлення й дописати його в EEPROM.
-// За реальним часом (HAL_GetTick), а не за лічильником ітерацій.
-static void poll_light_log(void) {
-    if (last_log_time != 0 && HAL_GetTick() - last_log_time < LOG_INTERVAL_MS) {
-        return;
-    }
-    last_log_time = HAL_GetTick();
-
-    // Потік у SPI (записи "LGHT"/"TIME") веде sensor_stream; тут лише архівуємо
-    // останнє усереднене значення освітлення в EEPROM раз на LOG_INTERVAL_MS.
-    uint8_t light_percent = SensorStream_LatestLightPercent();
-    if (current_address <= EEPROM_DATA_END) {
-        // Просуваємо (і зберігаємо) вказівник лише якщо байт справді записався:
-        // якщо просто ігнорувати статус, зірваний обмін (NACK/таймаут) мовчки
-        // лишає непрописаний байт, а вказівник вже стоїть за ним — журнал
-        // назавжди має дірку. Провал тут просто повторить спробу на цю саму
-        // адресу наступного разу.
-        if (EEPROM_WriteByte(&hi2c1, current_address, light_percent) == HAL_OK) {
-            current_address++;                                  // зсуваємо вказівник
-            EEPROM_SaveNextAddress(&hi2c1, current_address);    // і зберігаємо його
-        }
-    }
-}
-
-// Просканувати шину не частіше, ніж раз на SCAN_PERIOD_MS, і оновити
-// рядок frame.devices (перший скан спрацьовує одразу).
-static void poll_i2c_scan(void) {
-    if (last_scan_time != 0 && HAL_GetTick() - last_scan_time < SCAN_PERIOD_MS) {
-        return;
-    }
-    last_scan_time = HAL_GetTick();
-    I2CScanner_ScanToString(&hi2c1, frame.devices, sizeof(frame.devices), MAX_DEVICES_SHOWN);
-}
-
-// I2C1 сидить на PB6 (SCL) і PB7 (SDA), AF4, відкритий стік (див. HAL_I2C_MspInit).
-#define I2C_SCL_PIN   GPIO_PIN_6
-#define I2C_SDA_PIN   GPIO_PIN_7
-#define I2C_GPIO_PORT GPIOB
-
-// Груба затримка на півтакту (~10 мкс на 16 МГц) — це аварійне звільнення шини,
-// а не робочий обмін, тож точність не потрібна, аби лиш було не швидше 100 кГц.
-static void i2c_bit_delay(void) {
-    for (volatile int i = 0; i < 20; ++i) {
-        __NOP();
-    }
-}
-
-// Звільнити шину, яку тримає завислий раб.
-//
-// Якщо обмін обірвався посеред байта (таймаут без STOP), раб лишається чекати
-// решту тактів і тримає SDA притиснутою до землі. Скидання МК тут не допомагає
-// НІЯК: раб не бачив скидання і не має про нього поняття — саме тому дисплей
-// оживає лише після зняття живлення. Так само не рятує і SWRST у HAL_I2C_DeInit:
-// він скидає периферію STM32, а не раба.
-//
-// Єдиний спосіб з боку майстра — доклацати за нього: перевести SCL у звичайний
-// GPIO і видати до 9 тактів (байт + ACK), доки SDA не відпустять, а тоді вручну
-// зробити STOP (SDA піднімається, поки SCL угорі).
-static void i2c_bus_release(void) {
-    GPIO_InitTypeDef gi = {0};
-    __HAL_RCC_GPIOB_CLK_ENABLE();
-
-    // Обидві лінії — GPIO з відкритим стоком, відпущені (лог. 1). Внутрішня
-    // підтяжка слабка (~40 кОм) і зовнішніх резисторів не замінює, але не заважає.
-    gi.Mode  = GPIO_MODE_OUTPUT_OD;
-    gi.Pull  = GPIO_PULLUP;
-    gi.Speed = GPIO_SPEED_FREQ_LOW;
-    gi.Pin   = I2C_SCL_PIN | I2C_SDA_PIN;
-    HAL_GPIO_Init(I2C_GPIO_PORT, &gi);
-    HAL_GPIO_WritePin(I2C_GPIO_PORT, I2C_SCL_PIN | I2C_SDA_PIN, GPIO_PIN_SET);
-    i2c_bit_delay();
-
-    // Рівно 9 тактів вистачає, щоб раб дотиснув найдовший недописаний байт.
-    for (int i = 0; i < 9; ++i) {
-        if (HAL_GPIO_ReadPin(I2C_GPIO_PORT, I2C_SDA_PIN) == GPIO_PIN_SET) {
-            break;   // SDA відпустили — раб вийшов зі свого байта
-        }
-        HAL_GPIO_WritePin(I2C_GPIO_PORT, I2C_SCL_PIN, GPIO_PIN_RESET);
-        i2c_bit_delay();
-        HAL_GPIO_WritePin(I2C_GPIO_PORT, I2C_SCL_PIN, GPIO_PIN_SET);
-        i2c_bit_delay();
-    }
-
-    // Ручний STOP, щоб усі раби повернулися в idle.
-    HAL_GPIO_WritePin(I2C_GPIO_PORT, I2C_SDA_PIN, GPIO_PIN_RESET);
-    i2c_bit_delay();
-    HAL_GPIO_WritePin(I2C_GPIO_PORT, I2C_SCL_PIN, GPIO_PIN_SET);
-    i2c_bit_delay();
-    HAL_GPIO_WritePin(I2C_GPIO_PORT, I2C_SDA_PIN, GPIO_PIN_SET);
-    i2c_bit_delay();
-}
-
-// Підняти шину I2C1 після зірваного обміну. Якщо HAL_I2C_Mem_Write вийшов по
-// таймауту, він НЕ виставляє STOP (це робиться лише при NACK), тож ламається
-// одразу з двох боків: периферія STM32 лишається з піднятим BUSY, а раб — з
-// притиснутою SDA. Лікуємо обидва: SWRST у DeInit чистить свій бік, 9 тактів —
-// чужий. Викликається не частіше разу на кадр, тож коштує дешево і заразом дає
-// гарячу заміну дисплея.
-static void i2c_bus_recover(void) {
-    HAL_I2C_DeInit(&hi2c1);   // SWRST: чистимо свій бік і відпускаємо піни
-    i2c_bus_release();        // 9 тактів: чистимо чужий бік
-    MX_I2C1_Init();           // назад у AF4
-    SSD1306_Init(&oled);      // сам виставить oled.ready за успіху
-}
-
-// Намалювати один кадр: годинник + адреси пристроїв + освітлення + темпи SPI.
-// Розкладку (Y та масштаб кожного рядка) задано в config.h.
-static void render_frame(void) {
-    SSD1306_Clear(&oled, 0x00);   // чистимо буфер: далі домальовуємо всі рядки
-
-    Text_DrawTextCentered(&oled, CLOCK_Y, frame.clock, CLOCK_SCALE);        // годинник зверху
-    Text_DrawTextCentered(&oled, DEVICES_Y, frame.devices, DEVICES_SCALE);  // адреси під ним
-    Text_DrawTextCentered(&oled, LIGHT_Y, frame.light, LIGHT_SCALE);        // освітлення (АЦП)
-    Text_DrawTextCentered(&oled, RATES_Y, frame.rates, RATES_SCALE);        // темпи SPI-потоку
-
-    // Раніше результат ігнорувався: один зірваний обмін — і картинка застигала
-    // без жодних ознак. Тепер помічаємо дисплей як неготовий, і наступний кадр
-    // підніме шину (див. poll_frame).
-    if (SSD1306_Flush(&oled) != HAL_OK) {
-        oled.ready = 0;
-        if (oled_fail_count < OLED_FAIL_MAX) {
-            ++oled_fail_count;
-        }
-    }
-}
-
-// Раз на FRAME_PERIOD_MS оновити час з RTC і перемалювати кадр.
-static void poll_frame(void) {
-    if (last_frame_time != 0 && HAL_GetTick() - last_frame_time < FRAME_PERIOD_MS) {
-        return;
-    }
-    last_frame_time = HAL_GetTick();
-
-    // frame.clock лишається без змін, якщо RTC не відповів (показуємо старий час).
-    DS1307_ReadTimeString(&hi2c1, frame.clock, sizeof(frame.clock));
-
-    // L = сире значення АЦП світла (0..4095, те саме, що йде в пакет "LGHT").
-    snprintf(frame.light, sizeof(frame.light), "L%u",
-             (unsigned)SensorStream_LatestLightRaw());
-
-    // P = скільки пакетів поставлено в потік за останню секунду,
-    // E = скільки разів зривався обмін з дисплеєм по I2C від старту,
-    // <n>kb = темп SPI у кілобітах/с.
-    //
-    // Кілобіти зручні тим, що число прямо звіряється з тактовою частотою SPI:
-    // на 1 МГц майстер вичитує ~999kb, тож видно, що лінк іде на повній швидкості.
-    // Крок дискретизації — один оберт кільця (2048 Б = ~16 кбіт/с), бо байти
-    // рахуються обертами DMA (див. stream_bytes_total у log_emission.c).
-    LogEmitStats st;
-    LogEmission_GetStats(&st);
-    unsigned kbits = (unsigned)((st.bytesPerSec * 8u + 500u) / 1000u);
-    snprintf(frame.rates, sizeof(frame.rates), "P%u E%u %ukb",
-             (unsigned)st.packetsPerSec,
-             (unsigned)oled_fail_count,
-             kbits);
-
-    if (oled.ready) {
-        render_frame();
-    } else {
-        // Дисплей не піднявся на старті або обмін зірвався — пробуємо раз на
-        // кадр, доки не вийде. Без цього oled.ready лишався б 0 назавжди.
-        i2c_bus_recover();
-    }
-}
+// Прикладна логіка живе в модулях поруч (Src/*.c): періодичний журнал у EEPROM
+// (light_archive), кадр на OLED зі сканером шини (display_ui), відновлення шини
+// I2C (i2c_bus), потік сенсорів (sensor_stream) і SPI-slave (log_emission).
+// Тут лишається лише те, що генерує CubeMX: старт периферії й головний цикл.
 /* USER CODE END 0 */
 
 /**
@@ -304,16 +111,14 @@ int main(void)
   // піднімалась мертвою і оживала лише після зняття живлення з дисплея. Тому
   // ПЕРШИМ ділом доклацуємо шину, інакше і EEPROM, і дисплей нижче отримають
   // HAL_BUSY і не піднімуться.
-  i2c_bus_release();
+  I2CBus_Release();
   MX_I2C1_Init();   // повертаємо PB6/PB7 з ручного GPIO назад у AF4
 
-  // Зчитуємо адресу з пам'яті під час старту пристрою
-  current_address = EEPROM_GetNextAddress(&hi2c1);
+  // Журнал освітлення в зовнішній EEPROM: підхоплює вказівник запису з пам'яті.
+  LightArchive_Init(&hi2c1);
 
-  // Ініціалізація OLED-дисплея на тій самій шині I2C1 (параметри — у config.h).
-  // Готовність дисплея далі зберігає сам драйвер (oled.ready).
-  SSD1306_Setup(&oled, &hi2c1, OLED_ADDR, OLED_WIDTH, OLED_HEIGHT);
-  SSD1306_Init(&oled);
+  // Кадр на OLED-дисплеї на тій самій шині I2C1 (параметри — у config.h).
+  DisplayUI_Init(&hi2c1);
 
   // SPI1 як slave: віддає накопичені Data Logs ESP32-майстру (PA4..PA7).
   LogEmission_Init();
@@ -333,15 +138,14 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    // Кожен помічник неблокуюче перевіряє свій таймер (HAL_GetTick) і
-    // виконує роботу лише коли настав його період — деталі у USER CODE 0.
+    // Кожен модуль неблокуюче перевіряє свій таймер (HAL_GetTick) і виконує
+    // роботу лише коли настав його період — деталі у відповідному *.c.
 #if !LOGEMIT_DEBUG_SPI
     SensorStream_Poll();  // ADC(DMA)+RTC -> записи "LGHT"/"TIME" у SPI-потік
 #endif
     LogEmission_ActivityPoll();  // блимання світлодіода PC13 при SPI-обміні з майстром
-    poll_light_log();  // архів освітлення в EEPROM (раз на годину)
-    poll_i2c_scan();   // сканування шини I2C (кожні 10 с)
-    poll_frame();      // оновлення кадру: кіт + годинник + адреси (раз на секунду)
+    LightArchive_Poll();  // архів освітлення в EEPROM (раз на годину)
+    DisplayUI_Poll();     // сканування шини (10 с) + кадр на екрані (1 с)
 
     /* USER CODE END WHILE */
 
