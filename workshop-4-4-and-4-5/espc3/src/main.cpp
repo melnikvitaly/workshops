@@ -2,6 +2,7 @@
 #include <freertos/task.h>
 #include <esp_log.h>
 #include <esp_attr.h>
+#include <esp_timer.h>
 #include <driver/gpio.h>
 #include <cstdio>
 
@@ -42,21 +43,62 @@ static constexpr uint8_t SPI_MODE = 0;
 // level pulse does nothing visible — harmless either way.)
 static constexpr gpio_num_t PIN_LED = GPIO_NUM_8;
 
-// How long to wait for a frame before saying so. The master sends once a
+// How long the link may be silent before saying so. The master sends once a
 // second, so a few seconds of silence is a real problem (wiring, or the master
 // not running) and worth printing rather than hanging mutely forever.
+//
+// This runs on an esp_timer rather than as a receive timeout: the receive call
+// blocks with portMAX_DELAY so that exactly one transaction is ever armed (see
+// SpiSlave::receive), which leaves no timeout to hang the notice off.
 static constexpr uint32_t QUIET_NOTICE_MS = 5000;
 
 static SpiSlave         slave(HOST, PIN_MOSI, PIN_MISO, PIN_SCLK, PIN_CS, SPI_MODE);
 static StatusLed        led(PIN_LED, /*pulseMs=*/25, /*activeHigh=*/false);
 static TelemetryPrinter printer;
 
-// The receive buffer. WORD_ALIGNED_ATTR because the SPI peripheral moves whole
-// words in and out of its FIFO; static because the driver writes into it while
-// receive() is not on the stack.
-static WORD_ALIGNED_ATTR uint8_t g_rx[TELEMETRY_FRAME_SIZE];
+// The receive buffer. DMA_ATTR puts it in internal RAM, word-aligned — both are
+// checked by spi_slave_queue_trans() and rejected outright otherwise. Static
+// because the driver writes into it while receive() is not on the stack.
+static DMA_ATTR uint8_t g_rx[TELEMETRY_FRAME_SIZE];
 
 static const char* TAG = "TELEMETRY_SLAVE";
+
+// Set by the receive loop on every completed transaction, read by the quiet
+// timer. Only ever a whole 64-bit store from one task and a load from the timer
+// task, so no lock — a torn read would at worst delay one notice by 5 s.
+static volatile int64_t g_lastTransactionUs = 0;
+
+// ---------------------------------------------------------------------------
+// Raw dump of what the wire actually delivered.
+//
+// The bit count matters as much as the bytes: without DMA the driver copies out
+// of the FIFO bounded by that count, so "3 bytes" means three bytes were copied
+// and the other 29 are the zeros we cleared. A count that is not a whole number
+// of bytes means the transaction ended mid-byte (a CS/clock timing problem); a
+// whole-byte count that is simply too small means it ended early but cleanly.
+// And if the leading bytes read A5 5A 01 1A, the frame *start* was captured
+// correctly and only the tail is missing — which separates a framing fault from
+// a wiring or SPI-mode fault.
+// ---------------------------------------------------------------------------
+static void dumpRaw(const char* why, size_t bits, const uint8_t* buf, size_t len)
+{
+    std::printf("  RAW  %-18s %u bits (%u bytes, %s):",
+                why, (unsigned)bits, (unsigned)(bits / 8),
+                (bits % 8) ? "NOT byte-aligned" : "byte-aligned");
+    for (size_t i = 0; i < len; ++i)
+        std::printf(" %02X", buf[i]);
+    std::printf("\n");
+    std::printf("  expect A5 5A 01 1A ... as the first four bytes\n");
+}
+
+static void quietTimerCb(void*)
+{
+    const int64_t last = g_lastTransactionUs;
+    if (last != 0 && (esp_timer_get_time() - last) < (int64_t)QUIET_NOTICE_MS * 1000)
+        return;
+    ESP_LOGW(TAG, "no SPI activity for %u ms — is the STM32 master running, and are CS/SCLK wired?",
+             (unsigned)QUIET_NOTICE_MS);
+}
 
 static void printBanner()
 {
@@ -86,37 +128,42 @@ extern "C" void app_main()
 
     printBanner();
 
-    const TickType_t quietTicks = pdMS_TO_TICKS(QUIET_NOTICE_MS);
+    // Periodic "the link has gone quiet" notice. It has to live here rather
+    // than as a receive timeout, because the receive blocks forever to keep
+    // exactly one transaction armed (see SpiSlave::receive).
+    esp_timer_handle_t quietTimer = nullptr;
+    esp_timer_create_args_t quietArgs = {};
+    quietArgs.callback = &quietTimerCb;
+    quietArgs.name     = "spi_quiet";
+    ESP_ERROR_CHECK(esp_timer_create(&quietArgs, &quietTimer));
+    ESP_ERROR_CHECK(esp_timer_start_periodic(quietTimer, (uint64_t)QUIET_NOTICE_MS * 1000));
 
     while (true)
     {
-        size_t    received = 0;
-        esp_err_t r        = slave.receive(g_rx, sizeof(g_rx), quietTicks, received);
+        size_t    bits = 0;
+        esp_err_t r    = slave.receive(g_rx, sizeof(g_rx), bits);
 
-        if (r == ESP_ERR_TIMEOUT)
-        {
-            // Nothing arrived within the window. The transaction is still armed
-            // (see SpiSlave::receive), so this costs nothing but the notice.
-            ESP_LOGW(TAG, "no frame for %u ms — is the STM32 master running and CS/SCLK wired?",
-                     (unsigned)QUIET_NOTICE_MS);
-            continue;
-        }
         if (r != ESP_OK)
         {
             ESP_LOGE(TAG, "spi slave receive failed: %s", esp_err_to_name(r));
             continue;
         }
 
+        g_lastTransactionUs = esp_timer_get_time();
         led.pulse();
 
-        if (received != TELEMETRY_FRAME_SIZE)
+        if (bits != TELEMETRY_FRAME_SIZE * 8)
         {
-            // The master clocked a different number of bytes than one frame.
-            // Almost always a clock-rate or CS-timing problem rather than data
-            // corruption, so it is worth distinguishing from a CRC failure.
+            // The master clocked a different number of bits than one frame.
+            // Without DMA the driver copied only this many bits out of the
+            // FIFO, so the buffer really is short — dump it rather than guess,
+            // because the leading bytes say whether the frame *start* was
+            // captured (framing fault) or whether nothing recognisable arrived
+            // (wiring / SPI-mode fault).
             printer.countBad();
-            ESP_LOGW(TAG, "short frame: %u bytes, expected %d",
-                     (unsigned)received, TELEMETRY_FRAME_SIZE);
+            ESP_LOGW(TAG, "short transaction: %u of %d bits",
+                     (unsigned)bits, TELEMETRY_FRAME_SIZE * 8);
+            dumpRaw("short", bits, g_rx, sizeof(g_rx));
             continue;
         }
 
@@ -124,8 +171,12 @@ extern "C" void app_main()
         TelemetryStatus  status = Telemetry_Parse(g_rx, &payload);
         if (status != TELEMETRY_OK)
         {
+            // Right length, wrong content: the clock and CS are behaving and
+            // the bytes themselves are wrong. Different fault, same need for
+            // the raw bytes.
             printer.countBad();
             ESP_LOGW(TAG, "frame rejected: %s", Telemetry_StatusName(status));
+            dumpRaw(Telemetry_StatusName(status), bits, g_rx, sizeof(g_rx));
             continue;
         }
 

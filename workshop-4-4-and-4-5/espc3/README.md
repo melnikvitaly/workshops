@@ -5,7 +5,7 @@ SPI, parses it into separate variables, and prints it to the serial monitor.
 Nothing else is attached — no SD card, no OLED, no UART sink.
 
 - [src/main.cpp](src/main.cpp) — pins, the receive loop, error reporting
-- [src/hardware/SpiSlave.hpp](src/hardware/SpiSlave.hpp) — `spi_slave` wrapper, no DMA, one armed transaction
+- [src/hardware/SpiSlave.hpp](src/hardware/SpiSlave.hpp) — `spi_slave` wrapper, one blocking transaction at a time
 - [src/TelemetryPrinter.hpp](src/TelemetryPrinter.hpp) — unpacks a frame into named fields and formats the output
 - [src/hardware/StatusLed.hpp](src/hardware/StatusLed.hpp) — non-blocking activity blink on GPIO8
 - [../protocol/telemetry_packet.h](../protocol/telemetry_packet.h) — the wire format, shared with the STM32

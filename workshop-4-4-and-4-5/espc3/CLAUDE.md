@@ -39,21 +39,37 @@ Four files, and the whole program is a `while (true)` around one blocking call:
 
 Key design points — preserve them when editing:
 
-1. **`SPI_DMA_DISABLED`, deliberately.** The workshop rules out DMA on this
-   link. Without it the driver works out of the hardware FIFO, which caps a
-   transaction at `SOC_SPI_MAXIMUM_BUFFER_SIZE` (64 bytes on the C3). The frame
-   is 32, so the cap costs nothing and the data path loses its descriptors,
-   cache-alignment rules and 4-byte length rounding. If you ever grow the frame
-   past 64 bytes this is the constraint that bites first.
+1. **`SPI_DMA_CH_AUTO` is required — do not "restore" `SPI_DMA_DISABLED`.**
+   This was tried, and on the C3 it yields exactly one good frame (the first
+   after boot) followed by permanent garbage: non-byte-aligned fragments of 3,
+   41, 6, 21 bits. The cause is in the driver. `spi_slave_queue_trans()` does
+   not arm the hardware — it queues and calls `esp_intr_enable()`; arming
+   happens only inside `spi_intr`, whose re-arm path branches on DMA and, in
+   the no-DMA branch, never resets the RX FIFO
+   (`s_spi_slave_prepare_data`: `fifo_reset(tx=true, rx=false)`) and skips
+   `restore_cs()`. The first transaction escapes this because
+   `spi_slave_initialize()` armed it on freshly reset hardware.
+
+   This does **not** violate the workshop's "no circular DMA transferring or
+   async transmissions": nothing is circular or free-running, one transaction
+   exists at a time, `receive()` blocks until it completes, and one frame is
+   still one CS assertion. DMA is only how the driver moves 32 bytes during a
+   call we are already blocked inside. The STM32 master uses no DMA at all.
+
+   Consequence: the rx buffer must be `DMA_ATTR` (internal RAM, word-aligned)
+   and the length a whole number of bytes — `spi_slave_queue_trans()` rejects
+   anything else outright.
 
 2. **Arming, not polling.** An SPI slave receives into a buffer the driver was
    handed *in advance*; a frame that arrives while nothing is armed is not
    captured at all and leaves no trace but a gap in the sequence numbers.
-   `SpiSlave::receive()` queues one transaction and then waits for it, and on
-   timeout leaves it armed so the caller comes back onto the same one. Do not
-   replace it with `spi_slave_transmit()` in a loop with a finite timeout —
-   that re-queues on every call and stacks transactions behind the first for as
-   long as the link is quiet.
+   `SpiSlave::receive()` is one `spi_slave_transmit()` with **`portMAX_DELAY`**.
+   The infinite timeout is the point: `spi_slave_transmit()` is internally
+   `queue_trans` + `get_trans_result` (with a `//ToDo: check if any spi
+   transfers in flight` above it), so on a *finite* timeout the queued
+   transaction stays armed in hardware and the next call stacks another one
+   behind it. Blocking forever keeps it to exactly one. The "link quiet" notice
+   therefore lives on an `esp_timer` in `main.cpp`, not on this path.
 
 3. **One transaction in flight, ever** (`queue_size = 1`). One CS assertion is
    one frame; there is nothing to pipeline.

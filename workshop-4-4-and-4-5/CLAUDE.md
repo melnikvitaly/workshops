@@ -33,9 +33,15 @@ that break silently if changed on one side only:
   only receives. This is reversed from `../workshop-4-miniproject`, which this
   project was copied from — don't carry that project's assumptions over.
 - **Synchronous only.** One blocking `HAL_SPI_Transmit` on the master, one
-  armed `spi_slave` transaction with `SPI_DMA_DISABLED` on the slave. No DMA,
-  no interrupts, no callbacks, nothing pipelined. This is a workshop
-  requirement, not an implementation detail — don't "optimise" it into DMA.
+  blocking `spi_slave_transmit(portMAX_DELAY)` on the slave. Nothing circular,
+  nothing free-running, nothing pipelined; one transaction exists at a time.
+  This is a workshop requirement, not an implementation detail — don't
+  "optimise" it into a streaming design.
+  - The slave *does* pass `SPI_DMA_CH_AUTO`, and must: `SPI_DMA_DISABLED` is
+    broken on the C3 for anything past the first transaction. See
+    [`espc3/CLAUDE.md`](espc3/CLAUDE.md) for the driver-level reason. It is
+    still one blocking transaction — the DMA is internal to a call we are
+    already waiting inside, and the master has no DMA at all.
 - **One CS assertion = one 32-byte frame.** The CS line is the framing, which
   is why the receiver has no resync scanner. Anything that changes the frame
   size, or that lets CS toggle mid-frame (e.g. switching the master to hardware
