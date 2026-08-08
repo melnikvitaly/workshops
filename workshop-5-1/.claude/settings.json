@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Program Files/**)",
+      "PowerShell($roots = @\\(\"C:\\\\Program Files\",\"C:\\\\Program Files \\(x86\\)\",\"C:\\\\Users\\\\user\\\\AppData\\\\Local\"\\); foreach \\($r in $roots\\) { Get-ChildItem -Path $r -Filter \"kicad-cli.exe\" -Recurse -ErrorAction SilentlyContinue -Depth 4 | Select-Object -ExpandProperty FullName })"
+    ]
+  }
+}

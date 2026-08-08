@@ -4151,17 +4151,6 @@
 		)
 		(uuid "4d1e0f00-0000-4000-8000-00000000015b")
 	)
-	(text "NEO-PIXEL"
-		(exclude_from_sim no)
-		(at 149.86 187.96 0)
-		(effects
-			(font
-				(size 6 6)
-			)
-			(justify left bottom)
-		)
-		(uuid "4d1e0f00-0000-4000-8000-000000000166")
-	)
 	(text "BUTTONS"
 		(exclude_from_sim no)
 		(at 285.75 148.59 0)
@@ -4172,17 +4161,6 @@
 			(justify left bottom)
 		)
 		(uuid "4d1e0f00-0000-4000-8000-000000000167")
-	)
-	(text "SCREEN"
-		(exclude_from_sim no)
-		(at 285.75 201.93 0)
-		(effects
-			(font
-				(size 6 6)
-			)
-			(justify left bottom)
-		)
-		(uuid "4d1e0f00-0000-4000-8000-000000000168")
 	)
 	(junction
 		(at 68.58 45.72)
