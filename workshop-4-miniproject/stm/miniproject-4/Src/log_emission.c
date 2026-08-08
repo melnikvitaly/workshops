@@ -1,5 +1,6 @@
 #include "log_emission.h"
 #include "main.h"   // Error_Handler()
+#include <stddef.h>
 #include <string.h>
 
 // ---------------------------------------------------------------------------
@@ -48,12 +49,63 @@ static uint16_t crc16(const uint8_t *d, uint16_t n)
     return crc;
 }
 
+typedef struct __attribute__((packed))
+{
+    uint8_t  magic;
+    uint8_t  status;
+    uint32_t seq;
+    uint16_t dropped;
+    uint32_t timestamp;
+    char     objectId[LP_OBJID_LEN];
+    uint8_t  valueType;
+    uint8_t  payloadLen;
+} LpHeader;
+
+static_assert(sizeof(LpHeader) == LP_HEADER_SIZE, "STM LpHeader size mismatch");
+static_assert(offsetof(LpHeader, status) == LP_OFF_STATUS, "STM LpHeader status offset mismatch");
+static_assert(offsetof(LpHeader, seq) == LP_OFF_SEQ, "STM LpHeader seq offset mismatch");
+static_assert(offsetof(LpHeader, dropped) == LP_OFF_DROPPED, "STM LpHeader dropped offset mismatch");
+static_assert(offsetof(LpHeader, timestamp) == LP_OFF_UPTIME, "STM LpHeader timestamp offset mismatch");
+static_assert(offsetof(LpHeader, objectId) == LP_OFF_OBJID, "STM LpHeader objectId offset mismatch");
+static_assert(offsetof(LpHeader, valueType) == LP_OFF_VTYPE, "STM LpHeader valueType offset mismatch");
+static_assert(offsetof(LpHeader, payloadLen) == LP_OFF_PLEN, "STM LpHeader payloadLen offset mismatch");
+
+// Comparison version: packed struct layout for the same header.
+static uint16_t build_packet_v2(uint8_t *out, uint8_t status, uint32_t seq,
+                               uint16_t dropped, const char *objId,
+                               uint8_t vtype, const uint8_t *payload, uint8_t plen)
+{
+    LpHeader header = {0};
+    header.magic      = LP_MAGIC;
+    header.status     = status;
+    header.seq        = seq;
+    header.dropped    = dropped;
+    header.timestamp  = HAL_GetTick();
+    if (objId) memcpy(header.objectId, objId, LP_OBJID_LEN);
+    header.valueType  = vtype;
+    header.payloadLen = plen;
+
+    memcpy(out, &header, sizeof(header));
+    if (plen) memcpy(out + LP_HEADER_SIZE, payload, plen);
+    uint16_t crc = crc16(out, (uint16_t)(LP_HEADER_SIZE + plen));
+    memcpy(out + LP_HEADER_SIZE + plen, &crc, sizeof(crc));
+    return (uint16_t)(LP_HEADER_SIZE + plen + LP_CRC_SIZE);
+}
+
 // Build one packet into `out` (must hold up to LP_MAX_PACKET bytes). Fields are
 // written little-endian with memcpy (both ends are little-endian). Returns the
 // packet length. `objId` may be NULL for NoEntry (filled with zeros).
 static uint16_t build_packet(uint8_t *out, uint8_t status, uint32_t seq,
                              uint16_t dropped, const char *objId,
                              uint8_t vtype, const uint8_t *payload, uint8_t plen)
+{
+    return build_packet_v2(out, status, seq, dropped, objId, vtype, payload, plen);
+}
+
+/* Old byte-offset implementation kept for comparison.
+static uint16_t build_packet_old(uint8_t *out, uint8_t status, uint32_t seq,
+                                 uint16_t dropped, const char *objId,
+                                 uint8_t vtype, const uint8_t *payload, uint8_t plen)
 {
     uint32_t ts = HAL_GetTick();
     out[LP_OFF_MAGIC]  = LP_MAGIC;
@@ -70,6 +122,7 @@ static uint16_t build_packet(uint8_t *out, uint8_t status, uint32_t seq,
     memcpy(out + LP_HEADER_SIZE + plen, &crc, sizeof(crc));
     return (uint16_t)(LP_HEADER_SIZE + plen + LP_CRC_SIZE);
 }
+*/
 
 // ---------------------------------------------------------------------------
 // Stream ring. A byte buffer that free-running circular DMA feeds to MISO. The
