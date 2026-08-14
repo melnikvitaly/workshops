@@ -1,10 +1,243 @@
-## Task OPTION1: Create PCB in KiCad
-- Processor (S3 orC3)
-- power 
-- hardware filters for power and signal
-- sensor
-- output 
+# Mini Project 5 — Closed-loop laser tracking (PID)
 
-## SYSTEM that will be controlled by PIDs
+## Task
 
-- 
+A laser on a 2-axis gimbal that **closes the loop through a camera**. A PC
+watches both the laser dot and the target, computes the error vector between
+them, and streams it to the ESP32 over UART. The firmware runs one PID per axis
+and drives the servos by **velocity**, not position.
+
+This is image-based visual servoing — the same structure a camera gimbal
+tracker uses.
+
+```
+  camera ──► PC vision ──► error vector ──UART──► ESP32
+                 ▲                                  │
+                 │                              PID per axis
+                 │                                  │
+                 │                            velocity (deg/s)
+                 │                                  │
+                 │                          Gimbal integrates ──► servos
+                 │                                  │
+                 └────────── laser dot moves ◄──────┘
+```
+
+## Why this is a real PID and workshop-3 was not
+
+Workshop 3 drove the gimbal open-loop: the servo was told an angle and assumed
+to be there. `Servo::angle()` returns the last value *written*, so feeding it
+back is algebra, not feedback — nothing physical could ever be corrected.
+
+Here the measurement comes from a camera and is **independent of what was
+commanded**. That is what makes it feedback, and it is what lets the loop
+reject real disturbances: gravity droop on the tilt axis, servo deadband,
+backlash, a horn that slipped on its spline. Push the gimbal with a finger and
+it comes back.
+
+Two structural consequences worth knowing:
+
+- **The plant is an integrator.** Servo velocity → angle → dot position is
+  `P(s) = k/s`. Commanding velocity rather than position is what makes it that,
+  and it is the friendliest plant shape there is.
+- **Dead time is the binding constraint.** Camera → vision → UART is
+  50–250 ms, and that, not the mechanics, sets the gain ceiling. See the
+  tuning note in `Config.hpp`.
+
+## Parts
+
+- 2× SG90 servos on a [pan/tilt gimbal](https://www.printables.com/model/1042622-cheap-fpv-gimbal-pantilt)
+- 1× [5 mW 650 nm laser](https://uamper.com/%D0%9B%D0%B0%D0%B7%D0%B5%D1%80-5%D0%BC%D0%92%D1%82-650%D0%BD%D0%BC-%D1%82%D0%BE%D1%87%D0%BA%D0%B0), switched via relay
+- Passive buzzer, onboard WS2812 status LED, 2 buttons
+- ESP32-S3 DevKitC-1; servos powered from an external supply
+- A PC with a camera running the vision pipeline (not in this repo)
+
+The potentiometer, encoder and joystick from workshop 3 are gone — the PC is
+the only input now.
+
+## Wiring
+
+Same as workshop 3, minus the pot and encoder. See `src/Pinout.hpp`.
+The error stream arrives on the **existing USB "UART" connector** (CP2102,
+UART0) — no extra wiring at all. GPIO 8, 10 and 18 are now free.
+
+## UART contract
+
+**[`docs/uart-protocol.md`](docs/uart-protocol.md)** — the complete contract for
+whoever writes the PC side. Format in one line:
+
+```
+E <dx> <dy> <valid>\n        tracking error, streamed   e.g.  E -0.124 0.058 1
+F\n                          fire one shot (beam blanks briefly), on demand
+
+A <ex> <ey>\n                <- uplink: arrived on target, once per arrival
+```
+
+`dx`/`dy` are `target - dot`, normalised so ±1.0 spans half the frame.
+
+`F` must be alone on its line — `F 1`, `FIRE` and anything else are rejected
+rather than fired. That check is load-bearing, not pedantry: the console shares
+this UART, so log text arrives on the same wire, and no line that merely starts
+with an F may be able to trigger a shot. Fire is enqueued the instant it is
+parsed rather than latched into a flag, so two shots arriving inside one 20 ms
+control step stay two shots. It works whether or not the loop is armed.
+
+Note the console shares this UART, so log output comes back on the same port
+and the PC sender must ignore unrecognised text.
+
+## Controls
+
+| Control | Action |
+|---|---|
+| BOOT button | Arm / disarm the tracking loop |
+| Encoder button, click | Fire — blank the beam 120 ms, then restore |
+| Encoder button, hold | Toggle laser constant on/off |
+| `F\n` over UART | Fire — same as a button click, on demand from the PC |
+
+Firing is a **gap, not a pulse**. The laser is held constant-on so the camera
+can see the dot, so a shot that switched the laser *on* would be invisible;
+instead the beam blanks briefly and comes back. The gap is kept well under the
+link timeout so a shot never costs the PID its integral.
+
+The laser latches **on at boot** — the camera can only measure the error while
+the dot is visible.
+
+## Boot zone tour
+
+At startup, before the loop goes live, the lit laser walks the perimeter of the
+working zone **clockwise from the top-left corner** — pausing briefly on each
+corner, then parking in the centre. The zone is two pairs of numbers in
+`Config.hpp`; this makes it something you can see.
+
+**The direction is the test.** If the dot traces counter-clockwise, one of the
+axis-geometry flags is wrong — and that same wrong flag is what sends the
+tracking loop running *away* from the target instead of toward it. Reading it
+off a 4-second trace is a great deal cheaper than discovering it as a runaway
+with the loop live.
+
+```
+TILT_ANGLE_AIMS_DOWN    dot moves down when the tilt angle increases
+PAN_ANGLE_AIMS_RIGHT    dot moves right when the pan angle increases
+```
+
+These describe how the horns are mounted, not preferences. Which corner the
+trace *starts* from tells you which flag is wrong: a mirrored horizontal means
+`PAN_ANGLE_AIMS_RIGHT`, a mirrored vertical means `TILT_ANGLE_AIMS_DOWN`.
+
+Roughly 4 s at the default 40 °/s. Disable with `ZONE_TOUR_AT_BOOT = false`.
+
+Buttons and `F` frames work during the tour; motion commands are discarded and
+the PIDs stay idle, then get a clean reset at handover so the first control step
+measures one step rather than the whole tour.
+
+| Status LED | Meaning |
+|---|---|
+| Violet | Boot zone tour running |
+| Green | Armed, tracking |
+| Amber | Armed, but no link or target not visible |
+| Blue | Disarmed |
+
+## Code layout
+
+```
+src/
+  utils/Pid.hpp            PID: error in, rate (deg/s) out. Anti-windup, filtered D.
+  drivers/Uart.hpp         Non-blocking line reader; coexists with the console on UART0.
+  inputs/Protocol.hpp      The wire format: decodes one line into a Frame. No hardware.
+  inputs/ErrorVectorInput  Consumes decoded frames, runs both PIDs, emits velocity.
+  parts/Gimbal.hpp         Integrates commanded velocity into servo angles, clamped.
+  DeviceController.hpp     The 50 Hz control step.
+  TrackState.hpp           Loop state -> status LED + log.
+```
+
+The PIDs run **on frame arrival**, with `dt` measured between frames — not once
+per 20 ms tick. Ticking them against a stale error would integrate the same
+value repeatedly and show the derivative a false zero between frames. The
+gimbal holds the last commanded rate in between, which is what keeps motion
+smooth at 50 Hz while frames land at 15–30 Hz.
+
+## Experimenting with gains
+
+Gains are settable at runtime over the same UART, so trying a combination is one
+typed line instead of a reflash:
+
+```
+K b 40 4 0     set both axes: Kp=40, Ki=4, Kd=0   (K p / K t for one axis)
+N 8 0          nudge pan 8 degrees open-loop -> a repeatable step disturbance
+T 1            telemetry stream on (T 0 off)
+Q              print current gains
+```
+
+`N` is what makes the comparison meaningful: it displaces the gimbal by a known
+amount without telling the controller, so the loop sees a pure disturbance that
+is identical every run. Hand-moving the target cannot give you that.
+
+**[`docs/pid-experiments.md`](docs/pid-experiments.md)** walks a sequence of six
+gain sets and what each one should look like. Gains revert to the `Config.hpp`
+values on reboot.
+
+## Tuning
+
+Read the gain-budget comment in `Config.hpp` first. Order:
+
+1. **Measure your latency `T`** — step the velocity, time until the reported
+   error starts changing. This sets everything else.
+2. **Measure the plant gain `k`** — command a known 10° step, see what fraction
+   of the frame the dot crosses, divide. Repeat at a few points; if `k` drifts,
+   that is the mechanical nonlinearity and one fixed gain won't suit everywhere.
+3. **P only.** Raise `PAN_KP` until tracking is snappy. Ceiling:
+   `Kp·k ≤ 0.5/T`. Shipped defaults sit well under that.
+4. **Add I** to kill steady-state error — this is where gravity droop on tilt
+   gets cancelled. Watch for windup at the travel limits.
+5. **Leave D at zero** unless the error stream is clean; differentiating camera
+   noise mostly amplifies it. `PID_DERIV_ALPHA` filters it if you do.
+
+Tune the axes separately — tilt lifts the laser against gravity, pan doesn't.
+
+The log line is plottable:
+
+```
+ex:-0.124 ey:+0.058 vpan:-4.9 vtilt:+2.1 pan:57.4 tilt:88.2 st:TRACK
+```
+
+`ex`/`ey` are the process variable (the setpoint is always zero). Watch `ex`
+settle after a step to judge overshoot and settling time.
+
+## Safety
+
+- No valid frame for 300 ms → both axes stop and the PIDs reset. A crashed
+  PC-side script stops the gimbal instead of letting it coast on a stale error.
+- Travel is clamped to the mechanical limits ∩ the working zone, so a sign
+  error or runaway cannot drive the arm into its stop. The working zone
+  (`WORK_PAN_MIN/MAX`, `WORK_TILT_MIN/MAX` in `Config.hpp`) is deliberately much
+  smaller than the full travel — 30° × 30° centred on (60°, 105°). Pointing a
+  laser under closed-loop control is exactly where you want the reachable area
+  bounded by something other than the mechanics: a bad gain or a confused
+  detector should run the dot into a soft edge inside the scene, not sweep it
+  across the room. Widen it once the loop is tuned and the directions confirmed.
+- **Rotation speed is clamped at two levels.** `SERVO_PAN_MAX_RATE` /
+  `SERVO_TILT_MAX_RATE` are a hard ceiling enforced by `Gimbal::setVelocity()`
+  on every velocity it is handed, so a mistuned PID or a future input source
+  cannot get around it. `PAN_MAX_SLEW` / `TILT_MAX_SLEW` are the PID's own
+  output clamp — a tuning knob, and what the anti-windup logic treats as
+  "saturated".
+
+  Keep the PID clamp **at or below** the hard ceiling. If it were higher, the
+  PID would believe it was still in range while the Gimbal was quietly limiting
+  the rate, and conditional integration would keep accumulating against a limit
+  it cannot observe — exactly the windup the anti-windup logic exists to
+  prevent. A `static_assert` in `Config.hpp` enforces this at compile time.
+- **Check axis directions at low gain before turning `Kp` up.** A flipped sign
+  is positive feedback and the gimbal runs straight to the limit. `PAN_INVERT` /
+  `TILT_INVERT` in `Config.hpp`. The bring-up checklist in the protocol doc
+  walks through it.
+
+## Known issues / TODO
+
+- Relay switching glitches during reset/boot/flash — control relay power
+  separately, and pin down the exact GPIO behaviour
+- Preserve angles across reboots (NVS)
+- Acceleration limit as well as the rate limit, to soften current spikes on the
+  servo supply
+- Gain scheduling if `k` turns out to vary much across the travel
+- Feedforward from target velocity, if the PC can report it — beats relying on
+  I to catch up on a moving target
