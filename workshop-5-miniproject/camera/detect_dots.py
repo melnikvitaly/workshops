@@ -21,8 +21,8 @@ The camera plumbing is DepthAI v3 and mirrors ../../../final_project/camera-host
 
 This file is the frame sources, the loop, and the command line. The display
 lives elsewhere: overlay.py draws on the frame, fire_button.py is the FIRE
-widget, controls.py is the gains/protocol window, simulated_target.py turns
-clicks into a stand-in target dot.
+widget, controls.py is the gains/protocol window (Tk), tuning.py is the
+threshold sliders, simulated_target.py turns clicks into a stand-in target dot.
 
 Usage:
     py -3 detect_dots.py --port                          # live OAK -> ESP32 (auto-found)
@@ -32,9 +32,9 @@ Usage:
     py -3 detect_dots.py --source dataset/ --debug       # step through a folder
     py -3 detect_dots.py --source 0                      # any webcam, no OAK
 
-Keys: q = quit, f = fire, d = toggle the mask windows and the labelled
-rejections, arrows = move the simulated target, SPACE/n = next image (folder
-mode).
+Keys: q = quit, f = fire, d = toggle the mask windows, the labelled rejections
+and the threshold sliders, p = print the current thresholds as a command line,
+arrows = move the simulated target, SPACE/n = next image (folder mode).
 Mouse: left-click places the simulated target, right-click clears it.
 """
 
@@ -49,10 +49,10 @@ import cv2
 from controls import Controls
 from dots import error_vector, find_black_dots, find_red_dot, pick_target
 from fire_button import FireButton
-from overlay import (_CONTROLS_WIN, _ROTATE, _WIN, draw_overlay, hide_masks,
-                     show_masks)
+from overlay import _ROTATE, _WIN, draw_overlay, hide_masks, show_masks
 from serial_link import ErrorLink, list_ports, parse_arrival
 from simulated_target import SimulatedTargetManager
+from tuning import Thresholds
 
 _IMG_EXT = (".jpg", ".jpeg", ".png", ".bmp")
 _VID_EXT = (".mp4", ".avi", ".mov", ".mkv")
@@ -130,6 +130,22 @@ def open_source(args):
 
 # --- main loop -------------------------------------------------------------
 
+def _wait_key(block, controls):
+    """One key from the view window, keeping the Tk panel alive while waiting.
+
+    HighGUI pumps its own windows from inside waitKey, but nobody else's, so a
+    blocking `waitKeyEx(0)` -- what folder mode wants, one image per press --
+    would freeze the controls window until a key arrived. Block in short slices
+    and service Tk between them instead.
+    """
+    while True:
+        if controls is not None:
+            controls.pump()
+        raw = cv2.waitKeyEx(15 if block else 1)
+        if raw != -1 or not block:
+            return raw
+
+
 def run(args):
     frames, folder_mode = open_source(args)
     link = ErrorLink(args.port, args.baud, max_rate=args.rate, echo=args.echo)
@@ -142,28 +158,29 @@ def run(args):
     # FIRE button inspect each click first, then treats what is left over as a
     # request to place, move or clear a stand-in black dot.
     sim = SimulatedTargetManager(fire, rotate=args.rotate)
+    # The flags set the starting point; from here the sliders own these values.
+    th = Thresholds(args)
     controls = None
     if not args.headless:
         cv2.namedWindow(_WIN, cv2.WINDOW_AUTOSIZE)
         cv2.setMouseCallback(_WIN, sim.on_mouse)
-
-        controls = Controls(link, size=(420, 700))
-        cv2.namedWindow(_CONTROLS_WIN, cv2.WINDOW_AUTOSIZE)
-        cv2.setMouseCallback(_CONTROLS_WIN, controls.mouse)
+        if debug:
+            th.show()
+        try:
+            controls = Controls(link)
+        except Exception as exc:
+            # A missing or broken Tk should cost the panel, not the tracking.
+            print(f"controls window unavailable ({exc}); running without it.")
 
     print("Press 'q' to quit, 'f' or the FIRE button to flash the laser."
           + ("  SPACE/n = next image." if folder_mode else ""))
     try:
         for frame in frames:
-            red, red_mask = find_red_dot(
-                frame, args.red_area_min, args.red_area_max, args.red_circ,
-                args.red_min_redness, args.red_rel)
-            targets, black_mask, rejects = find_black_dots(
-                frame, args.black_area_min, args.black_area_max, args.black_circ,
-                args.black_darkness, args.black_sat_margin, args.black_block,
-                args.black_offset, args.black_radial, args.black_aspect,
-                args.black_solidity, args.black_compact, args.black_hole,
-                args.black_edge_margin)
+            # Read the sliders once, here, so the whole frame is detected with
+            # one consistent set of thresholds. No-op while they are hidden.
+            th.poll()
+            red, red_mask = find_red_dot(frame, *th.red_args())
+            targets, black_mask, rejects = find_black_dots(frame, *th.black_args())
             target = pick_target(targets, frame.shape, args.target, red)
             # If detection found no black target, fall back to a simulated one
             # created by a user click.
@@ -200,22 +217,10 @@ def run(args):
                 if args.rotate:
                     view = cv2.rotate(view, _ROTATE[args.rotate])
                 cv2.imshow(_WIN, fire.draw(view, on_target))
-                cv2.imshow(_CONTROLS_WIN, controls.draw())
                 if debug:
                     show_masks(red_mask, black_mask, args.rotate)
-
-                # In folder mode waitKey blocks, so a click is only noticed on
-                # the keypress that releases it; that is fine for a still image.
-                raw_key = cv2.waitKeyEx(0 if folder_mode else 1)
+                raw_key = _wait_key(folder_mode, controls)
                 key = raw_key & 0xFF if raw_key != -1 else -1
-                # Let controls consume keys first (K/N prompts, etc.). If it
-                # handled the key, skip further processing.
-                try:
-                    if controls.handle_key(key):
-                        continue
-                except Exception:
-                    # swallow control errors so the main loop keeps running
-                    pass
                 try:
                     if sim.handle_key(raw_key):
                         continue
@@ -232,8 +237,15 @@ def run(args):
                 # the view clears them.
                 if key == ord('d'):
                     debug = not debug
-                    if not debug:
+                    if debug:
+                        th.show()
+                    else:
                         hide_masks()
+                        th.hide()
+                if key == ord('p'):
+                    # Sliders are lost on exit; this is how a session's tuning
+                    # becomes the next run's command line.
+                    print(th.flags())
             else:
                 if args.verbose and on_wire:
                     print(f"E {dx:+.4f} {dy:+.4f} {1 if valid else 0}")
@@ -243,6 +255,8 @@ def run(args):
         pass
     finally:
         link.close()
+        if controls is not None:
+            controls.close()
         cv2.destroyAllWindows()
     print(f"{link.sent} frames sent.")
 

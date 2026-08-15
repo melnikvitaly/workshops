@@ -26,6 +26,15 @@ tracker uses.
 
 [Video](https://drive.google.com/file/d/1_3Ry7DvBVp7bnQGnhnrT0xQXfL38_q39/view?usp=drive_link)
 
+![A tracking session: the gain-preset window on the left, the annotated camera
+view on the right — red laser dot, green target, the error vector between them,
+and the telemetry echoed back from the ESP32](images/tracking-session.png)
+
+The controls window (left) is `camera/controls.py`; the view on the right is
+what `detect_dots.py` draws — the red circle is the laser dot, the green one the
+target, and the white line is the error vector being streamed to the board. The
+third status line is telemetry coming *back* over the same UART.
+
 ## Why this is a real PID
 
 Driving a gimbal open-loop means telling the servo an angle and assuming it is
@@ -188,7 +197,8 @@ camera/                    the PC side (Python, see camera/README.md)
   serial_link.py           The COM link and the wire format; standalone sender too.
   overlay.py               What is drawn on each frame; the mask windows.
   fire_button.py           The on-screen FIRE button and its border states.
-  controls.py              Gain presets, nudge, telemetry, query -- tuning by click.
+  controls.py              Gain presets, nudge, telemetry, query -- the Tk window.
+  tuning.py                The --debug threshold sliders, and printing them back.
   simulated_target.py      Click or arrow-key a target when no black dot is printed.
 ```
 
@@ -298,6 +308,12 @@ settle after a step to judge overshoot and settling time.
   and 300 ms of it resets the PIDs. Worth having: a confidence score instead of
   a boolean, hysteresis so a target that was locked is not dropped on one bad
   frame, and a short coast across dropouts rather than an immediate stop.
+  Concretely, `--black-offset` is the parameter that has to be retuned by hand
+  per lighting setup: the default 12 misses dots under some light, but raising
+  it far enough to catch them (60 was tried) is not an improvement either — it
+  trades missed dots for false ones. A single fixed offset is the wrong shape of
+  knob; it wants to be derived from the frame (local contrast / Otsu on the
+  paper region) rather than set on the command line.
 - **Integrate [CSRT-tracker-standalone](https://github.com/4ndr3aR/CSRT-tracker-standalone)
   as an alternative detection module.** This would be a structural change, not
   a swap: what runs now is stateless per-frame *detection*, while CSRT is a

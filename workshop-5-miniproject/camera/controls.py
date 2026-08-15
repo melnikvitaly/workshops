@@ -1,208 +1,236 @@
-"""Controls UI for detect_dots: presets, prompt input and protocol commands.
+"""The controls window: gain presets, manual gains, nudge, telemetry, query.
 
-Provides a `Controls` class with methods:
- - draw() -> BGR image for the controls window
- - mouse(event,x,y,flags,param)  -- to pass to cv2.setMouseCallback
- - handle_key(key) -> bool        -- feed keys; returns True if consumed
+This is a Tk window, not an OpenCV one. HighGUI has no widgets in the build
+these wheels ship (`GUI: WIN32UI`, so `cv2.createButton` raises), which meant
+the previous version painted its own buttons into an image and matched clicks
+against their *labels* - a preset named "Tiny PD" and the "T: telemetry" action
+both answered to the same test - and read text one `waitKey` character at a
+time, with no caret and no backspace beyond the buffer.
 
-It sends `link.set_gains`, `link.nudge`, `link.telemetry`, `link.query` directly.
+Tk is in the standard library, so this costs no dependency and gets real
+buttons and real entry fields. It does not run its own `mainloop`: `pump()` is
+called once per frame from the detect_dots loop, which keeps every callback on
+the main thread. That matters because the callbacks write to the serial link
+the loop is also using - one thread means no lock.
+
+The camera view stays in OpenCV: it is an image with annotations drawn in image
+coordinates, which is what cv2 drawing is for.
 """
-from typing import Optional, Dict, Any, List, Tuple
-import time
-import cv2
-import numpy as np
+
+import tkinter as tk
+from tkinter import ttk
+
+# Preset gain combinations. (pan_kp, pan_ki, pan_kd), (tilt...)
+#
+# Weighted towards D, because that is the term worth sweeping on this rig: the
+# gimbal overshoots and rings, which D fixes and I does not. I is deliberately
+# rare - it is only interesting as the fix for the steady-state offset the PD
+# rows leave standing, and as the thing that winds up in Runaway. Tilt runs
+# slightly softer than pan throughout because it works against gravity.
+#
+# Four groups, in grid order: one term at a time -> two baselines -> the PD
+# ladder (same P, rising D) -> PD at other P levels.
+PRESETS = [
+    # --- one term at a time: what each does on its own ---
+    {"name": "All Zero", "pan": (0.0, 0.0, 0.0), "tilt": (0.0, 0.0, 0.0)},
+    {"name": "P-only", "pan": (50.0, 0.0, 0.0), "tilt": (45.0, 0.0, 0.0)},
+    {"name": "I-only", "pan": (0.0, 6.0, 0.0), "tilt": (0.0, 6.0, 0.0)},
+    {"name": "D-only", "pan": (0.0, 0.0, 6.0), "tilt": (0.0, 0.0, 5.0)},
+
+    # --- baselines: the firmware default, and it plus D ---
+    {"name": "Default (PI)", "pan": (40.0, 4.0, 0.0), "tilt": (35.0, 4.0, 0.0)},
+    {"name": "Full PID", "pan": (40.0, 4.0, 6.0), "tilt": (35.0, 4.0, 5.0)},
+
+    # --- PD ladder: Default's P, no I, D climbing. Run these in order against
+    # Default (PI) to see D trade overshoot for a standing offset, then Full
+    # PID to see I close that offset back up.
+    {"name": "PD Light", "pan": (40.0, 0.0, 3.0), "tilt": (35.0, 0.0, 2.5)},
+    {"name": "PD", "pan": (40.0, 0.0, 6.0), "tilt": (35.0, 0.0, 5.0)},
+    {"name": "PD Heavy", "pan": (40.0, 0.0, 12.0), "tilt": (35.0, 0.0, 10.0)},
+    {"name": "PD Sluggish", "pan": (25.0, 0.0, 10.0), "tilt": (22.0, 0.0, 8.0)},
+
+    # --- the same PD shape at other P levels ---
+    {"name": "Aggressive PD", "pan": (80.0, 0.0, 10.0), "tilt": (70.0, 0.0, 9.0)},
+    {"name": "Soft PD", "pan": (10.0, 0.0, 2.0), "tilt": (8.0, 0.0, 1.6)},
+    {"name": "Tiny PD", "pan": (1.0, 0.0, 0.3), "tilt": (1.0, 0.0, 0.25)},
+
+    # Deliberately unstable: huge P with an integrator and nothing to damp it.
+    # Keep it last - it is the "what does windup look like" demo, not a tuning
+    # candidate.
+    {"name": "Runaway", "pan": (500.0, 200.0, 0.0), "tilt": (500.0, 200.0, 0.0)},
+]
+
+_AXES = {"pan": "p", "tilt": "t", "both": "b"}
+
+_OK = "#1a7f37"
+_ERR = "#b42318"
+
 
 class Controls:
-    def __init__(self, link, size=(420, 820)):
+    """The second window. Build it, then call `pump()` once per frame."""
+
+    def __init__(self, link):
         self.link = link
-        self.size = size
-        self.telemetry_on = False
-        self.prompt_state: Optional[Dict[str, Any]] = None
-        self.last_message = ""
-        # Preset gain combinations. (pan_kp, pan_ki, pan_kd), (tilt...)
-        #
-        # Weighted towards D, because that is the term worth sweeping on this
-        # rig: the gimbal overshoots and rings, which D fixes and I does not.
-        # I is deliberately rare - it is only interesting as the fix for the
-        # steady-state offset the PD rows leave standing, and as the thing that
-        # winds up in Runaway. Tilt runs slightly softer than pan throughout
-        # because it works against gravity.
-        #
-        # Four groups, in grid order: one term at a time -> two baselines ->
-        # the PD ladder (same P, rising D) -> PD at other P levels.
-        self.PRESETS = [
-            # --- one term at a time: what each does on its own ---
-            {"name": "All Zero", "pan": (0.0, 0.0, 0.0), "tilt": (0.0, 0.0, 0.0)},
-            {"name": "P-only", "pan": (50.0, 0.0, 0.0), "tilt": (45.0, 0.0, 0.0)},
-            {"name": "I-only", "pan": (0.0, 6.0, 0.0), "tilt": (0.0, 6.0, 0.0)},
-            {"name": "D-only", "pan": (0.0, 0.0, 6.0), "tilt": (0.0, 0.0, 5.0)},
+        self._alive = True
 
-            # --- baselines: the firmware default, and it plus D ---
-            {"name": "Default (PI)", "pan": (40.0, 4.0, 0.0), "tilt": (35.0, 4.0, 0.0)},
-            {"name": "Full PID", "pan": (40.0, 4.0, 6.0), "tilt": (35.0, 4.0, 5.0)},
+        self.root = tk.Tk()
+        self.root.title("gimbal controls")
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        # Off to the side, so it does not open on top of the camera view.
+        self.root.geometry("+40+40")
 
-            # --- PD ladder: Default's P, no I, D climbing. Run these in order
-            # against Default (PI) to see D trade overshoot for a standing
-            # offset, then Full PID to see I close that offset back up.
-            {"name": "PD Light", "pan": (40.0, 0.0, 3.0), "tilt": (35.0, 0.0, 2.5)},
-            {"name": "PD", "pan": (40.0, 0.0, 6.0), "tilt": (35.0, 0.0, 5.0)},
-            {"name": "PD Heavy", "pan": (40.0, 0.0, 12.0), "tilt": (35.0, 0.0, 10.0)},
-            {"name": "PD Sluggish", "pan": (25.0, 0.0, 10.0), "tilt": (22.0, 0.0, 8.0)},
+        # Matches config::LOG_TELEMETRY on the firmware side, so the checkbox
+        # describes the board's actual state at startup rather than contradicting
+        # it. Unticking it sends 'T 0' as usual.
+        self.telemetry_on = tk.BooleanVar(value=True)
+        self.axis = tk.StringVar(value="both")
+        self.gains = {k: tk.StringVar(value=v)
+                      for k, v in (("KP", "40"), ("KI", "4"), ("KD", "6"))}
+        self.nudge = {k: tk.StringVar(value="5") for k in ("dpan", "dtilt")}
 
-            # --- the same PD shape at other P levels ---
-            {"name": "Aggressive PD", "pan": (80.0, 0.0, 10.0), "tilt": (70.0, 0.0, 9.0)},
-            {"name": "Soft PD", "pan": (10.0, 0.0, 2.0), "tilt": (8.0, 0.0, 1.6)},
-            {"name": "Tiny PD", "pan": (1.0, 0.0, 0.3), "tilt": (1.0, 0.0, 0.25)},
+        outer = ttk.Frame(self.root, padding=8)
+        outer.pack(fill="both", expand=True)
+        self._build_link_row(outer)
+        self._build_gains(outer)
+        self._build_nudge(outer)
+        self._build_presets(outer)
 
-            # Deliberately unstable: huge P with an integrator and nothing to
-            # damp it. Keep it last - it is the "what does windup look like"
-            # demo, not a tuning candidate.
-            {"name": "Runaway", "pan": (500.0, 200.0, 0.0), "tilt": (500.0, 200.0, 0.0)},
-        ]
+        self.status = ttk.Label(outer, text="ready", foreground=_OK,
+                                wraplength=430, justify="left")
+        self.status.pack(fill="x", pady=(8, 0))
 
-    def _make_buttons(self) -> List[Tuple[str, Tuple[int, int, int, int]]]:
-        w, h = self.size
-        btns = [
-            ("K: set gains", (10, 10, w - 20, 50)),
-            ("N: nudge", (10, 70, w - 20, 110)),
-            ((f"T: telemetry {'ON' if self.telemetry_on else 'OFF'}"), (10, 130, w - 20, 170)),
-            ("Q: query", (10, 190, w - 20, 230)),
-        ]
-        # presets in two columns
-        presets_y = 260
-        col_width = (w - 30) // 2
-        preset_height = 60
-        preset_btns = []
-        for i, p in enumerate(self.PRESETS):
-            col = i % 2
-            row = i // 2
-            x1 = 10 + col * (col_width + 10)
-            y = presets_y + row * preset_height
-            preset_btns.append((p['name'], (x1, y, x1 + col_width, y + preset_height)))
-        btns += preset_btns
-        return btns
+    # --- construction ------------------------------------------------------
 
-    def draw(self) -> np.ndarray:
-        w, h = self.size
-        img = np.zeros((h, w, 3), np.uint8)
-        img[:] = (30, 30, 30)
-        btns = self._make_buttons()
-        for label, (x1, y1, x2, y2) in btns:
-            cv2.rectangle(img, (x1, y1), (x2, y2), (80, 80, 80), -1)
-            cv2.rectangle(img, (x1, y1), (x2, y2), (180, 180, 180), 1)
+    def _build_link_row(self, parent):
+        row = ttk.Frame(parent)
+        row.pack(fill="x")
+        ttk.Button(row, text="Query gains", command=self._query).pack(side="left")
+        ttk.Checkbutton(row, text="Telemetry", variable=self.telemetry_on,
+                        command=self._telemetry).pack(side="left", padx=(8, 0))
 
-            preset = next((p for p in self.PRESETS if p['name'] == label), None)
-            if preset is not None:
-                name = preset['name']
-                pan = ", ".join(f"{v:g}" for v in preset['pan'])
-                tilt = ", ".join(f"{v:g}" for v in preset['tilt'])
-                lines = [name, f"pan: ({pan})", f"tilt: ({tilt})"]
-                line_gap = 14
-                base_y = y1 + 18
-                for i, line in enumerate(lines):
-                    y = base_y + i * line_gap
-                    font_scale = 0.36 if i == 0 else 0.28
-                    cv2.putText(img, line, (x1 + 6, y), cv2.FONT_HERSHEY_SIMPLEX,
-                                font_scale, (230, 230, 230), 1, cv2.LINE_AA)
-            else:
-                cv2.putText(img, label, (x1 + 6, y1 + 22), cv2.FONT_HERSHEY_SIMPLEX,
-                            0.5, (230, 230, 230), 1, cv2.LINE_AA)
-        # prompt area
-        if self.prompt_state is not None:
-            p = self.prompt_state
-            if p['kind'] == 'K':
-                fields = ["axis (p/t/b)", "KP", "KI", "KD"]
-            else:
-                fields = ["dpan (deg)", "dtilt (deg)"]
-            oy = self.size[1] - (len(fields) * 22) - 20
-            for i, f in enumerate(fields):
-                status = p['inputs'][i] if i < len(p['inputs']) else (p['buffer'] if i == p['idx'] else "")
-                cv2.putText(img, f"{f}: {status}", (10, oy + i * 22), cv2.FONT_HERSHEY_SIMPLEX,
-                            0.55, (240, 240, 240), 1, cv2.LINE_AA)
-        # last message
-        if self.last_message:
-            cv2.putText(img, self.last_message, (10, self.size[1] - 6), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.5, (200, 240, 200), 1, cv2.LINE_AA)
-        return img
+    def _build_gains(self, parent):
+        box = ttk.LabelFrame(parent, text="PID gains", padding=6)
+        box.pack(fill="x", pady=(8, 0))
+        ttk.Combobox(box, textvariable=self.axis, width=6, state="readonly",
+                     values=list(_AXES)).grid(row=0, column=0, padx=(0, 8))
+        for i, (name, var) in enumerate(self.gains.items()):
+            ttk.Label(box, text=name).grid(row=0, column=1 + 2 * i)
+            ttk.Entry(box, textvariable=var, width=7).grid(
+                row=0, column=2 + 2 * i, padx=(2, 8))
+        ttk.Button(box, text="Set", command=self._set_gains).grid(row=0, column=7)
 
-    def mouse(self, event, x, y, flags, param):
-        if event != cv2.EVENT_LBUTTONDOWN and event != cv2.EVENT_RBUTTONDOWN:
+    def _build_nudge(self, parent):
+        box = ttk.LabelFrame(parent, text="Nudge (open loop, degrees)", padding=6)
+        box.pack(fill="x", pady=(8, 0))
+        for i, (name, var) in enumerate(self.nudge.items()):
+            ttk.Label(box, text=name).grid(row=0, column=2 * i)
+            ttk.Entry(box, textvariable=var, width=7).grid(
+                row=0, column=1 + 2 * i, padx=(2, 8))
+        ttk.Button(box, text="Nudge", command=self._do_nudge).grid(row=0, column=4)
+
+    def _build_presets(self, parent):
+        box = ttk.LabelFrame(parent, text="Presets", padding=6)
+        box.pack(fill="both", expand=True, pady=(8, 0))
+        for i, preset in enumerate(PRESETS):
+            pan = ", ".join(f"{v:g}" for v in preset["pan"])
+            tilt = ", ".join(f"{v:g}" for v in preset["tilt"])
+            # The command closes over the preset itself, so nothing has to
+            # recognise a button by the text printed on it.
+            ttk.Button(box, width=26, padding=2,
+                       text=f"{preset['name']}\npan  ({pan})\ntilt ({tilt})",
+                       command=lambda p=preset: self._apply_preset(p)).grid(
+                row=i // 2, column=i % 2, sticky="ew", padx=2, pady=2)
+        box.columnconfigure(0, weight=1)
+        box.columnconfigure(1, weight=1)
+
+    # --- actions -----------------------------------------------------------
+
+    def _say(self, text, ok=True):
+        self.status.config(text=text, foreground=_OK if ok else _ERR)
+
+    def _floats(self, variables):
+        """Parse entry fields, naming the offending one if it does not parse."""
+        out = []
+        for name, var in variables.items():
+            try:
+                out.append(float(var.get()))
+            except ValueError:
+                raise ValueError(f"{name} is not a number: {var.get()!r}")
+        return out
+
+    def _query(self):
+        try:
+            self.link.query()
+            self._say("Q sent - the reply is the 'esp32 |' line on the view")
+        except Exception as exc:
+            self._say(f"query failed: {exc}", ok=False)
+
+    def _telemetry(self):
+        on = self.telemetry_on.get()
+        try:
+            self.link.telemetry(1 if on else 0)
+            self._say(f"telemetry {'ON' if on else 'OFF'}")
+        except Exception as exc:
+            # Put the checkbox back: it should show what the firmware was told.
+            self.telemetry_on.set(not on)
+            self._say(f"telemetry failed: {exc}", ok=False)
+
+    def _set_gains(self):
+        try:
+            kp, ki, kd = self._floats(self.gains)
+            axis = _AXES[self.axis.get()]
+            self.link.set_gains(axis, kp, ki, kd)
+            self._say(f"gains {self.axis.get()} {kp:g}, {ki:g}, {kd:g}")
+        except Exception as exc:
+            self._say(f"set gains failed: {exc}", ok=False)
+
+    def _do_nudge(self):
+        try:
+            dpan, dtilt = self._floats(self.nudge)
+            self.link.nudge(dpan, dtilt)
+            self._say(f"nudge {dpan:g}, {dtilt:g}")
+        except Exception as exc:
+            self._say(f"nudge failed: {exc}", ok=False)
+
+    def _apply_preset(self, preset):
+        try:
+            self.link.set_gains("p", *preset["pan"])
+            self.link.set_gains("t", *preset["tilt"])
+        except Exception as exc:
+            self._say(f"preset {preset['name']} failed: {exc}", ok=False)
             return
-        btns = self._make_buttons()
-        telemetry_label = f"T: telemetry {'ON' if self.telemetry_on else 'OFF'}"
-        for label, (x1, y1, x2, y2) in btns:
-            if x1 <= x <= x2 and y1 <= y <= y2:
-                # Control actions must match exact labels; preset names like
-                # "Tiny Gains" also start with T, so prefix checks are wrong.
-                if label == "K: set gains" and event == cv2.EVENT_LBUTTONDOWN:
-                    self.prompt_state = {"kind": "K", "inputs": [], "idx": 0, "buffer": ""}
-                elif label == "N: nudge" and event == cv2.EVENT_LBUTTONDOWN:
-                    self.prompt_state = {"kind": "N", "inputs": [], "idx": 0, "buffer": ""}
-                elif label == telemetry_label and event == cv2.EVENT_LBUTTONDOWN:
-                    self.telemetry_on = not self.telemetry_on
-                    try:
-                        self.link.telemetry(1 if self.telemetry_on else 0)
-                        self.last_message = f"Telemetry {'ON' if self.telemetry_on else 'OFF'}"
-                    except Exception as e:
-                        self.last_message = f"telemetry failed: {e}"
-                elif label == "Q: query" and event == cv2.EVENT_LBUTTONDOWN:
-                    try:
-                        self.link.query()
-                        self.last_message = "Query sent"
-                    except Exception as e:
-                        self.last_message = f"query failed: {e}"
-                else:
-                    # preset buttons
-                    preset = next((p for p in self.PRESETS if p['name'] == label), None)
-                    if preset is not None and event == cv2.EVENT_LBUTTONDOWN:
-                        try:
-                            pan = preset['pan']
-                            tilt = preset['tilt']
-                            self.link.set_gains('p', pan[0], pan[1], pan[2])
-                            self.link.set_gains('t', tilt[0], tilt[1], tilt[2])
-                            self.last_message = f"Applied preset {label}"
-                        except Exception as e:
-                            self.last_message = f"apply preset failed: {e}"
-                return
+        # Leave the manual fields showing what is actually loaded, so a preset
+        # can be nudged by hand from where it landed.
+        for name, value in zip(("KP", "KI", "KD"), preset["pan"]):
+            self.gains[name].set(f"{value:g}")
+        self.axis.set("pan")
+        self._say(f"preset {preset['name']} applied")
 
-    def handle_key(self, key: int) -> bool:
-        if self.prompt_state is None:
+    # --- the loop's end ----------------------------------------------------
+
+    def pump(self):
+        """Service Tk's event queue. False once the window has been closed.
+
+        `update`, not `mainloop`: the detect_dots loop owns the thread and this
+        borrows it for as long as the queued callbacks take.
+        """
+        if not self._alive:
             return False
-        p = self.prompt_state
-        # Enter
-        if key in (13, 10):
-            p['inputs'].append(p['buffer'].strip())
-            p['buffer'] = ""
-            p['idx'] += 1
-            # completion
-            if (p['kind'] == 'K' and p['idx'] >= 4) or (p['kind'] == 'N' and p['idx'] >= 2):
-                try:
-                    if p['kind'] == 'K':
-                        axis = p['inputs'][0]
-                        kp = float(p['inputs'][1])
-                        ki = float(p['inputs'][2])
-                        kd = float(p['inputs'][3])
-                        self.link.set_gains(axis, kp, ki, kd)
-                        self.last_message = f"Gains set {axis} {kp},{ki},{kd}"
-                    else:
-                        dpan = float(p['inputs'][0])
-                        dtilt = float(p['inputs'][1])
-                        self.link.nudge(dpan, dtilt)
-                        self.last_message = f"Nudge {dpan},{dtilt}"
-                except Exception as e:
-                    self.last_message = f"prompt command failed: {e}"
-                self.prompt_state = None
-            return True
-        # Esc
-        if key == 27:
-            self.prompt_state = None
-            return True
-        # Backspace
-        if key in (8, 127):
-            p['buffer'] = p['buffer'][:-1]
-            return True
-        # printable
-        if 32 <= key <= 126:
-            p['buffer'] += chr(key)
-            return True
-        return False
+        try:
+            self.root.update()
+        except tk.TclError:
+            self._alive = False
+        return self._alive
+
+    def _on_close(self):
+        self.close()
+        print("controls window closed; the camera view keeps running.")
+
+    def close(self):
+        if not self._alive:
+            return
+        self._alive = False
+        try:
+            self.root.destroy()
+        except tk.TclError:
+            pass

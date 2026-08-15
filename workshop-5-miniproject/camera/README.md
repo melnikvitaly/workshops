@@ -23,7 +23,8 @@ color filter directly.
 | `serial_link.py`      | the COM link and the wire format; also a standalone sender for bring-up            |
 | `overlay.py`          | what is drawn on each frame: detections, error arrow, status text, mask windows    |
 | `fire_button.py`      | the on-screen FIRE button and its border states (converging / on target / arrived) |
-| `controls.py`         | the second window: gain presets, nudge, telemetry, query                           |
+| `controls.py`         | the controls window (Tk): gain presets, manual gains, nudge, telemetry, query      |
+| `tuning.py`           | the `--debug` threshold sliders, and printing them back out as a command line      |
 | `simulated_target.py` | click or arrow-key a stand-in target dot when no black dot is printed              |
 
 ## Install and run
@@ -72,7 +73,8 @@ Every frame is rendered with its detections drawn on it:
 - **white arrow** — the error vector, tail on the laser, head on the target;
 - top-left readout — what was found, the exact frame being sent, fps, counters.
 
-Keys: `q` quit · `f` fire · `d` toggle the binary masks · arrows move the
+Keys: `q` quit · `f` fire · `d` toggle the binary masks and the threshold
+sliders · `p` print the current thresholds as a command line · arrows move the
 simulated target · `SPACE`/`n` next image (folder mode).
 
 Mouse (view window): left-click places or moves a **simulated target** where no
@@ -126,6 +128,22 @@ ARRIVAL  esp32 error +0.0012 -0.0031
 `--ready-error` only changes the colour — the firmware decides arrival on its
 own, much tighter deadzone (`TRACK_DEADZONE`, 0.004).
 
+### The controls window
+
+A second window, `gimbal controls`, carries everything on the command side of
+the protocol: **Query gains**, a **Telemetry** toggle, an axis + KP/KI/KD row
+with **Set**, an open-loop **Nudge**, and the grid of gain presets. Clicking a
+preset also loads its numbers into the KP/KI/KD fields, so it can be adjusted by
+hand from wherever it landed. Results — and any refusal from the link — appear
+on the status line at the bottom; `Q`'s reply comes back on the `esp32 |` line
+over on the view.
+
+It is a Tk window rather than a painted OpenCV one, which is why it has real
+text fields. Tk ships with Python, so this costs no extra dependency; if it is
+somehow unavailable the script says so and keeps tracking without the panel, and
+closing the window does the same. It shares the main thread with the loop, so a
+click has reached the serial link before the next frame is detected.
+
 ## Which black dot is the target
 
 `--target center` (default) takes the black dot nearest the frame centre — aim
@@ -134,12 +152,25 @@ the one closest to the red dot.
 
 ## Tuning
 
-Run with `--debug`: the second window shows the two binary masks that everything
+Run with `--debug`: the mask window shows the two binary masks that everything
 else is derived from, and every rejected blob is boxed in grey **on the frame
 itself, labelled with the measurement that failed** — `circ 0.66`, `hollow 0.46`,
 `pale 0.91`. That label names the knob, so tuning is reading rather than
 guessing. The chosen target's `round` score is in the top-left readout; a target
 hovering near a threshold is what a flickering lock looks like from here.
+
+`--debug` also opens **`tune: red dot`** and **`tune: black dots`**, one slider
+per threshold, so a value can be swept against a live frame instead of costing a
+restart per guess. The flags below still set the starting point; the sliders take
+over from there. Sliders are integers, so fractions carry their scale in the
+name: `circ /100` at 80 is `0.80`, `area max x100` at 200 is `20000`.
+
+The sliders die with the window, so `p` prints the current set as a command
+line — that is how a tuning session becomes the next run's flags:
+
+```text
+--red-rel 0.5 --red-min-redness 22 ... --black-circ 0.66 --black-edge-margin -1
+```
 
 Areas are given for a **640×480 reference frame** and scale automatically with
 resolution, so they stay meaningful at 1280×720.

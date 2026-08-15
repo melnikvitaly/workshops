@@ -26,7 +26,6 @@ _GREY = (140, 140, 140)
 # Window titles. HighGUI addresses windows by title, so every imshow /
 # namedWindow / setMouseCallback for the same window must use the same string.
 _WIN = "dots: red -> black"
-_CONTROLS_WIN = "controls"
 _MASK_WIN = "masks (debug)"
 
 

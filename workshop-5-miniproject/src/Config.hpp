@@ -254,12 +254,18 @@ namespace config
     // --- Logging -------------------------------------------------------------
     // The console shares UART0 with the incoming error stream, so anything
     // logged continuously is noise on the PC's RX and competes with the frames
-    // we are trying to receive. Telemetry is therefore OFF by default: only
-    // discrete events (state changes, fire, arm/disarm) are logged.
+    // we are trying to receive. Even so, telemetry is ON by default: with it
+    // off the firmware speaks only at state changes, and the PC window - which
+    // shows the newest line it has ever seen - ends up displaying a snapshot
+    // minutes old as if it were current. A frozen `vpan` next to a frozen `pan`
+    // reads exactly like a gimbal refusing to move, which is a far more
+    // expensive confusion than the extra bytes on the wire.
     //
-    // Turn this on while tuning to get the plottable per-frame line back, and
-    // turn it off again afterwards.
-    constexpr bool LOG_TELEMETRY = false;
+    // It is still rate limited to one line per LOG_MIN_INTERVAL_MS and only
+    // when the error actually moved by LOG_EPSILON, so a settled loop goes
+    // quiet on its own. Turn it off ('T 0', or here) if the link needs the
+    // bandwidth back.
+    constexpr bool LOG_TELEMETRY = true;
 
     // Emit a one-line "A <ex> <ey>" uplink frame the moment both axes settle
     // inside the deadzone. Edge triggered, not periodic: one line per arrival,

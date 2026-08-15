@@ -5,10 +5,20 @@
 # Recipes are single commands so they run under both cmd.exe and sh.
 
 PIO     ?= pio
-PY      ?= py -3
 NPM     ?= npm
 ENV     ?= esp32-s3-devkitc-1
 PORT    ?=
+
+# camera/.venv is gitignored, so prefer it when it is there and fall back to the
+# system launcher for a fresh clone. Both venv layouts, since the interpreter
+# lands in Scripts/ on Windows and bin/ everywhere else.
+ifneq ($(wildcard camera/.venv/Scripts/python.exe),)
+PY      ?= camera/.venv/Scripts/python.exe
+else ifneq ($(wildcard camera/.venv/bin/python),)
+PY      ?= camera/.venv/bin/python
+else
+PY      ?= py -3
+endif
 
 PIO_ENV := -e $(ENV)
 ifneq ($(PORT),)
@@ -49,6 +59,7 @@ help:
 	@echo --- variables ---
 	@echo ENV=$(ENV) - build environment
 	@echo PORT=COMx - pin the serial port, e.g. make flash PORT=COM10
+	@echo PY=$(PY) - Python behind the vision targets
 
 # --- firmware ---------------------------------------------------------------
 
