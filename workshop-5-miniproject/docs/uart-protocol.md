@@ -5,11 +5,11 @@ in `src/` implements the receiving end exactly as described here.
 
 ## Transport
 
-| | |
-|---|---|
-| Port | The ESP32-S3 DevKitC-1 **UART** connector (CP2102), i.e. UART0 / GPIO43–44 |
-| Baud | 115200 |
-| Framing | 8 data bits, no parity, 1 stop bit, no flow control |
+|           |                                                                                        |
+|-----------|----------------------------------------------------------------------------------------|
+| Port      | The ESP32-S3 DevKitC-1 **UART** connector (CP2102), i.e. UART0 / GPIO43–44             |
+| Baud      | 115200                                                                                 |
+| Framing   | 8 data bits, no parity, 1 stop bit, no flow control                                    |
 | Direction | Mostly PC → ESP32. The firmware sends exactly one kind of frame back: `A`, on arrival. |
 
 **The console shares this port.** `ESP_LOGI` output from the firmware comes back
@@ -28,7 +28,7 @@ to this protocol.
 One frame per line, ASCII, terminated by `\n` (a preceding `\r` is accepted and
 ignored). Two frame types:
 
-```
+```text
 E <dx> <dy> <valid>\n      tracking error (streamed continuously)
 F\n                        fire one shot (one-shot, on demand)
 ```
@@ -36,7 +36,7 @@ F\n                        fire one shot (one-shot, on demand)
 Plus a small tuning console, documented in
 [`pid-experiments.md`](pid-experiments.md) — not needed for normal operation:
 
-```
+```text
 K <axis> <kp> <ki> <kd>\n  set PID gains live; axis = p | t | b(oth)
 N <dpan> <dtilt>\n         nudge the gimbal open-loop, in degrees
 T <0|1>\n                  telemetry stream off / on
@@ -50,12 +50,12 @@ repeatable step input for comparing gain sets. `Q` and `K` both reply with a
 
 ### `E` — the error frame
 
-| Field | Type | Meaning |
-|---|---|---|
-| `E` | literal | Frame tag. Upper or lower case. |
-| `dx` | float | Horizontal error, **normalised** to `[-1, 1]` |
-| `dy` | float | Vertical error, **normalised** to `[-1, 1]` |
-| `valid` | int | `1` = both the laser dot and the target were seen this frame; `0` = not |
+| Field   | Type    | Meaning                                                                 |
+|---------|---------|-------------------------------------------------------------------------|
+| `E`     | literal | Frame tag. Upper or lower case.                                         |
+| `dx`    | float   | Horizontal error, **normalised** to `[-1, 1]`                           |
+| `dy`    | float   | Vertical error, **normalised** to `[-1, 1]`                             |
+| `valid` | int     | `1` = both the laser dot and the target were seen this frame; `0` = not |
 
 Fields are separated by whitespace (one or more spaces or tabs). Leading
 whitespace before `E` is allowed. Floats may use any format `strtof` accepts —
@@ -63,7 +63,7 @@ whitespace before `E` is allowed. Floats may use any format `strtof` accepts —
 
 Example stream:
 
-```
+```text
 E -0.124 0.058 1
 E -0.090 0.041 1
 E -0.031 0.012 1
@@ -73,14 +73,14 @@ E -0.028 0.010 1
 
 ### Definition of the error vector
 
-```
+```text
 error = target_position - laser_dot_position
 ```
 
 Both measured in the same camera frame, then normalised so that **±1.0 spans
 half the frame** in that axis:
 
-```
+```text
 dx = (target_px_x - dot_px_x) / (frame_width_px  / 2)
 dy = (target_px_y - dot_px_y) / (frame_height_px / 2)
 ```
@@ -106,7 +106,7 @@ triggers the link timeout, which additionally resets the PID state.
 
 ### `F` — the fire frame
 
-```
+```text
 F\n
 ```
 
@@ -145,7 +145,7 @@ to, never as a side effect of a "blink" command.
 
 The one frame the firmware sends **back** to the PC:
 
-```
+```text
 A <ex> <ey>\n            e.g.  A -0.0021 +0.0034
 ```
 
@@ -164,7 +164,7 @@ rather than waiting for another `A`.
 Parsing notes:
 
 - It arrives interleaved with `ESP_LOGI` output on the shared UART. Match on a
-  line beginning with `A ` followed by whitespace; log lines begin with `I (`.
+  line beginning with `A` followed by whitespace; log lines begin with `I (`.
 - It is written unbuffered and flushed, so there is no latency between the
   gimbal stopping and the line appearing.
 - Disable it entirely with `REPORT_ARRIVAL = false` in `Config.hpp`.
@@ -294,7 +294,7 @@ One-shot flags compose in protocol order — gains, then telemetry, then nudge,
 then query — so a whole experiment is one command line, and every reply the
 firmware sends within 400 ms is printed decoded:
 
-```
+```text
 $ py -3 camera/serial_link.py --gains b 40 4 0 --query
 -> K b 40 4 0
 -> Q
@@ -303,16 +303,16 @@ $ py -3 camera/serial_link.py --gains b 40 4 0 --query
 
 Which part of this contract each piece implements:
 
-| | |
-|---|---|
-| `E` frames | `detect_dots.py`, one per camera frame, capped by `--rate` (default 30 Hz), `valid = 0` whenever either dot is missing |
-| `F` frames | the FIRE button in the window, the `f` key, or `serial_link.py --fire` |
-| `A` uplink | parsed by `serial_link.parse_arrival`; the window blinks the FIRE border and the console prints `ARRIVAL esp32 error <ex> <ey>` |
-| `K` `N` `T` `Q` | `ErrorLink.set_gains` / `.nudge` / `.telemetry` / `.query`, or the `--gains` / `--nudge` / `--telemetry` / `--query` flags |
-| `G` uplink | `serial_link.parse_gains` → `{pan, tilt, armed}`, printed decoded |
-| telemetry lines | `serial_link.parse_telemetry` → `{ex, ey, vpan, vtilt, pan, tilt, st}` |
-| console text | read and discarded every frame (`--echo` prints it, the newest line always shows in the window) |
-| DTR/RTS | deasserted **before** the port is opened, so opening it does not reset the board through the auto-reset circuit |
+|                 |                                                                                                                                 |
+|-----------------|---------------------------------------------------------------------------------------------------------------------------------|
+| `E` frames      | `detect_dots.py`, one per camera frame, capped by `--rate` (default 30 Hz), `valid = 0` whenever either dot is missing          |
+| `F` frames      | the FIRE button in the window, the `f` key, or `serial_link.py --fire`                                                          |
+| `A` uplink      | parsed by `serial_link.parse_arrival`; the window blinks the FIRE border and the console prints `ARRIVAL esp32 error <ex> <ey>` |
+| `K` `N` `T` `Q` | `ErrorLink.set_gains` / `.nudge` / `.telemetry` / `.query`, or the `--gains` / `--nudge` / `--telemetry` / `--query` flags      |
+| `G` uplink      | `serial_link.parse_gains` → `{pan, tilt, armed}`, printed decoded                                                               |
+| telemetry lines | `serial_link.parse_telemetry` → `{ex, ey, vpan, vtilt, pan, tilt, st}`                                                          |
+| console text    | read and discarded every frame (`--echo` prints it, the newest line always shows in the window)                                 |
+| DTR/RTS         | deasserted **before** the port is opened, so opening it does not reset the board through the auto-reset circuit                 |
 
 The axis letter and the no-negative-gains rule are enforced on the PC side too.
 The firmware's answer to a bad `K` is to drop it and bump a counter you cannot

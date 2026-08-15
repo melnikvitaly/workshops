@@ -25,14 +25,14 @@ Two words that are **not** interchangeable with each other:
   in practice, but "the D term" is the `Kd · d(error)/dt` part of the output
   (low-pass filtered here — see `Pid.hpp`), not `Kd` itself.
 
-| In this repo | Also written as |
-|---|---|
-| gain | coefficient, parameter, tuning constant |
-| `Kp` / `PAN_KP` | proportional coefficient, K<sub>p</sub>, P gain |
-| `Ki` / `PAN_KI` | integral coefficient, K<sub>i</sub>, I gain |
-| `Kd` / `PAN_KD` | derivative coefficient, K<sub>d</sub>, D gain |
-| error | deviation, mismatch, e(t) — here `ex`/`ey` |
-| setpoint | reference, command, r(t) — here always zero, see below |
+| In this repo     | Also written as                                             |
+|------------------|-------------------------------------------------------------|
+| gain             | coefficient, parameter, tuning constant                     |
+| `Kp` / `PAN_KP`  | proportional coefficient, K<sub>p</sub>, P gain             |
+| `Ki` / `PAN_KI`  | integral coefficient, K<sub>i</sub>, I gain                 |
+| `Kd` / `PAN_KD`  | derivative coefficient, K<sub>d</sub>, D gain               |
+| error            | deviation, mismatch, e(t) — here `ex`/`ey`                  |
+| setpoint         | reference, command, r(t) — here always zero, see below      |
 | process variable | controlled variable, PV, measurement — here `ex`/`ey` again |
 
 Careful with *target*: in this project it means the black dot on the paper, the
@@ -46,7 +46,7 @@ telemetry are the process variable, not a distance from some separate reference
 
 ## The four commands
 
-```
+```text
 Q                          print current gains
 K b 40 4 0                 set BOTH axes: Kp=40, Ki=4, Kd=0
 K p 40 4 0                 pan only        (K t ... for tilt only)
@@ -66,7 +66,7 @@ how that gain set behaves from the state you are already in.
 
 With the camera running, the laser on target, and the loop armed:
 
-```
+```text
 T 1                 start the telemetry stream
 K b 40 0 0          the gain set under test
 N 8 0               kick it
@@ -77,7 +77,7 @@ T 0                 stop the stream
 
 Telemetry lines are plottable:
 
-```
+```text
 ex:-0.124 ey:+0.058 vpan:-4.9 vtilt:+2.1 pan:57.4 tilt:88.2 st:TRACK
 ```
 
@@ -95,14 +95,14 @@ without eyeballing the trace.
 
 Start here and change one thing at a time.
 
-| # | Command | What to watch for |
-|---|---|---|
-| 1 | `K b 10 0 0` | Sluggish. Crawls back, may stop visibly short — P alone gets weaker as the error shrinks. |
-| 2 | `K b 40 0 0` | Snappier, still stops short. **This is the shipped P-only behaviour.** |
-| 3 | `K b 90 0 0` | Fast, probably overshoots. Push further and it will oscillate — that is the latency limit, not the mechanics. |
-| 4 | `K b 40 4 0` | The residual now closes. Slower to *finish*, but it actually arrives. |
-| 5 | `K b 40 12 0` | Overshoot appears, possibly a slow hunt around the target. Too much I. |
-| 6 | `K b 40 4 2` | D damps the approach — but on camera noise it may just add jitter. |
+| # | Command       | What to watch for                                                                                             |
+|---|---------------|---------------------------------------------------------------------------------------------------------------|
+| 1 | `K b 10 0 0`  | Sluggish. Crawls back, may stop visibly short — P alone gets weaker as the error shrinks.                     |
+| 2 | `K b 40 0 0`  | Snappier, still stops short. **This is the shipped P-only behaviour.**                                        |
+| 3 | `K b 90 0 0`  | Fast, probably overshoots. Push further and it will oscillate — that is the latency limit, not the mechanics. |
+| 4 | `K b 40 4 0`  | The residual now closes. Slower to *finish*, but it actually arrives.                                         |
+| 5 | `K b 40 12 0` | Overshoot appears, possibly a slow hunt around the target. Too much I.                                        |
+| 6 | `K b 40 4 2`  | D damps the approach — but on camera noise it may just add jitter.                                            |
 
 ## What you should conclude
 
@@ -132,7 +132,7 @@ Run the same sequence on tilt (`N 0 8`) and expect it to differ — tilt lifts t
 laser against gravity, pan does not. That standing load is exactly what I
 compensates, so tilt usually wants more of it. Tune them separately:
 
-```
+```text
 K p 40 4 0
 K t 35 6 0
 ```

@@ -1,0 +1,24 @@
+{
+  // Files to lint. Everything else in the tree is generated or vendored.
+  "globs": ["**/*.md"],
+  "ignores": [
+    ".pio/**",
+    "**/.venv/**",
+    "managed_components/**",
+    "node_modules/**"
+  ],
+  "config": {
+    "default": true,
+
+    // Prose here is hand-wrapped at ~80, but tables, long URLs and code
+    // blocks legitimately run past it.
+    "MD013": false,
+
+    // <sub>/<sup> are used for maths subscripts (K_p, e(t), ...).
+    "MD033": { "allowed_elements": ["sub", "sup"] },
+
+    // `markdown-table-prettify` pads cells, so require that everywhere
+    // instead of letting the style be inferred per file.
+    "MD060": { "style": "padded" }
+  }
+}

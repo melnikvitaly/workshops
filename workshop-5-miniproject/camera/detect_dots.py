@@ -3,8 +3,8 @@
 The PC end of the closed loop implemented by src/inputs/ErrorVectorInput.hpp.
 Each frame:
 
-    frame ─┬─ red   dot (HSV + roundness)   ─> where the laser points now
-           └─ black dots (adaptive + round) ─> where it should point
+    frame ─┬─ red   dot (redness + size)     ─> where the laser points now
+           └─ black dots (adaptive + shape)  ─> where it should point
                                     │
                           error = target - laser, normalised
                                     │
@@ -32,8 +32,9 @@ Usage:
     py -3 detect_dots.py --source dataset/ --debug       # step through a folder
     py -3 detect_dots.py --source 0                      # any webcam, no OAK
 
-Keys: q = quit, f = fire, d = toggle the mask windows, arrows = move the
-simulated target, SPACE/n = next image (folder mode).
+Keys: q = quit, f = fire, d = toggle the mask windows and the labelled
+rejections, arrows = move the simulated target, SPACE/n = next image (folder
+mode).
 Mouse: left-click places the simulated target, right-click clears it.
 """
 
@@ -157,10 +158,12 @@ def run(args):
             red, red_mask = find_red_dot(
                 frame, args.red_area_min, args.red_area_max, args.red_circ,
                 args.red_min_redness, args.red_rel)
-            targets, black_mask = find_black_dots(
+            targets, black_mask, rejects = find_black_dots(
                 frame, args.black_area_min, args.black_area_max, args.black_circ,
                 args.black_darkness, args.black_sat_margin, args.black_block,
-                args.black_offset)
+                args.black_offset, args.black_radial, args.black_aspect,
+                args.black_solidity, args.black_compact, args.black_hole,
+                args.black_edge_margin)
             target = pick_target(targets, frame.shape, args.target, red)
             # If detection found no black target, fall back to a simulated one
             # created by a user click.
@@ -192,7 +195,8 @@ def run(args):
 
             if not args.headless:
                 view = draw_overlay(frame, red, targets, target,
-                                    dx, dy, valid, fps, link, last_esp)
+                                    dx, dy, valid, fps, link, last_esp,
+                                    rejects if debug else ())
                 if args.rotate:
                     view = cv2.rotate(view, _ROTATE[args.rotate])
                 cv2.imshow(_WIN, fire.draw(view, on_target))
@@ -292,11 +296,37 @@ def main():
                     help="threshold as a fraction of the frame's peak redness "
                          "(lower = bigger, more forgiving blob)")
 
-    # --- black dot thresholds ---
+    # --- black dot: is it round? (measured defaults, see dots._shape_reject) ---
     ap.add_argument("--black-area-min", type=int, default=40)
     ap.add_argument("--black-area-max", type=int, default=20000)
-    ap.add_argument("--black-circ", type=float, default=0.55,
-                    help="minimum circularity of a printed dot")
+    ap.add_argument("--black-circ", type=float, default=0.80,
+                    help="minimum circularity: fraction of the smallest "
+                         "enclosing circle the blob fills. A disc measures "
+                         "0.82-0.98, a square 0.72, a fat ellipse 0.77")
+    ap.add_argument("--black-radial", type=float, default=0.10,
+                    help="max spread of the centre-to-edge distance (/mean). "
+                         "The direct 'is every edge point equidistant' test; "
+                         "lower it to ~0.05 to also refuse polygons")
+    ap.add_argument("--black-aspect", type=float, default=1.25,
+                    help="max long/short side of the blob's minimum-area "
+                         "rectangle - rejects ellipses and rounded bars")
+    ap.add_argument("--black-solidity", type=float, default=0.88,
+                    help="min area / convex-hull area - rejects dents and "
+                         "notches, e.g. two dots touching")
+    ap.add_argument("--black-compact", type=float, default=0.50,
+                    help="min 4*pi*area / perimeter^2 - rejects frayed or "
+                         "knobbly outlines. Lower it if a rough print is "
+                         "being dropped")
+    ap.add_argument("--black-hole", type=float, default=0.15,
+                    help="max enclosed background / blob area - rejects rings "
+                         "and O-shapes, which every other test scores as "
+                         "perfect circles")
+    ap.add_argument("--black-edge-margin", type=int, default=2,
+                    help="drop blobs within this many px of the frame border "
+                         "(cut-off shapes measure as something else); -1 keeps "
+                         "them")
+
+    # --- black dot: is it ink? ---
     ap.add_argument("--black-darkness", type=float, default=0.8,
                     help="blob must be at most this fraction as bright as the "
                          "paper ringing it (lower = stricter)")
@@ -310,7 +340,9 @@ def main():
                     help="how much darker than its surroundings ink must be")
 
     ap.add_argument("--debug", action="store_true",
-                    help="show the red / black binary masks (also 'd' at runtime)")
+                    help="show the red / black binary masks, and box every "
+                         "rejected blob on the frame with the measurement that "
+                         "failed (also 'd' at runtime)")
     ap.add_argument("--headless", action="store_true",
                     help="no windows -- run the link without a display")
     ap.add_argument("--verbose", action="store_true",

@@ -21,6 +21,7 @@ _RED = (0, 0, 255)
 _GREEN = (0, 220, 0)
 _BLUE = (255, 160, 0)
 _WHITE = (255, 255, 255)
+_GREY = (140, 140, 140)
 
 # Window titles. HighGUI addresses windows by title, so every imshow /
 # namedWindow / setMouseCallback for the same window must use the same string.
@@ -38,10 +39,24 @@ def _ui_scale(frame):
     return max(0.35, min(1.4, frame.shape[1] / 1280.0))
 
 
-def draw_overlay(frame, red, targets, target, dx, dy, valid, fps, link, esp=""):
-    """Annotate the frame with both detections and the error vector."""
+def draw_overlay(frame, red, targets, target, dx, dy, valid, fps, link, esp="",
+                 rejects=()):
+    """Annotate the frame with both detections and the error vector.
+
+    `rejects` is [(Dot, reason)] from find_black_dots - the blobs that were the
+    right size but were not round enough (or not dark enough) to be a dot.
+    Drawn in grey with the measurement that failed, so a missed dot can be read
+    off the frame: "circ 0.71" says raise nothing, it is not round; "pale 0.86"
+    says the ink test is what to loosen.
+    """
     s = _ui_scale(frame)
     thick = max(1, int(2 * s))
+
+    for d, reason in rejects:
+        x1, y1, x2, y2 = d.bbox
+        cv2.rectangle(frame, (x1, y1), (x2, y2), _GREY, 1)
+        cv2.putText(frame, reason, (x1, max(int(10 * s), y1 - int(4 * s))),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.4 * s, _GREY, 1, cv2.LINE_AA)
 
     # Ring the candidates OUTSIDE their own edge - a circle drawn at the blob's
     # own radius is invisible against the ink it traces.
@@ -62,9 +77,15 @@ def draw_overlay(frame, red, targets, target, dx, dy, valid, fps, link, esp=""):
         cv2.arrowedLine(frame, red.center, target.center, _WHITE, thick,
                         cv2.LINE_AA, tipLength=0.15)
 
+    # The target's roundness is worth a slot: it is the one number that says
+    # how comfortably the chosen dot passed, and a target hovering near the
+    # threshold is what a flickering lock looks like from here.
     lines = [
         f"red: {'YES' if red is not None else 'no'}   "
-        f"black: {len(targets)}   target: {'YES' if target is not None else 'no'}",
+        f"black: {len(targets)}"
+        + (f" (+{len(rejects)} rejected)" if rejects else "")
+        + "   target: "
+        + (f"YES round {target.roundness:.2f}" if target is not None else "no"),
         f"E {dx:+.3f} {dy:+.3f} {1 if valid else 0}   "
         f"{fps:.0f} fps   sent {link.sent}   fired {link.fired}   "
         f"{link.port or 'no port'}",

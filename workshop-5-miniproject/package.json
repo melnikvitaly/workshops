@@ -1,0 +1,16 @@
+{
+  "name": "workshop-5-miniproject-docs",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Markdown tooling for the Mini Project 5 docs (lint + table formatting)",
+  "scripts": {
+    "lint:md": "markdownlint-cli2",
+    "lint:md:fix": "markdownlint-cli2 --fix",
+    "format:md": "node tools/prettify-md.mjs",
+    "check:md": "node tools/prettify-md.mjs --check && markdownlint-cli2"
+  },
+  "devDependencies": {
+    "markdown-table-prettify": "^4.1.0",
+    "markdownlint-cli2": "^0.23.2"
+  }
+}

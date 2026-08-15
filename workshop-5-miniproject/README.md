@@ -10,7 +10,7 @@ and drives the servos by **velocity**, not position.
 This is image-based visual servoing — the same structure a camera gimbal
 tracker uses.
 
-```
+```text
   camera ──► PC vision ──► error vector ──UART──► ESP32
                  ▲                                  │
                  │                              PID per axis
@@ -71,7 +71,7 @@ UART0) — no extra wiring at all. GPIO 8, 10 and 18 are now free.
 between the two sides. [`camera/`](camera/README.md) is the PC end of it, written
 against that document. Format in one line:
 
-```
+```text
 E <dx> <dy> <valid>\n        tracking error, streamed   e.g.  E -0.124 0.058 1
 F\n                          fire one shot (beam blanks briefly), on demand
 
@@ -92,12 +92,12 @@ and the PC sender must ignore unrecognised text.
 
 ## Controls
 
-| Control | Action |
-|---|---|
-| BOOT button | Arm / disarm the tracking loop |
-| Encoder button, click | Fire — blank the beam 120 ms, then restore |
-| Encoder button, hold | Toggle laser constant on/off |
-| `F\n` over UART | Fire — same as a button click, on demand from the PC |
+| Control               | Action                                               |
+|-----------------------|------------------------------------------------------|
+| BOOT button           | Arm / disarm the tracking loop                       |
+| Encoder button, click | Fire — blank the beam 120 ms, then restore           |
+| Encoder button, hold  | Toggle laser constant on/off                         |
+| `F\n` over UART       | Fire — same as a button click, on demand from the PC |
 
 Firing is a **gap, not a pulse**. The laser is held constant-on so the camera
 can see the dot, so a shot that switched the laser *on* would be invisible;
@@ -120,7 +120,7 @@ tracking loop running *away* from the target instead of toward it. Reading it
 off a 4-second trace is a great deal cheaper than discovering it as a runaway
 with the loop live.
 
-```
+```text
 TILT_ANGLE_AIMS_DOWN    dot moves down when the tilt angle increases
 PAN_ANGLE_AIMS_RIGHT    dot moves right when the pan angle increases
 ```
@@ -135,19 +135,44 @@ Buttons and `F` frames work during the tour; motion commands are discarded and
 the PIDs stay idle, then get a clean reset at handover so the first control step
 measures one step rather than the whole tour.
 
-| Status LED | Meaning |
-|---|---|
-| Violet | Boot zone tour running |
-| Green | Armed, tracking |
-| Amber | Armed, but no link or target not visible |
-| Blue | Disarmed |
+| Status LED | Meaning                                  |
+|------------|------------------------------------------|
+| Violet     | Boot zone tour running                   |
+| Green      | Armed, tracking                          |
+| Amber      | Armed, but no link or target not visible |
+| Blue       | Disarmed                                 |
+
+## Commands
+
+A `Makefile` wraps the three toolchains this project uses. `make` on its own
+lists everything.
+
+```text
+make build           compile the firmware (PlatformIO, esp32-s3-devkitc-1)
+make flash           upload, then open the serial monitor at 115200
+make flash PORT=COM10   ... on a named port instead of the auto-detected one
+make clean           remove build output
+
+make vision          run the PC tracker and stream to the board
+make vision-dry      detect and display only, send nothing — the safe way to tune
+
+make deps            install the Python and Node dependencies
+make docs            prettify the markdown tables, then lint
+```
+
+Docs tooling is [`markdownlint-cli2`](https://github.com/DavidAnson/markdownlint-cli2)
+(rules in `.markdownlint-cli2.jsonc`) plus
+[`markdown-table-prettify`](https://github.com/darkriszty/MarkdownTablePrettify-VSCodeExt),
+driven by `tools/prettify-md.mjs` because its CLI is stdin-only. `make check-md`
+is the read-only form: it fails if anything is unformatted or unlinted. Both
+have VS Code extensions, recommended in `.vscode/extensions.json`.
 
 ## Code layout
 
 Both ends of the loop live here — the firmware in `src/`, the vision in
 `camera/`. They meet only at `docs/uart-protocol.md`.
 
-```
+```text
 src/                       firmware (ESP-IDF / PlatformIO)
   utils/Pid.hpp            PID: error in, rate (deg/s) out. Anti-windup, filtered D.
   drivers/Uart.hpp         Non-blocking line reader; coexists with the console on UART0.
@@ -182,7 +207,7 @@ terminology table in [`docs/pid-experiments.md`](docs/pid-experiments.md).
 Gains are settable at runtime over the same UART, so trying a combination is one
 typed line instead of a reflash:
 
-```
+```text
 K b 40 4 0     set both axes: Kp=40, Ki=4, Kd=0   (K p / K t for one axis)
 N 8 0          nudge pan 8 degrees open-loop -> a repeatable step disturbance
 T 1            telemetry stream on (T 0 off)
@@ -221,7 +246,7 @@ Tune the axes separately — tilt lifts the laser against gravity, pan doesn't.
 
 The log line is plottable:
 
-```
+```text
 ex:-0.124 ey:+0.058 vpan:-4.9 vtilt:+2.1 pan:57.4 tilt:88.2 st:TRACK
 ```
 
@@ -263,10 +288,13 @@ settle after a step to judge overshoot and settling time.
 ### Detection and tracking (PC side)
 
 - **Make the OpenCV detection less fragile.** It is the weakest link in the
-  loop: `find_black_dots` thresholds on darkness, circularity and saturation
-  relative to the surrounding paper, so a shadow across the sheet, a glossy
-  print, a steep viewing angle or a cluttered background can lose the dot or
-  invent one. Losing it mid-move is not cosmetic — `valid=0` holds the axes,
+  loop: `find_black_dots` thresholds on darkness and saturation relative to the
+  surrounding paper and on six independent shape measurements, so a shadow
+  across the sheet, a glossy print, a steep viewing angle or a cluttered
+  background can still lose the dot. (Inventing one is much harder than it was —
+  the shape gate rejects squares, ellipses, rings and text — but a steep enough
+  angle turns the real dot into an ellipse and loses it in turn.)
+  Losing it mid-move is not cosmetic — `valid=0` holds the axes,
   and 300 ms of it resets the PIDs. Worth having: a confidence score instead of
   a boolean, hysteresis so a target that was locked is not dropped on one bad
   frame, and a short coast across dropouts rather than an immediate stop.
@@ -305,7 +333,7 @@ settle after a step to judge overshoot and settling time.
   disturbance and record what actually settles fastest without overshoot.
   Per axis — tilt fights gravity, pan does not.
 - **Understand the working zone's shape on the surface, and square the rig to
-  it.** The zone is a rectangle in *angles* — `WORK_PAN_MIN/MAX` × 
+  it.** The zone is a rectangle in *angles* — `WORK_PAN_MIN/MAX` ×
   `WORK_TILT_MIN/MAX` — and a rectangle in angles is not a rectangle on a wall.
   Two separate effects, worth telling apart before trying to fix either:
   - **Projection (cannot be aligned away).** For a plane square to the centre
@@ -369,6 +397,33 @@ settle after a step to judge overshoot and settling time.
   gains are set — past a point, tuning is chasing slop. Metal-gear or digital
   servos, a stiffer gimbal, and a laser mount that cannot shift on its horn
   would each raise that floor.
+
+- **Debug the laser switching itself on when it should be off.** The beam
+  sometimes lights without being asked to. This is a safety item, not a
+  cosmetic one — a 5 mW emitter on a gimbal that can sweep a room should only
+  ever be lit deliberately. Two candidate mechanisms, both worth ruling in or
+  out with a scope on GPIO 6 rather than by reading code:
+  - **The pin is undriven until firmware gets to it.** The relay module is
+    active-low (`RELAY_ACTIVE_HIGH = false`), so *off* means holding GPIO 6
+    HIGH — but from power-on through the bootloader until `Relay::init()` runs,
+    nothing drives it and no pull is configured, so it floats and the module is
+    free to read it as LOW. That is the reset/boot/flash glitch already listed
+    under *Known issues*, seen from the laser's end. `init()` has a narrower
+    version of the same hole: `gpio_config()` enables the output before `off()`
+    writes a level, and the output register comes out of reset at 0 — the pin is
+    briefly driven LOW, i.e. energized. Cheap fixes to try: `gpio_set_level()`
+    to the inactive level *before* `gpio_config()`, an internal pull-up so the
+    floating window rests off, and an external pull-up on the module's input
+    line, which is the only one that covers the pre-firmware window.
+  - **A spurious long-press toggles the latch on.** `CONTROL_BTN` (GPIO 17)
+    long-press maps to `LaserToggleConstant`, so one false hold on a noisy or
+    marginally-pulled button line latches the beam on and leaves it on. Check
+    the pull and debounce on that input before blaming the relay.
+
+  Note the blank/fire path is not a suspect: `Laser::fire()` only ever forces
+  the beam *off*, and `apply()` gates on `_constant`, so nothing in the firing
+  logic can light a laser that was dark. The MOSFET swap under *Adjustable laser
+  brightness* would likely settle the relay half of this for good.
 
 ### Reliability
 

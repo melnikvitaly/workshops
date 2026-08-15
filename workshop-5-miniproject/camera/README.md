@@ -4,7 +4,7 @@ Finds the **red dot** (where the laser points now) and the **black printed dot**
 (where it should point) in the OAK camera image, and streams the error between
 them to the ESP32 over the COM port.
 
-```
+```text
 OAK-1 ──USB──> PC: detect_dots.py ──COM──> ESP32-S3 ──> gimbal + laser
                     red dot, black dot        E <dx> <dy> <valid>
                     error = target − laser    F  (fire)
@@ -16,15 +16,15 @@ only. The camera plumbing (DepthAI v3) mirrors
 the red-dot NN of that project is unnecessary here because a PC can run the
 color filter directly.
 
-| File | |
-|---|---|
-| `detect_dots.py` | main script: frame sources → detection → error vector → COM, plus the command line |
-| `dots.py` | the detection itself: red dot, black dots, target choice, error vector |
-| `serial_link.py` | the COM link and the wire format; also a standalone sender for bring-up |
-| `overlay.py` | what is drawn on each frame: detections, error arrow, status text, mask windows |
-| `fire_button.py` | the on-screen FIRE button and its border states (converging / on target / arrived) |
-| `controls.py` | the second window: gain presets, nudge, telemetry, query |
-| `simulated_target.py` | click or arrow-key a stand-in target dot when no black dot is printed |
+| File                  |                                                                                    |
+|-----------------------|------------------------------------------------------------------------------------|
+| `detect_dots.py`      | main script: frame sources → detection → error vector → COM, plus the command line |
+| `dots.py`             | the detection itself: red dot, black dots, target choice, error vector             |
+| `serial_link.py`      | the COM link and the wire format; also a standalone sender for bring-up            |
+| `overlay.py`          | what is drawn on each frame: detections, error arrow, status text, mask windows    |
+| `fire_button.py`      | the on-screen FIRE button and its border states (converging / on target / arrived) |
+| `controls.py`         | the second window: gain presets, nudge, telemetry, query                           |
+| `simulated_target.py` | click or arrow-key a stand-in target dot when no black dot is printed              |
 
 ## Install and run
 
@@ -87,7 +87,7 @@ The link is PC → ESP32 only, but the firmware console shares that UART, so its
 (unread bytes would otherwise fill the OS buffer) and shows the newest line in
 the window:
 
-```
+```text
 esp32 | I (5210) TRACK: ex:-0.094 ey:-0.195 vpan:-3.3 vtilt:6.8 st:TRACK
 ```
 
@@ -107,11 +107,11 @@ UART can never trigger a shot.
 Its **border reports the state of the loop**, so you can watch one thing instead
 of reading numbers:
 
-| Border | Meaning |
-|---|---|
-| green | still converging — the error is too big to shoot on |
-| red | `\|error\| ≤ --ready-error` (default 0.02): on target |
-| blinking white/amber | the ESP32 just reported **arrival** |
+| Border               | Meaning                                               |
+|----------------------|-------------------------------------------------------|
+| green                | still converging — the error is too big to shoot on   |
+| red                  | `\|error\| ≤ --ready-error` (default 0.02): on target |
+| blinking white/amber | the ESP32 just reported **arrival**                   |
 
 Arrival is the firmware's own signal, not ours: when both axes settle inside its
 deadzone it sends one `A <ex> <ey>` line back (`REPORT_ARRIVAL` in `Config.hpp`),
@@ -119,7 +119,7 @@ which the script parses and flashes the border four times for. Red says *the
 camera* thinks you are on target; a blink says *the gimbal* agrees and has
 stopped. The console prints the arrival too:
 
-```
+```text
 ARRIVAL  esp32 error +0.0012 -0.0031
 ```
 
@@ -135,34 +135,77 @@ the one closest to the red dot.
 ## Tuning
 
 Run with `--debug`: the second window shows the two binary masks that everything
-else is derived from. Fix the masks and the detection follows.
+else is derived from, and every rejected blob is boxed in grey **on the frame
+itself, labelled with the measurement that failed** — `circ 0.66`, `hollow 0.46`,
+`pale 0.91`. That label names the knob, so tuning is reading rather than
+guessing. The chosen target's `round` score is in the top-left readout; a target
+hovering near a threshold is what a flickering lock looks like from here.
 
 Areas are given for a **640×480 reference frame** and scale automatically with
 resolution, so they stay meaningful at 1280×720.
 
-| Symptom | Knob |
-|---|---|
-| Red dot missed (pale / dim) | lower `--red-min-redness` |
-| Noise detected as a dot when there is none | raise `--red-min-redness` |
-| Red blob too big / bleeding into surroundings | raise `--red-rel` |
-| Red distractor picked instead of the dot | lower `--red-area-max`, raise `--red-circ` |
-| Black dots missed | raise `--black-darkness` toward 1.0, lower `--black-offset` |
-| Shadows / paper edges detected as dots | lower `--black-darkness`, raise `--black-offset`, raise `--black-circ` |
-| A coloured object detected as a dot | lower `--black-sat-margin` |
-| Dot on strongly coloured paper missed | raise `--black-sat-margin` |
-| Text / logos detected | raise `--black-circ`, raise `--black-area-min` |
-| Big dots missed at close range | raise `--black-block` (≈3× dot diameter, odd) |
+| Symptom                                                      | Knob                                                        |
+|--------------------------------------------------------------|-------------------------------------------------------------|
+| Red dot missed (pale / dim)                                  | lower `--red-min-redness`                                   |
+| Noise detected as a dot when there is none                   | raise `--red-min-redness`                                   |
+| Red blob too big / bleeding into surroundings                | raise `--red-rel`                                           |
+| Red distractor picked instead of the dot                     | lower `--red-area-max`, raise `--red-circ`                  |
+| Black dots missed                                            | raise `--black-darkness` toward 1.0, lower `--black-offset` |
+| Shadows / paper edges detected as dots                       | lower `--black-darkness`, raise `--black-offset`            |
+| A coloured object detected as a dot                          | lower `--black-sat-margin`                                  |
+| Dot on strongly coloured paper missed                        | raise `--black-sat-margin`                                  |
+| Big dots missed at close range                               | raise `--black-block` (≈3× dot diameter, odd)               |
+| Real dot rejected as `compact` (rough print)                 | lower `--black-compact`                                     |
+| Real dot rejected as `circ` / `aspect` (steep viewing angle) | lower `--black-circ`, raise `--black-aspect`                |
+| Something square-ish still accepted                          | lower `--black-radial` toward 0.05                          |
+
+### Is it round?
+
+Being dark is easy — shadows, text, a cable, the edge of the sheet and the gap
+under a bulldog clip all manage it — so the shape test is what actually picks
+the dot out of a scene. No single number does it, so six run, each blind to a
+different impostor, and **the first one that fails is the label `--debug`
+draws**:
+
+| Measurement | What it is                                       | Catches                                                       | A disc measures | Default  |
+|-------------|--------------------------------------------------|---------------------------------------------------------------|-----------------|----------|
+| `circ`      | fraction of the smallest enclosing circle filled | squares, triangles, anything lopsided                         | 0.82–0.98       | ≥ `0.80` |
+| `radial`    | spread of the centre-to-edge distance            | rounded squares — the shape everything else forgives          | 0.00–0.10       | ≤ `0.10` |
+| `aspect`    | long/short side of the min-area rectangle        | ellipses, rounded bars                                        | 1.00–1.12       | ≤ `1.25` |
+| `solid`     | area ÷ its own convex hull                       | dents and notches: two dots touching, a C                     | 0.88–0.99       | ≥ `0.88` |
+| `compact`   | 4π·area ÷ perimeter²                             | frayed, knobbly outlines: shadow edges, joined-up text        | 0.45–0.91       | ≥ `0.50` |
+| `hollow`    | enclosed background ÷ blob area                  | rings, an O, a washer — *perfect* circles to every test above | 0.00            | ≤ `0.15` |
+
+Plus an `edge` gate: a blob touching the frame border is a partial outline, and
+its true centre is outside the picture anyway (`--black-edge-margin -1` keeps
+them).
+
+The thresholds are measured rather than guessed — rendered discs against
+near-misses at radii 7–45 px — and the margin is real: an axis-aligned square
+scores `circ` 0.72 against the disc's 0.82 floor, a 0.78-ratio ellipse 0.77, a
+printed letter 0.73. On a test frame carrying a dot plus a square, a rotated
+square, an ellipse, a ring, a cable, a shadow and a line of text, one blob is
+accepted.
+
+The one near-miss deliberately let through is a regular **hexagon or octagon**:
+separating those from a disc costs more real dots than it saves, and at these
+sizes they are circles as far as aiming is concerned. Drop `--black-radial` to
+`0.05` if you disagree.
+
+Only the black dot is judged this hard. The red gate stays loose on purpose — at
+range the laser is a handful of pixels, where every one of these measurements is
+noise, and there is only ever one red thing in the frame.
 
 ### Why the thresholds are relative
 
 Both detectors deliberately avoid absolute colour gates, because a real scene is
 rarely neutral. Measured off a live frame lit by a blue-ish lamp:
 
-| | saturation | value |
-|---|---|---|
-| white paper | 105 | 167 |
-| the black printed dot | 135 | 91 |
-| the red laser dot | 52–122 | 139–255 |
+|                       | saturation | value   |
+|-----------------------|------------|---------|
+| white paper           | 105        | 167     |
+| the black printed dot | 135        | 91      |
+| the red laser dot     | 52–122     | 139–255 |
 
 An absolute "ink is unsaturated" rule (`S < 90`) throws the real dot away — the
 paper itself is more saturated than that. So the dot is compared with the ring
@@ -209,7 +252,7 @@ py -3 serial_link.py --console                   # type frames by hand
 Flags compose in protocol order (gains → telemetry → nudge → query) and every
 reply within 400 ms is printed **decoded**, not raw:
 
-```
+```text
 -> K b 40 4 0
   gains: pan kp=40 ki=4 kd=0 | tilt kp=40 ki=4 kd=0 | ARMED
   ex:-0.124 ey:+0.058 pan:57.4 tilt:88.2 [TRACK]
