@@ -38,7 +38,7 @@ def _ui_scale(frame):
     return max(0.35, min(1.4, frame.shape[1] / 1280.0))
 
 
-def draw_overlay(frame, red, targets, target, dx, dy, valid, fps, link, esp="",
+def draw_overlay(frame, red, targets, target, dx, dy, valid, fps, link, telemetry=None,
                  rejects=()):
     """Annotate the frame with both detections and the error vector.
 
@@ -89,11 +89,12 @@ def draw_overlay(frame, red, targets, target, dx, dy, valid, fps, link, esp="",
         f"{fps:.0f} fps   sent {link.sent}   fired {link.fired}   "
         f"{link.port or 'no port'}",
     ]
-    if esp:
-        # The newest line the firmware logged back on the shared UART - usually
-        # its own view of the same error, which makes a sign or scaling mistake
-        # obvious at a glance.
-        lines.append("esp32 | " + esp[:78])
+    if telemetry is not None:
+        lines.append(
+            f"ESP T  ex:{telemetry['ex']:+.3f} ey:{telemetry['ey']:+.3f}  "
+            f"v:{telemetry['vpan']:+.1f}/{telemetry['vtilt']:+.1f} deg/s  "
+            f"pan:{telemetry['pan']:.1f} tilt:{telemetry['tilt']:.1f}  "
+            f"{telemetry['st']}")
     for i, text in enumerate(lines):
         org = (int(10 * s) + 2, int((30 + 26 * i) * s) + 8)
         cv2.putText(frame, text, org, cv2.FONT_HERSHEY_SIMPLEX, 0.65 * s,

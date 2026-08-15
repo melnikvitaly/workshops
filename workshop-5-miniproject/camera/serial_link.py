@@ -13,7 +13,7 @@ Uplink (ESP32 -> PC), interleaved with ordinary console logging:
 
     A <ex> <ey>               arrived: both axes settled  -> parse_arrival
     G pan ... tilt ... armed  gains report                -> parse_gains
-    ex:.. ey:.. st:..         telemetry sample            -> parse_telemetry
+    T ex:.. ey:.. st:..       telemetry sample            -> parse_telemetry
 
 The full contract is docs/uart-protocol.md; the receiving end is
 src/inputs/ErrorVectorInput.hpp. The parts of the contract this module is
@@ -78,27 +78,30 @@ def parse_gains(line):
 
 
 def parse_telemetry(line):
-    """dict if `line` is a telemetry sample (`T 1`), else None.
+    """dict if `line` is an uplink telemetry sample, else None.
 
-        ex:-0.124 ey:+0.058 vpan:-4.9 vtilt:+2.1 pan:57.4 tilt:88.2 st:TRACK
+        T ex:-0.124 ey:+0.058 vpan:-4.9 vtilt:+2.1 pan:57.4 tilt:88.2 st:TRACK
 
-    Keyed `name:value` pairs rather than positional fields, so it stays readable
-    in a terminal and survives the firmware adding a field.
+    The leading `T` is mandatory: console logs can contain telemetry-like text,
+    but must never be mistaken for a protocol message.
     """
-    out = {}
-    for token in line.split():
-        key, sep, value = token.partition(":")
-        if not sep:
-            return None                  # not a telemetry line at all
-        out[key] = value
-    if "ex" not in out or "st" not in out:
+    tokens = line.split()
+    if len(tokens) != 8 or tokens[0] != "T":
         return None
-    for k in ("ex", "ey", "vpan", "vtilt", "pan", "tilt"):
-        if k in out:
-            try:
-                out[k] = float(out[k])
-            except ValueError:
-                return None
+    out = {}
+    for token in tokens[1:]:
+        key, sep, value = token.partition(":")
+        if not sep or not key or not value or key in out:
+            return None
+        out[key] = value
+    required = {"ex", "ey", "vpan", "vtilt", "pan", "tilt", "st"}
+    if set(out) != required:
+        return None
+    try:
+        for k in ("ex", "ey", "vpan", "vtilt", "pan", "tilt"):
+            out[k] = float(out[k])
+    except ValueError:
+        return None
     return out
 
 
@@ -313,9 +316,9 @@ class ErrorLink:
         """Whatever the firmware has said since the last call, as text lines.
 
         The link is PC -> ESP32 only, but the firmware console shares this UART,
-        so its ESP_LOGI output arrives here: the tracking log, the boot banner,
-        panics. Reading it costs nothing and leaving it unread eventually fills
-        the OS buffer, so this runs every frame whether anyone looks or not.
+        so ESP_LOGI output, boot banners, and panics also arrive here. Reading
+        them costs nothing and leaving them unread eventually fills the OS
+        buffer, so this runs every frame whether anyone looks or not.
         """
         self._drain()
         lines, self._pending = self._pending, []
@@ -511,7 +514,7 @@ def _main():
 
     if args.monitor:
         # Pure listener - the gimbal never moves, so this is the safe way to
-        # check the wiring and see the firmware's banner and tracking log.
+        # check the wiring and see the firmware's banner and telemetry.
         link = ErrorLink(args.port, args.baud, echo=True)
         print("Monitoring. Nothing is sent. Ctrl-C to stop.")
         try:

@@ -50,12 +50,13 @@ from controls import Controls
 from dots import error_vector, find_black_dots, find_red_dot, pick_target
 from fire_button import FireButton
 from overlay import _ROTATE, _WIN, draw_overlay, hide_masks, show_masks
-from serial_link import ErrorLink, list_ports, parse_arrival
+from serial_link import ErrorLink, list_ports, parse_arrival, parse_telemetry
 from simulated_target import SimulatedTargetManager
 from tuning import Thresholds
 
 _IMG_EXT = (".jpg", ".jpeg", ".png", ".bmp")
 _VID_EXT = (".mp4", ".avi", ".mov", ".mkv")
+_TELEMETRY_STALE_S = 2.0
 
 
 # --- frame sources ---------------------------------------------------------
@@ -153,7 +154,8 @@ def run(args):
     fps, last_t = 0.0, time.time()
 
     fire = FireButton()
-    last_esp = ""
+    telemetry = None
+    telemetry_at = 0.0
     # The simulated target manager owns the view window's mouse: it lets the
     # FIRE button inspect each click first, then treats what is left over as a
     # request to place, move or clear a stand-in black dot.
@@ -192,14 +194,18 @@ def run(args):
             # Send every frame, valid or not: the firmware treats silence as a
             # dead link (300 ms) and resets its PIDs, while valid=0 only holds.
             on_wire = link.send(dx, dy, valid)
-            # Read the console traffic coming back on the shared UART every
-            # frame, looked at or not: unread bytes end up filling the OS buffer.
+            # Drain every UART line so console traffic cannot fill the OS buffer.
+            # Only explicit uplink protocol messages affect the UI.
             for esp_line in link.poll():
-                last_esp = esp_line
                 arrival = parse_arrival(esp_line)
                 if arrival is not None:
                     fire.blink()
                     print(f"ARRIVAL  esp32 error {arrival[0]:+.4f} {arrival[1]:+.4f}")
+                    continue
+                sample = parse_telemetry(esp_line)
+                if sample is not None:
+                    telemetry = sample
+                    telemetry_at = time.monotonic()
 
             # Display-only: how close counts as "on target" for the border
             # colour. Independent of the firmware's own (much tighter) deadzone,
@@ -209,10 +215,14 @@ def run(args):
             now = time.time()
             fps = 0.9 * fps + 0.1 / max(now - last_t, 1e-6)
             last_t = now
+            # Do not leave the last sample on screen after the operator turns
+            # telemetry off or the board/link goes away.
+            live_telemetry = (telemetry if time.monotonic() - telemetry_at < _TELEMETRY_STALE_S
+                              else None)
 
             if not args.headless:
                 view = draw_overlay(frame, red, targets, target,
-                                    dx, dy, valid, fps, link, last_esp,
+                                    dx, dy, valid, fps, link, live_telemetry,
                                     rejects if debug else ())
                 if args.rotate:
                     view = cv2.rotate(view, _ROTATE[args.rotate])
@@ -284,8 +294,8 @@ def main():
                     help="max frames/second put on the wire (15-30 is the "
                          "protocol's recommended range)")
     ap.add_argument("--echo", action="store_true",
-                    help="print the firmware's log lines to the console (the "
-                         "newest one is shown in the window either way)")
+                    help="print every received ESP32 line; console text is "
+                         "never shown in the window")
 
     ap.add_argument("--ready-error", type=float, default=0.02,
                     help="|error| at or below which the FIRE border turns red "

@@ -5,12 +5,12 @@ in `src/` implements the receiving end exactly as described here.
 
 ## Transport
 
-|           |                                                                                        |
-|-----------|----------------------------------------------------------------------------------------|
-| Port      | The ESP32-S3 DevKitC-1 **UART** connector (CP2102), i.e. UART0 / GPIO43–44             |
-| Baud      | 115200                                                                                 |
-| Framing   | 8 data bits, no parity, 1 stop bit, no flow control                                    |
-| Direction | Mostly PC → ESP32. The firmware sends exactly one kind of frame back: `A`, on arrival. |
+|           |                                                                                         |
+|-----------|-----------------------------------------------------------------------------------------|
+| Port      | The ESP32-S3 DevKitC-1 **UART** connector (CP2102), i.e. UART0 / GPIO43–44              |
+| Baud      | 115200                                                                                  |
+| Framing   | 8 data bits, no parity, 1 stop bit, no flow control                                     |
+| Direction | Mostly PC → ESP32. Uplink messages are `A` (arrival), `G` (gains), and `T` (telemetry). |
 
 **The console shares this port.** `ESP_LOGI` output from the firmware comes back
 on the same UART. The PC sender must therefore:
@@ -141,7 +141,12 @@ to, never as a side effect of a "blink" command.
   coalesced, which is why fire is its own frame rather than a fourth field of
   the error frame.
 
-## Uplink: `A` — arrived on target
+## Uplink messages
+
+Only these exact message forms are PC-visible protocol. Console logs, boot
+banners, and other arbitrary RX text must be drained but ignored.
+
+### `A` — arrived on target
 
 The one frame the firmware sends **back** to the PC:
 
@@ -163,13 +168,29 @@ rather than waiting for another `A`.
 
 Parsing notes:
 
-- It arrives interleaved with `ESP_LOGI` output on the shared UART. Match on a
-  line beginning with `A` followed by whitespace; log lines begin with `I (`.
+- It arrives interleaved with `ESP_LOGI` output on the shared UART. Match the
+  complete three-token `A` form; ignore every other line.
 - It is written unbuffered and flushed, so there is no latency between the
   gimbal stopping and the line appearing.
 - Disable it entirely with `REPORT_ARRIVAL = false` in `Config.hpp`.
 
 Typical use: hold fire until the gimbal has actually settled, then send `F`.
+
+### `T` — telemetry sample
+
+When the PC sends `T 1`, the firmware emits these rate-limited messages while
+the tracked error changes or the tracking state changes, plus a heartbeat at
+least every second while telemetry remains enabled.
+
+```text
+T ex:<float> ey:<float> vpan:<float> vtilt:<float> pan:<float> tilt:<float> st:<state>\n
+T ex:-0.124 ey:+0.058 vpan:-4.9 vtilt:+2.1 pan:57.4 tilt:88.2 st:TRACK
+```
+
+`ex`/`ey` are the input error, `vpan`/`vtilt` are commanded degrees per second,
+and `pan`/`tilt` are current gimbal angles in degrees. `st` is the tracking
+state. The leading `T` is mandatory; the PC must not parse telemetry-looking
+content inside ordinary console logs. Send `T 0` to stop the stream.
 
 ## Rate and timing
 
@@ -310,8 +331,8 @@ Which part of this contract each piece implements:
 | `A` uplink      | parsed by `serial_link.parse_arrival`; the window blinks the FIRE border and the console prints `ARRIVAL esp32 error <ex> <ey>` |
 | `K` `N` `T` `Q` | `ErrorLink.set_gains` / `.nudge` / `.telemetry` / `.query`, or the `--gains` / `--nudge` / `--telemetry` / `--query` flags      |
 | `G` uplink      | `serial_link.parse_gains` → `{pan, tilt, armed}`, printed decoded                                                               |
-| telemetry lines | `serial_link.parse_telemetry` → `{ex, ey, vpan, vtilt, pan, tilt, st}`                                                          |
-| console text    | read and discarded every frame (`--echo` prints it, the newest line always shows in the window)                                 |
+| `T` uplink      | `serial_link.parse_telemetry` → `{ex, ey, vpan, vtilt, pan, tilt, st}`; rendered in the vision window while telemetry is on     |
+| console text    | drained and discarded every frame (`--echo` prints it); never parsed or rendered by the vision UI                               |
 | DTR/RTS         | deasserted **before** the port is opened, so opening it does not reset the board through the auto-reset circuit                 |
 
 The axis letter and the no-negative-gains rule are enforced on the PC side too.

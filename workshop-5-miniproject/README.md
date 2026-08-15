@@ -92,6 +92,7 @@ E <dx> <dy> <valid>\n        tracking error, streamed   e.g.  E -0.124 0.058 1
 F\n                          fire one shot (beam blanks briefly), on demand
 
 A <ex> <ey>\n                <- uplink: arrived on target, once per arrival
+T ex:<...> ey:<...> ...\n     <- uplink: telemetry, while enabled with `T 1`
 ```
 
 `dx`/`dy` are `target - dot`, normalised so ±1.0 spans half the frame.
@@ -261,10 +262,10 @@ Read the gain-budget comment in `Config.hpp` first. Order:
 
 Tune the axes separately — tilt lifts the laser against gravity, pan doesn't.
 
-The log line is plottable:
+With telemetry enabled, the firmware emits a dedicated uplink message:
 
 ```text
-ex:-0.124 ey:+0.058 vpan:-4.9 vtilt:+2.1 pan:57.4 tilt:88.2 st:TRACK
+T ex:-0.124 ey:+0.058 vpan:-4.9 vtilt:+2.1 pan:57.4 tilt:88.2 st:TRACK
 ```
 
 `ex`/`ey` are the process variable (the setpoint is always zero). Watch `ex`

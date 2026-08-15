@@ -1,17 +1,18 @@
 #pragma once
 #include <esp_log.h>
 #include <cmath>
+#include <cstdio>
 #include "Point.hpp"
 #include "Config.hpp"
 #include "TrackState.hpp"
 
-// Tuning-oriented log. One line per meaningful change, rate limited so it
-// cannot flood the console - which matters more than usual here, because the
-// console shares UART0 with the incoming error stream.
+// Tuning-oriented telemetry. One line per meaningful change, rate limited so
+// it cannot flood the shared UART.
 //
-// The format is deliberately plottable (Teleplot / serial-plotter style):
+// With telemetry enabled this is a bare protocol message, rather than ESP_LOGI
+// text, so the PC can distinguish it from console output:
 //
-//   ex:-0.124 ey:0.058 vpan:-4.9 vtilt:2.1 pan:57.4 tilt:88.2 st:TRACK
+//   T ex:-0.124 ey:0.058 vpan:-4.9 vtilt:2.1 pan:57.4 tilt:88.2 st:TRACK
 //
 // ex/ey are the measured error (the process variable; the setpoint is always
 // zero), vpan/vtilt the PID rate output, pan/tilt the resulting angles. Watch
@@ -31,7 +32,12 @@ public:
 
     // Runtime toggle (the 'T' frame), so a tuning run does not need a reflash
     // and the port goes quiet again the moment you are done.
-    void setTelemetry(bool on) { _telemetry = on; }
+    void setTelemetry(bool on)
+    {
+        if (on && !_telemetry)
+            _lastMs = 0; // make a newly enabled stream report on the next tick
+        _telemetry = on;
+    }
     bool telemetry() const     { return _telemetry; }
 
     void update(uint32_t nowMs,
@@ -42,15 +48,18 @@ public:
         const bool stateChanged = !_primed || state != _lastState;
 
         // Without telemetry the logger is silent except at state transitions -
-        // a handful of lines per session rather than a continuous stream down
-        // the UART the PC is trying to send frames on.
+        // a handful of console lines per session rather than a continuous
+        // stream down the UART the PC is trying to send frames on.
         const bool moved = _telemetry &&
                            (fabsf(error.x - _last.x) > _epsilon ||
                             fabsf(error.y - _last.y) > _epsilon);
+        const bool heartbeat = _telemetry &&
+                               (nowMs - _lastMs >= config::TELEMETRY_HEARTBEAT_MS);
 
-        if (!moved && !stateChanged)
+        if (!moved && !stateChanged && !heartbeat)
             return;
-        if (!stateChanged && (nowMs - _lastMs) < config::LOG_MIN_INTERVAL_MS)
+        if (!stateChanged && !heartbeat &&
+            (nowMs - _lastMs) < config::LOG_MIN_INTERVAL_MS)
             return;
 
         _last      = error;
@@ -58,8 +67,16 @@ public:
         _primed    = true;
         _lastMs    = nowMs;
 
-        ESP_LOGI(_tag, "ex:%+.3f ey:%+.3f vpan:%+.1f vtilt:%+.1f pan:%.1f tilt:%.1f st:%s",
-                 error.x, error.y, velocity.x, velocity.y, panDeg, tiltDeg,
-                 trackStateName(state));
+        if (_telemetry)
+        {
+            printf("T ex:%+.3f ey:%+.3f vpan:%+.1f vtilt:%+.1f pan:%.1f tilt:%.1f st:%s\n",
+                   error.x, error.y, velocity.x, velocity.y, panDeg, tiltDeg,
+                   trackStateName(state));
+            fflush(stdout);
+        }
+        else
+        {
+            ESP_LOGI(_tag, "state %s", trackStateName(state));
+        }
     }
 };

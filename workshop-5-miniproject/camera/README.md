@@ -82,20 +82,21 @@ black dot is printed, right-click clears it. The arrow keys nudge it 24 px at a
 time, in the direction it moves on screen even under `--rotate`; with no dot yet
 the first arrow puts one at the frame centre.
 
-### Seeing what the ESP32 says
+### Telemetry from the ESP32
 
 The link is PC → ESP32 only, but the firmware console shares that UART, so its
-`ESP_LOGI` output arrives on the same port. The script reads it every frame
-(unread bytes would otherwise fill the OS buffer) and shows the newest line in
-the window:
+`ESP_LOGI` output also arrives on the same port. The script drains it every
+frame (unread bytes would otherwise fill the OS buffer), but ignores it. Turn
+on telemetry from the controls panel or with `T 1`; the UI renders only this
+dedicated protocol message:
 
 ```text
-esp32 | I (5210) TRACK: ex:-0.094 ey:-0.195 vpan:-3.3 vtilt:6.8 st:TRACK
+ESP T  ex:-0.094 ey:-0.195  v:-3.3/+6.8 deg/s  pan:57.4 tilt:88.2  TRACK
 ```
 
 That is the firmware's own view of the error you just sent — the quickest way to
-catch a sign or scaling mistake. Add `--echo` to print every line to the console
-as well, or listen without sending anything at all:
+catch a sign or scaling mistake. Add `--echo` to print every received line to
+the console as well, or listen without sending anything at all:
 
 ```bash
 py -3 serial_link.py --monitor      # print-only; the gimbal never moves

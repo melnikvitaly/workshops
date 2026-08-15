@@ -254,27 +254,25 @@ namespace config
     // --- Logging -------------------------------------------------------------
     // The console shares UART0 with the incoming error stream, so anything
     // logged continuously is noise on the PC's RX and competes with the frames
-    // we are trying to receive. Even so, telemetry is ON by default: with it
-    // off the firmware speaks only at state changes, and the PC window - which
-    // shows the newest line it has ever seen - ends up displaying a snapshot
-    // minutes old as if it were current. A frozen `vpan` next to a frozen `pan`
-    // reads exactly like a gimbal refusing to move, which is a far more
-    // expensive confusion than the extra bytes on the wire.
+    // we are trying to receive. Telemetry is a dedicated `T ...` uplink frame,
+    // so the PC can render it without treating console text as data. Keeping it
+    // ON by default makes that live state visible as soon as tracking starts.
     //
-    // It is still rate limited to one line per LOG_MIN_INTERVAL_MS and only
-    // when the error actually moved by LOG_EPSILON, so a settled loop goes
-    // quiet on its own. Turn it off ('T 0', or here) if the link needs the
-    // bandwidth back.
+    // It is rate limited to one line per LOG_MIN_INTERVAL_MS when the error
+    // moves, then sends a low-rate heartbeat while settled so the PC can tell
+    // a healthy quiet loop from a stale link. Turn it off ('T 0', or here) if
+    // the link needs the bandwidth back.
     constexpr bool LOG_TELEMETRY = true;
 
     // Emit a one-line "A <ex> <ey>" uplink frame the moment both axes settle
     // inside the deadzone. Edge triggered, not periodic: one line per arrival,
     // re-armed only after the dot leaves the target again. This is the one
-    // thing the firmware ever sends back, so it stays cheap on a shared UART.
+    // low-cost uplink alongside gain reports and optional telemetry.
     constexpr bool REPORT_ARRIVAL = true;
 
     constexpr float LOG_EPSILON = 0.01f;   // min error change worth a log line
     constexpr uint32_t LOG_MIN_INTERVAL_MS = 100; // and never faster than this
+    constexpr uint32_t TELEMETRY_HEARTBEAT_MS = 1000; // settled-loop proof of life
 
     // --- Status LED colours --------------------------------------------------
     struct Rgb

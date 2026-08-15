@@ -78,7 +78,7 @@ T 0                 stop the stream
 Telemetry lines are plottable:
 
 ```text
-ex:-0.124 ey:+0.058 vpan:-4.9 vtilt:+2.1 pan:57.4 tilt:88.2 st:TRACK
+T ex:-0.124 ey:+0.058 vpan:-4.9 vtilt:+2.1 pan:57.4 tilt:88.2 st:TRACK
 ```
 
 `ex` is the process variable; the setpoint is always zero. Three things to read
