@@ -78,7 +78,7 @@ T 0                 stop the stream
 Telemetry lines are plottable:
 
 ```text
-T ex:-0.124 ey:+0.058 vpan:-4.9 vtilt:+2.1 pan:57.4 tilt:88.2 st:TRACK
+T ex:-0.124 ey:+0.058 vpan:-4.9 vtilt:+2.1 pan:57.4 tilt:88.2 st:TRACK arr:0
 ```
 
 `ex` is the process variable; the setpoint is always zero. Three things to read
@@ -88,7 +88,7 @@ off the recovery:
 - **Settling time** — how long until it stays inside the deadzone?
 - **Steady state** — where does it stop? Nonzero means the loop gave up short.
 
-The `A <ex> <ey>` uplink marks the instant it settles, which times the recovery
+The `arr:1` telemetry flag marks the instant it settles, which times the recovery
 without eyeballing the trace.
 
 ## The sequence worth running

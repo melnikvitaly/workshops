@@ -185,6 +185,6 @@ public:
                           _device.tracking.error(),
                           _device.gimbal.velocity(),
                           _device.gimbal.panAngle(), _device.gimbal.tiltAngle(),
-                          st);
+                          st, _device.tracking.onTarget());
     }
 };

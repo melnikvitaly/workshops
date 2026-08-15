@@ -264,12 +264,6 @@ namespace config
     // the link needs the bandwidth back.
     constexpr bool LOG_TELEMETRY = true;
 
-    // Emit a one-line "A <ex> <ey>" uplink frame the moment both axes settle
-    // inside the deadzone. Edge triggered, not periodic: one line per arrival,
-    // re-armed only after the dot leaves the target again. This is the one
-    // low-cost uplink alongside gain reports and optional telemetry.
-    constexpr bool REPORT_ARRIVAL = true;
-
     constexpr float LOG_EPSILON = 0.01f;   // min error change worth a log line
     constexpr uint32_t LOG_MIN_INTERVAL_MS = 100; // and never faster than this
     constexpr uint32_t TELEMETRY_HEARTBEAT_MS = 1000; // settled-loop proof of life

@@ -94,7 +94,7 @@ def draw_overlay(frame, red, targets, target, dx, dy, valid, fps, link, telemetr
             f"ESP T  ex:{telemetry['ex']:+.3f} ey:{telemetry['ey']:+.3f}  "
             f"v:{telemetry['vpan']:+.1f}/{telemetry['vtilt']:+.1f} deg/s  "
             f"pan:{telemetry['pan']:.1f} tilt:{telemetry['tilt']:.1f}  "
-            f"{telemetry['st']}")
+            f"{telemetry['st']}  arrived:{1 if telemetry['arr'] else 0}")
     for i, text in enumerate(lines):
         org = (int(10 * s) + 2, int((30 + 26 * i) * s) + 8)
         cv2.putText(frame, text, org, cv2.FONT_HERSHEY_SIMPLEX, 0.65 * s,

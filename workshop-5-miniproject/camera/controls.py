@@ -120,13 +120,16 @@ class Controls:
         ttk.Button(box, text="Set", command=self._set_gains).grid(row=0, column=7)
 
     def _build_nudge(self, parent):
-        box = ttk.LabelFrame(parent, text="Nudge (open loop, degrees)", padding=6)
+        box = ttk.LabelFrame(parent, text="Nudge physical gimbal (open loop, degrees)", padding=6)
         box.pack(fill="x", pady=(8, 0))
         for i, (name, var) in enumerate(self.nudge.items()):
             ttk.Label(box, text=name).grid(row=0, column=2 * i)
             ttk.Entry(box, textvariable=var, width=7).grid(
                 row=0, column=1 + 2 * i, padx=(2, 8))
         ttk.Button(box, text="Nudge", command=self._do_nudge).grid(row=0, column=4)
+        ttk.Label(box, text=("Applies a known physical kick -- like a bump, vibration, "
+                             "wind gust, or servo slip -- so the loop can correct it.")).grid(
+                                 row=1, column=0, columnspan=5, sticky="w", pady=(4, 0))
 
     def _build_presets(self, parent):
         box = ttk.LabelFrame(parent, text="Presets", padding=6)

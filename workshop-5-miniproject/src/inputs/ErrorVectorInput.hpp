@@ -44,8 +44,7 @@ class ErrorVectorInput : public Input
                  config::PID_DERIV_ALPHA};
 
     Point    _error{0.0f, 0.0f};    // latest reported error, already sign-corrected
-    Point    _rawError{0.0f, 0.0f}; // as the PC sent it - what we echo back on arrival
-    bool     _onTarget = false;     // latched, so arrival is reported once
+    bool     _onTarget = false;     // current deadzone state, reported in telemetry
     Point    _velocity{0.0f, 0.0f};
     bool     _targetVisible = false;
     bool     _armed         = true;
@@ -106,26 +105,13 @@ class ErrorVectorInput : public Input
         fflush(stdout);
     }
 
-    // One line, the moment both axes settle. Written with printf rather than
-    // ESP_LOGI so the PC gets a bare parseable frame instead of a decorated log
-    // line - and flushed, because it is the only thing we ever send and a line
-    // sitting in a buffer is worse than useless to whoever is waiting on it.
-    void reportArrival()
-    {
-        printf("A %+.4f %+.4f\n", _rawError.x, _rawError.y);
-        fflush(stdout);
-    }
-
     // Both axes inside the deadzone - the controllers are frozen and the gimbal
-    // has stopped. Edge-detected so it is reported once per arrival.
+    // has stopped. AppLogger turns this state transition into telemetry arr:1.
     void updateArrival()
     {
         const float ax = _error.x < 0.0f ? -_error.x : _error.x;
         const float ay = _error.y < 0.0f ? -_error.y : _error.y;
         const bool  arrived = ax < config::TRACK_DEADZONE && ay < config::TRACK_DEADZONE;
-
-        if (arrived && !_onTarget && config::REPORT_ARRIVAL)
-            reportArrival();
 
         _onTarget = arrived;
     }
@@ -174,7 +160,6 @@ public:
                     // how the camera is mounted relative to the gimbal.
                     _error = {config::PAN_INVERT ? -f.dx : f.dx,
                               config::TILT_INVERT ? -f.dy : f.dy};
-                    _rawError    = {f.dx, f.dy};
                     _lastFrameMs = nowMs();
                 }
 

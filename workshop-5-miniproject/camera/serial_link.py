@@ -11,9 +11,8 @@ Downlink (PC -> ESP32):
 
 Uplink (ESP32 -> PC), interleaved with ordinary console logging:
 
-    A <ex> <ey>               arrived: both axes settled  -> parse_arrival
     G pan ... tilt ... armed  gains report                -> parse_gains
-    T ex:.. ey:.. st:..       telemetry sample            -> parse_telemetry
+    T ex:.. ey:.. st:.. arr:. telemetry sample; arr:1 = arrival -> parse_telemetry
 
 The full contract is docs/uart-protocol.md; the receiving end is
 src/inputs/ErrorVectorInput.hpp. The parts of the contract this module is
@@ -80,13 +79,13 @@ def parse_gains(line):
 def parse_telemetry(line):
     """dict if `line` is an uplink telemetry sample, else None.
 
-        T ex:-0.124 ey:+0.058 vpan:-4.9 vtilt:+2.1 pan:57.4 tilt:88.2 st:TRACK
+        T ex:-0.124 ey:+0.058 vpan:-4.9 vtilt:+2.1 pan:57.4 tilt:88.2 st:TRACK arr:1
 
     The leading `T` is mandatory: console logs can contain telemetry-like text,
     but must never be mistaken for a protocol message.
     """
     tokens = line.split()
-    if len(tokens) != 8 or tokens[0] != "T":
+    if len(tokens) != 9 or tokens[0] != "T":
         return None
     out = {}
     for token in tokens[1:]:
@@ -94,35 +93,18 @@ def parse_telemetry(line):
         if not sep or not key or not value or key in out:
             return None
         out[key] = value
-    required = {"ex", "ey", "vpan", "vtilt", "pan", "tilt", "st"}
+    required = {"ex", "ey", "vpan", "vtilt", "pan", "tilt", "st", "arr"}
     if set(out) != required:
         return None
     try:
         for k in ("ex", "ey", "vpan", "vtilt", "pan", "tilt"):
             out[k] = float(out[k])
+        if out["arr"] not in ("0", "1"):
+            return None
+        out["arr"] = out["arr"] == "1"
     except ValueError:
         return None
     return out
-
-
-def parse_arrival(line):
-    """(ex, ey) if `line` is the firmware's arrival uplink, else None.
-
-        A +0.0012 -0.0031
-
-    Sent once, edge-triggered, the moment both axes settle inside the firmware's
-    deadzone - the one thing the firmware ever sends back on this link. It is a
-    bare printf rather than a decorated ESP_LOGI line, which is what lets it be
-    parsed instead of merely displayed. The exactly-three-tokens test keeps
-    ordinary log text ("A" appears in plenty of it) from reading as an arrival.
-    """
-    parts = line.split()
-    if len(parts) != 3 or parts[0].upper() != "A":
-        return None
-    try:
-        return float(parts[1]), float(parts[2])
-    except ValueError:
-        return None
 
 
 def _describe(p):
@@ -376,14 +358,11 @@ def _describe_reply(line):
         return (f"gains: pan kp={p[0]:g} ki={p[1]:g} kd={p[2]:g} | "
                 f"tilt kp={t[0]:g} ki={t[1]:g} kd={t[2]:g} | "
                 f"{'ARMED' if gains['armed'] else 'DISARMED'}")
-    arrival = parse_arrival(line)
-    if arrival is not None:
-        return f"ARRIVED on target, residual {arrival[0]:+.4f} {arrival[1]:+.4f}"
     tel = parse_telemetry(line)
     if tel is not None:
         return (f"ex:{tel['ex']:+.3f} ey:{tel.get('ey', 0.0):+.3f} "
                 f"pan:{tel.get('pan', 0.0):.1f} tilt:{tel.get('tilt', 0.0):.1f} "
-                f"[{tel['st']}]")
+                f"[{tel['st']}]" + (" ARRIVED" if tel["arr"] else ""))
     return line
 
 

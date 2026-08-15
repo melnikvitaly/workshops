@@ -50,7 +50,7 @@ from controls import Controls
 from dots import error_vector, find_black_dots, find_red_dot, pick_target
 from fire_button import FireButton
 from overlay import _ROTATE, _WIN, draw_overlay, hide_masks, show_masks
-from serial_link import ErrorLink, list_ports, parse_arrival, parse_telemetry
+from serial_link import ErrorLink, list_ports, parse_telemetry
 from simulated_target import SimulatedTargetManager
 from tuning import Thresholds
 
@@ -197,15 +197,13 @@ def run(args):
             # Drain every UART line so console traffic cannot fill the OS buffer.
             # Only explicit uplink protocol messages affect the UI.
             for esp_line in link.poll():
-                arrival = parse_arrival(esp_line)
-                if arrival is not None:
-                    fire.blink()
-                    print(f"ARRIVAL  esp32 error {arrival[0]:+.4f} {arrival[1]:+.4f}")
-                    continue
                 sample = parse_telemetry(esp_line)
                 if sample is not None:
                     telemetry = sample
                     telemetry_at = time.monotonic()
+                    if sample["arr"]:
+                        fire.blink()
+                    continue
 
             # Display-only: how close counts as "on target" for the border
             # colour. Independent of the firmware's own (much tighter) deadzone,

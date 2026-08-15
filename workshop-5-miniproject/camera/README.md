@@ -117,14 +117,11 @@ of reading numbers:
 | blinking white/amber | the ESP32 just reported **arrival**                   |
 
 Arrival is the firmware's own signal, not ours: when both axes settle inside its
-deadzone it sends one `A <ex> <ey>` line back (`REPORT_ARRIVAL` in `Config.hpp`),
-which the script parses and flashes the border four times for. Red says *the
-camera* thinks you are on target; a blink says *the gimbal* agrees and has
-stopped. The console prints the arrival too:
-
-```text
-ARRIVAL  esp32 error +0.0012 -0.0031
-```
+deadzone, it sets `arr:1` on one telemetry frame, which the script parses and
+flashes the border four times for. Red says *the camera* thinks you are on
+target; a blink says *the gimbal* agrees and has stopped. The telemetry
+annotation always shows `arrived:0` or `arrived:1`; the latter marks that arrival
+sample.
 
 `--ready-error` only changes the colour — the firmware decides arrival on its
 own, much tighter deadzone (`TRACK_DEADZONE`, 0.004).
@@ -133,7 +130,10 @@ own, much tighter deadzone (`TRACK_DEADZONE`, 0.004).
 
 A second window, `gimbal controls`, carries everything on the command side of
 the protocol: **Query gains**, a **Telemetry** toggle, an axis + KP/KI/KD row
-with **Set**, an open-loop **Nudge**, and the grid of gain presets. Clicking a
+with **Set**, an open-loop **Nudge**, and the grid of gain presets. Nudge moves
+the physical gimbal by the entered number of degrees, simulating a sudden bump,
+vibration, wind gust, or mechanical slip; it is a repeatable disturbance for
+checking how the loop recovers, not an aiming offset. Clicking a
 preset also loads its numbers into the KP/KI/KD fields, so it can be adjusted by
 hand from wherever it landed. Results — and any refusal from the link — appear
 on the status line at the bottom; `Q`'s reply comes back on the `esp32 |` line
@@ -305,7 +305,7 @@ link.set_gains("b", 40, 4, 0)   # K b 40 4 0
 link.nudge(8, 0)                # N 8 0     open-loop disturbance, degrees
 link.telemetry(True)            # T 1
 link.query()                    # Q
-for line in link.poll():        # replies: parse_gains / parse_telemetry / parse_arrival
+for line in link.poll():        # replies: parse_gains / parse_telemetry
     ...
 ```
 

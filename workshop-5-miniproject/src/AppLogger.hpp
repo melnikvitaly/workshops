@@ -12,7 +12,7 @@
 // With telemetry enabled this is a bare protocol message, rather than ESP_LOGI
 // text, so the PC can distinguish it from console output:
 //
-//   T ex:-0.124 ey:0.058 vpan:-4.9 vtilt:2.1 pan:57.4 tilt:88.2 st:TRACK
+//   T ex:-0.124 ey:0.058 vpan:-4.9 vtilt:2.1 pan:57.4 tilt:88.2 st:TRACK arr:0
 //
 // ex/ey are the measured error (the process variable; the setpoint is always
 // zero), vpan/vtilt the PID rate output, pan/tilt the resulting angles. Watch
@@ -24,6 +24,7 @@ class AppLogger
     Point       _last      = {2.0f, 2.0f}; // out-of-range sentinel -> first call logs
     TrackState  _lastState = TrackState::Disarmed;
     bool        _primed    = false;
+    bool        _lastOnTarget = false;
     uint32_t    _lastMs    = 0;
     bool        _telemetry = config::LOG_TELEMETRY;
 
@@ -43,9 +44,13 @@ public:
     void update(uint32_t nowMs,
                 Point error, Point velocity,
                 float panDeg, float tiltDeg,
-                TrackState state)
+                TrackState state, bool onTarget)
     {
         const bool stateChanged = !_primed || state != _lastState;
+        // Arrival is edge-triggered: a settled loop sets arr:1 once, then
+        // remains arr:0 until it leaves the deadzone and settles again.
+        const bool arrival = onTarget && !_lastOnTarget;
+        _lastOnTarget = onTarget;
 
         // Without telemetry the logger is silent except at state transitions -
         // a handful of console lines per session rather than a continuous
@@ -56,9 +61,9 @@ public:
         const bool heartbeat = _telemetry &&
                                (nowMs - _lastMs >= config::TELEMETRY_HEARTBEAT_MS);
 
-        if (!moved && !stateChanged && !heartbeat)
+        if (!moved && !stateChanged && !heartbeat && !arrival)
             return;
-        if (!stateChanged && !heartbeat &&
+        if (!stateChanged && !heartbeat && !arrival &&
             (nowMs - _lastMs) < config::LOG_MIN_INTERVAL_MS)
             return;
 
@@ -69,9 +74,9 @@ public:
 
         if (_telemetry)
         {
-            printf("T ex:%+.3f ey:%+.3f vpan:%+.1f vtilt:%+.1f pan:%.1f tilt:%.1f st:%s\n",
+            printf("T ex:%+.3f ey:%+.3f vpan:%+.1f vtilt:%+.1f pan:%.1f tilt:%.1f st:%s arr:%d\n",
                    error.x, error.y, velocity.x, velocity.y, panDeg, tiltDeg,
-                   trackStateName(state));
+                   trackStateName(state), arrival ? 1 : 0);
             fflush(stdout);
         }
         else

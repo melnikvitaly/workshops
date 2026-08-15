@@ -5,12 +5,12 @@ in `src/` implements the receiving end exactly as described here.
 
 ## Transport
 
-|           |                                                                                         |
-|-----------|-----------------------------------------------------------------------------------------|
-| Port      | The ESP32-S3 DevKitC-1 **UART** connector (CP2102), i.e. UART0 / GPIO43–44              |
-| Baud      | 115200                                                                                  |
-| Framing   | 8 data bits, no parity, 1 stop bit, no flow control                                     |
-| Direction | Mostly PC → ESP32. Uplink messages are `A` (arrival), `G` (gains), and `T` (telemetry). |
+|           |                                                                            |
+|-----------|----------------------------------------------------------------------------|
+| Port      | The ESP32-S3 DevKitC-1 **UART** connector (CP2102), i.e. UART0 / GPIO43–44 |
+| Baud      | 115200                                                                     |
+| Framing   | 8 data bits, no parity, 1 stop bit, no flow control                        |
+| Direction | Mostly PC → ESP32. Uplink messages are `G` (gains) and `T` (telemetry).    |
 
 **The console shares this port.** `ESP_LOGI` output from the firmware comes back
 on the same UART. The PC sender must therefore:
@@ -43,9 +43,12 @@ T <0|1>\n                  telemetry stream off / on
 Q\n                        print current gains and state
 ```
 
-`K` rejects negative gains (they invert the loop). `N` displaces the gimbal
-without informing the controller, so the loop sees a pure disturbance — a
-repeatable step input for comparing gain sets. `Q` and `K` both reply with a
+`K` rejects negative gains (they invert the loop). `N` physically displaces the
+gimbal without informing the controller, so the loop sees a pure disturbance —
+a repeatable step input for comparing gain sets. It simulates a sudden bump,
+vibration, wind gust, or mechanical slip that shifts where the laser points;
+it does **not** change the camera target or add a bias to the error vector.
+`Q` and `K` both reply with a
 `G pan <kp> <ki> <kd> tilt <kp> <ki> <kd> armed <0|1>` line.
 
 ### `E` — the error frame
@@ -146,36 +149,6 @@ to, never as a side effect of a "blink" command.
 Only these exact message forms are PC-visible protocol. Console logs, boot
 banners, and other arbitrary RX text must be drained but ignored.
 
-### `A` — arrived on target
-
-The one frame the firmware sends **back** to the PC:
-
-```text
-A <ex> <ey>\n            e.g.  A -0.0021 +0.0034
-```
-
-Emitted the moment both axes settle inside the deadzone (`TRACK_DEADZONE`,
-currently 0.004) — meaning the controllers have frozen and the gimbal has
-stopped. `ex`/`ey` are the residual error **in the coordinates you sent**, not
-the firmware's internal sign-corrected ones, so you can compare them directly
-against the last `E` frame you transmitted.
-
-**Edge triggered, one line per arrival.** It re-arms only after the dot leaves
-the target again, or after the loop is disarmed, the link drops, or the target
-is lost. It is not a periodic "still on target" heartbeat — if you need to know
-the dot is *still* settled, track the absence of subsequent `E` corrections
-rather than waiting for another `A`.
-
-Parsing notes:
-
-- It arrives interleaved with `ESP_LOGI` output on the shared UART. Match the
-  complete three-token `A` form; ignore every other line.
-- It is written unbuffered and flushed, so there is no latency between the
-  gimbal stopping and the line appearing.
-- Disable it entirely with `REPORT_ARRIVAL = false` in `Config.hpp`.
-
-Typical use: hold fire until the gimbal has actually settled, then send `F`.
-
 ### `T` — telemetry sample
 
 When the PC sends `T 1`, the firmware emits these rate-limited messages while
@@ -183,14 +156,19 @@ the tracked error changes or the tracking state changes, plus a heartbeat at
 least every second while telemetry remains enabled.
 
 ```text
-T ex:<float> ey:<float> vpan:<float> vtilt:<float> pan:<float> tilt:<float> st:<state>\n
-T ex:-0.124 ey:+0.058 vpan:-4.9 vtilt:+2.1 pan:57.4 tilt:88.2 st:TRACK
+T ex:<float> ey:<float> vpan:<float> vtilt:<float> pan:<float> tilt:<float> st:<state> arr:<0|1>\n
+T ex:-0.124 ey:+0.058 vpan:-4.9 vtilt:+2.1 pan:57.4 tilt:88.2 st:TRACK arr:0
 ```
 
 `ex`/`ey` are the input error, `vpan`/`vtilt` are commanded degrees per second,
 and `pan`/`tilt` are current gimbal angles in degrees. `st` is the tracking
-state. The leading `T` is mandatory; the PC must not parse telemetry-looking
-content inside ordinary console logs. Send `T 0` to stop the stream.
+state. `arr` is an edge-triggered arrival flag: it is `1` on the one telemetry
+sample where both axes first settle inside `TRACK_DEADZONE`, then remains `0`
+until the dot leaves the deadzone and settles again. The leading `T` is
+mandatory; the PC must not parse telemetry-looking content inside ordinary
+console logs. Send `T 0` to stop the stream, including arrival notifications.
+
+Typical use: wait for `arr:1`, then send `F`.
 
 ## Rate and timing
 
@@ -324,16 +302,15 @@ $ py -3 camera/serial_link.py --gains b 40 4 0 --query
 
 Which part of this contract each piece implements:
 
-|                 |                                                                                                                                 |
-|-----------------|---------------------------------------------------------------------------------------------------------------------------------|
-| `E` frames      | `detect_dots.py`, one per camera frame, capped by `--rate` (default 30 Hz), `valid = 0` whenever either dot is missing          |
-| `F` frames      | the FIRE button in the window, the `f` key, or `serial_link.py --fire`                                                          |
-| `A` uplink      | parsed by `serial_link.parse_arrival`; the window blinks the FIRE border and the console prints `ARRIVAL esp32 error <ex> <ey>` |
-| `K` `N` `T` `Q` | `ErrorLink.set_gains` / `.nudge` / `.telemetry` / `.query`, or the `--gains` / `--nudge` / `--telemetry` / `--query` flags      |
-| `G` uplink      | `serial_link.parse_gains` → `{pan, tilt, armed}`, printed decoded                                                               |
-| `T` uplink      | `serial_link.parse_telemetry` → `{ex, ey, vpan, vtilt, pan, tilt, st}`; rendered in the vision window while telemetry is on     |
-| console text    | drained and discarded every frame (`--echo` prints it); never parsed or rendered by the vision UI                               |
-| DTR/RTS         | deasserted **before** the port is opened, so opening it does not reset the board through the auto-reset circuit                 |
+|                 |                                                                                                                                             |
+|-----------------|---------------------------------------------------------------------------------------------------------------------------------------------|
+| `E` frames      | `detect_dots.py`, one per camera frame, capped by `--rate` (default 30 Hz), `valid = 0` whenever either dot is missing                      |
+| `F` frames      | the FIRE button in the window, the `f` key, or `serial_link.py --fire`                                                                      |
+| `K` `N` `T` `Q` | `ErrorLink.set_gains` / `.nudge` / `.telemetry` / `.query`, or the `--gains` / `--nudge` / `--telemetry` / `--query` flags                  |
+| `G` uplink      | `serial_link.parse_gains` → `{pan, tilt, armed}`, printed decoded                                                                           |
+| `T` uplink      | `serial_link.parse_telemetry` → `{ex, ey, vpan, vtilt, pan, tilt, st, arr}`; `arr:1` blinks the FIRE border; rendered while telemetry is on |
+| console text    | drained and discarded every frame (`--echo` prints it); never parsed or rendered by the vision UI                                           |
+| DTR/RTS         | deasserted **before** the port is opened, so opening it does not reset the board through the auto-reset circuit                             |
 
 The axis letter and the no-negative-gains rule are enforced on the PC side too.
 The firmware's answer to a bad `K` is to drop it and bump a counter you cannot

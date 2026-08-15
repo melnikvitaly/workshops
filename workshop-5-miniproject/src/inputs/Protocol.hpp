@@ -13,9 +13,8 @@
 //     Q\n                          print current gains and state
 //
 // Uplink (ESP32 -> PC):
-//     A <ex> <ey>\n                arrived on target (edge triggered)
 //     G pan ... tilt ... armed ...\n  gains report (in reply to K or Q)
-//     T ex:... ey:... ... st:...\n   telemetry sample (while enabled)
+//     T ex:... ey:... ... st:... arr:<0|1>\n telemetry sample (while enabled)
 //
 // The authoritative contract is docs/uart-protocol.md; this file is its
 // implementation and the two must be kept in step.
