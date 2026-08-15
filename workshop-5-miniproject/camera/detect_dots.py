@@ -191,6 +191,8 @@ def run(args):
                 target = sim.get_simulated()
 
             dx, dy, valid = error_vector(red, target, frame.shape)
+            if controls is not None:
+                controls.record_error(dx, dy)
             # Send every frame, valid or not: the firmware treats silence as a
             # dead link (300 ms) and resets its PIDs, while valid=0 only holds.
             on_wire = link.send(dx, dy, valid)

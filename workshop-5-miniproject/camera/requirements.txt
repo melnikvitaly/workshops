@@ -1,4 +1,5 @@
 opencv-python>=4.9.0
 numpy>=1.26
 pyserial>=3.5
+matplotlib>=3.8.0
 depthai==3.6.1   # only needed for --source cam (the OAK); other sources work without it

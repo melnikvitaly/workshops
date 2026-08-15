@@ -17,8 +17,15 @@ The camera view stays in OpenCV: it is an image with annotations drawn in image
 coordinates, which is what cv2 drawing is for.
 """
 
+import os
+import sys
 import tkinter as tk
 from tkinter import ttk
+
+if __package__ in (None, ""):
+    sys.path.insert(0, os.path.dirname(__file__))
+
+from error_graph import ErrorGraphWindow
 
 # Preset gain combinations. (pan_kp, pan_ki, pan_kd), (tilt...)
 #
@@ -99,6 +106,9 @@ class Controls:
                                 wraplength=430, justify="left")
         self.status.pack(fill="x", pady=(8, 0))
 
+        self.error_graph = ErrorGraphWindow(outer)
+        self.error_graph.frame.pack(fill="both", expand=True)
+
     # --- construction ------------------------------------------------------
 
     def _build_link_row(self, parent):
@@ -133,18 +143,16 @@ class Controls:
 
     def _build_presets(self, parent):
         box = ttk.LabelFrame(parent, text="Presets", padding=6)
-        box.pack(fill="both", expand=True, pady=(8, 0))
-        for i, preset in enumerate(PRESETS):
-            pan = ", ".join(f"{v:g}" for v in preset["pan"])
-            tilt = ", ".join(f"{v:g}" for v in preset["tilt"])
-            # The command closes over the preset itself, so nothing has to
-            # recognise a button by the text printed on it.
-            ttk.Button(box, width=26, padding=2,
-                       text=f"{preset['name']}\npan  ({pan})\ntilt ({tilt})",
-                       command=lambda p=preset: self._apply_preset(p)).grid(
-                row=i // 2, column=i % 2, sticky="ew", padx=2, pady=2)
+        box.pack(fill="x", pady=(8, 0))
+
+        self.preset_var = tk.StringVar(value=PRESETS[0]["name"])
+        self.preset_names = [p["name"] for p in PRESETS]
+        ttk.OptionMenu(box, self.preset_var, self.preset_var.get(),
+                       *self.preset_names).grid(row=0, column=0,
+                                                sticky="ew", padx=(0, 8))
+        ttk.Button(box, text="Apply", command=self._apply_selected_preset).grid(
+            row=0, column=1, sticky="e")
         box.columnconfigure(0, weight=1)
-        box.columnconfigure(1, weight=1)
 
     # --- actions -----------------------------------------------------------
 
@@ -195,7 +203,9 @@ class Controls:
         except Exception as exc:
             self._say(f"nudge failed: {exc}", ok=False)
 
-    def _apply_preset(self, preset):
+    def _apply_selected_preset(self):
+        preset_name = self.preset_var.get()
+        preset = next(p for p in PRESETS if p["name"] == preset_name)
         try:
             self.link.set_gains("p", *preset["pan"])
             self.link.set_gains("t", *preset["tilt"])
@@ -211,6 +221,11 @@ class Controls:
 
     # --- the loop's end ----------------------------------------------------
 
+    def record_error(self, dx, dy):
+        """Append a sample to the separate error history chart."""
+        if self.error_graph is not None and getattr(self.error_graph, "_alive", False):
+            self.error_graph.append(dx, dy)
+
     def pump(self):
         """Service Tk's event queue. False once the window has been closed.
 
@@ -221,6 +236,8 @@ class Controls:
             return False
         try:
             self.root.update()
+            if self.error_graph is not None:
+                self.error_graph.pump()
         except tk.TclError:
             self._alive = False
         return self._alive
@@ -234,6 +251,8 @@ class Controls:
             return
         self._alive = False
         try:
+            if self.error_graph is not None:
+                self.error_graph.close()
             self.root.destroy()
         except tk.TclError:
             pass
