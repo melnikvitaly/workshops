@@ -347,6 +347,10 @@ settle after a step to judge overshoot and settling time.
   time, and the I term only catches up after the fact. Wanted: report target
   velocity from the PC and feed it forward, so the gimbal is commanded to move
   with the target rather than to correct for having been left behind.
+- **Detect why we have gaps on graph for errors.** The error telemetry graph in
+  the controls window sometimes shows discontinuities or missing frames. Investigate
+  whether these are due to dropped serial frames, timing issues in the telemetry
+  stream, gaps in the error vector computation, or display buffering problems.
 
 ### Control and tuning
 
