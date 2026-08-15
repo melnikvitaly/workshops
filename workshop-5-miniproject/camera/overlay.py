@@ -84,7 +84,8 @@ def draw_overlay(frame, red, targets, target, dx, dy, valid, fps, link, telemetr
         f"black: {len(targets)}"
         + (f" (+{len(rejects)} rejected)" if rejects else "")
         + "   target: "
-        + (f"YES round {target.roundness:.2f}" if target is not None else "no"),
+        + (f"YES roundness score {target.roundness:.2f}"
+           if target is not None else "no"),
         f"E {dx:+.3f} {dy:+.3f} {1 if valid else 0}   "
         f"{fps:.0f} fps   sent {link.sent}   fired {link.fired}   "
         f"{link.port or 'no port'}",
