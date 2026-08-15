@@ -74,6 +74,13 @@ See `src/Pinout.hpp`.
 The error stream arrives on the **existing USB "UART" connector** (CP2102,
 UART0) — no extra wiring at all. GPIO 8, 10 and 18 are now free.
 
+![The assembled rig: the pan/tilt gimbal with the laser on top left, the
+ESP32-S3 DevKitC-1 and the relay module on the breadboard, and the camera on an
+arm above, pointed at the sheet the dots are printed on](images/assembled-rig.jpg)
+
+The camera on the arm and the gimbal have to see the same sheet — that shared
+view *is* the feedback path.
+
 ## UART contract
 
 **[`docs/uart-protocol.md`](docs/uart-protocol.md)** — the complete contract
