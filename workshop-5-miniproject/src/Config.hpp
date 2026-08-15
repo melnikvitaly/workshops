@@ -45,7 +45,10 @@ namespace config
     // --- Gimbal travel limits (degrees) --------------------------------------
     // Hard mechanical stops. The gimbal never commands outside these.
     constexpr float GIMBAL_PAN_MIN = 15.0f;
-    constexpr float GIMBAL_PAN_MAX = 100.0f;
+    constexpr float GIMBAL_PAN_MAX = 105.0f; // was 100: raised to let the working
+                                             // zone reach 5 deg further LEFT.
+                                             // NOT re-measured on the rig - confirm
+                                             // the arm actually has travel here.
     constexpr float GIMBAL_TILT_MIN = 46.0f;
     constexpr float GIMBAL_TILT_MAX = 125.0f;
 
@@ -63,9 +66,11 @@ namespace config
     // Keep that in mind when moving the window - it is the opposite of what the
     // numbers suggest.
     constexpr float WORK_PAN_MIN = 45.0f;
-    constexpr float WORK_PAN_MAX = 95.0f;   // 30 deg of pan, centred on 60
+    constexpr float WORK_PAN_MAX = 105.0f;  // 60 deg of pan, centred on 75
+                                            // (was 95: extended 10 deg further LEFT,
+                                            // since increasing pan aims left here)
     constexpr float WORK_TILT_MIN = 85.0f;
-    constexpr float WORK_TILT_MAX = 115.0f; // 30 deg of tilt, centred on 105 (aims low)
+    constexpr float WORK_TILT_MAX = 115.0f; // 30 deg of tilt, centred on 100 (aims low)
 
     static_assert(WORK_PAN_MIN < WORK_PAN_MAX && WORK_TILT_MIN < WORK_TILT_MAX,
                   "working zone is empty or inverted");
