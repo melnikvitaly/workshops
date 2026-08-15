@@ -12,7 +12,7 @@ dependencies:
   idf:
     source:
       type: idf
-    version: 5.5.3
+    version: 6.0.1
 direct_dependencies:
 - espressif/led_strip
 manifest_hash: 6a524dc855872da4989515b7accc0806215e727139a65e10512f3036e43d093a

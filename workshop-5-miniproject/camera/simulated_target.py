@@ -4,12 +4,33 @@ Provides SimulatedTargetManager to manage a user-created simulated black dot
 via mouse interaction. It forwards clicks to the `FireButton`, maps display
 coords back to frame coords considering rotation, and creates/removes a
 `Dot` when appropriate.
+
+Left-click places or moves the dot, right-click clears it, and the arrow keys
+nudge it (starting at the frame centre if there is none yet).
 """
 import math
 from typing import Optional
 
 from dots import Dot
 import cv2
+
+# Arrow keys only -> (dx, dy) in display coordinates, one `step` per press.
+#
+# Letters used to move the dot too (WASD), but every HighGUI key arrives in the
+# same stream: 'd' meant both "move right" and "toggle the mask windows", and
+# handle_key runs first, so the mask toggle was unreachable. Arrows collide with
+# nothing.
+#
+# Which code an arrow arrives as depends on the OpenCV backend, so all the known
+# ones are listed: Windows extended (0x25-0x28 << 16), X11/GTK keysyms, and the
+# 574xx set some Qt builds report. The bare scan codes 72/75/77/80 and 81-84 are
+# deliberately NOT here - they are indistinguishable from ASCII 'H','K','M','P'
+# and 'Q','R','S','T', which is how the collision got in.
+_MOVE = {
+    2424832: (-1, 0), 2490368: (0, -1), 2555904: (1, 0), 2621440: (0, 1),
+    65361: (-1, 0), 65362: (0, -1), 65363: (1, 0), 65364: (0, 1),
+    57448: (-1, 0), 57449: (0, -1), 57450: (1, 0), 57451: (0, 1),
+}
 
 
 class SimulatedTargetManager:
@@ -68,18 +89,7 @@ class SimulatedTargetManager:
         self.simulated_target = Dot(float(x), float(y), area, 1.0, (x1, y1, x2, y2))
 
     def handle_key(self, key):
-        move = {
-            ord('a'): (-1, 0), ord('A'): (-1, 0),
-            ord('d'): (1, 0), ord('D'): (1, 0),
-            ord('w'): (0, -1), ord('W'): (0, -1),
-            ord('s'): (0, 1), ord('S'): (0, 1),
-            75: (-1, 0), 72: (0, -1), 77: (1, 0), 80: (0, 1),
-            81: (-1, 0), 82: (0, -1), 83: (1, 0), 84: (0, 1),
-            65361: (-1, 0), 65362: (0, -1), 65363: (1, 0), 65364: (0, 1),
-            2424832: (-1, 0), 2490368: (0, -1), 2555904: (1, 0), 2621440: (0, 1),
-            57448: (-1, 0), 57449: (0, -1), 57450: (1, 0), 57451: (0, 1),
-        }
-        if int(key) not in move:
+        if int(key) not in _MOVE:
             return False
         if self.simulated_target is None:
             if self.last_frame_shape is None:
@@ -89,7 +99,7 @@ class SimulatedTargetManager:
             y = h / 2
             self._create_at(x, y)
         fx, fy = self.simulated_target.center
-        dx, dy = move[int(key)]
+        dx, dy = _MOVE[int(key)]
         display_x, display_y = self._frame_to_display(fx, fy)
         new_display_x = display_x + dx * self.step
         new_display_y = display_y + dy * self.step
@@ -106,8 +116,7 @@ class SimulatedTargetManager:
         except Exception:
             pass
         # If click was inside FIRE button, skip simulated-target handling.
-        fx1, fy1, fx2, fy2 = self.fire._rect
-        if fx1 <= x <= fx2 and fy1 <= y <= fy2:
+        if self.fire.contains(x, y):
             return
         # Right-click removes any simulated target.
         if event == cv2.EVENT_RBUTTONDOWN:

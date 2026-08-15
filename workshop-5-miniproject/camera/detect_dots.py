@@ -19,6 +19,11 @@ Detection runs entirely on the host (see dots.py); the OAK is used as a camera.
 The camera plumbing is DepthAI v3 and mirrors ../../../final_project/camera-host
 /detect.py, so the same pipeline shape works for both projects.
 
+This file is the frame sources, the loop, and the command line. The display
+lives elsewhere: overlay.py draws on the frame, fire_button.py is the FIRE
+widget, controls.py is the gains/protocol window, simulated_target.py turns
+clicks into a stand-in target dot.
+
 Usage:
     py -3 detect_dots.py --port                          # live OAK -> ESP32 (auto-found)
     py -3 detect_dots.py --port COM5                     # ... or name the port
@@ -27,8 +32,9 @@ Usage:
     py -3 detect_dots.py --source dataset/ --debug       # step through a folder
     py -3 detect_dots.py --source 0                      # any webcam, no OAK
 
-Keys: q = quit, f = fire, d = toggle the mask windows, SPACE/n = next image
-(folder mode).
+Keys: q = quit, f = fire, d = toggle the mask windows, arrows = move the
+simulated target, SPACE/n = next image (folder mode).
+Mouse: left-click places the simulated target, right-click clears it.
 """
 
 import argparse
@@ -36,31 +42,19 @@ import glob
 import math
 import os
 import time
-import threading
 
 import cv2
-import numpy as np
 
-from dots import Dot, error_vector, find_black_dots, find_red_dot, pick_target
+from controls import Controls
+from dots import error_vector, find_black_dots, find_red_dot, pick_target
+from fire_button import FireButton
+from overlay import (_CONTROLS_WIN, _ROTATE, _WIN, draw_overlay, hide_masks,
+                     show_masks)
 from serial_link import ErrorLink, list_ports, parse_arrival
-
-# Degrees (counter-clockwise) -> OpenCV rotate code. The frame is rotated only
-# for display AFTER drawing, so detection coordinates always match the camera.
-_ROTATE = {
-    90: cv2.ROTATE_90_COUNTERCLOCKWISE,
-    180: cv2.ROTATE_180,
-    270: cv2.ROTATE_90_CLOCKWISE,
-}
+from simulated_target import SimulatedTargetManager
 
 _IMG_EXT = (".jpg", ".jpeg", ".png", ".bmp")
 _VID_EXT = (".mp4", ".avi", ".mov", ".mkv")
-
-_RED = (0, 0, 255)
-_GREEN = (0, 220, 0)
-_BLUE = (255, 160, 0)
-_WHITE = (255, 255, 255)
-
-_WIN = "dots: red -> black"
 
 
 # --- frame sources ---------------------------------------------------------
@@ -133,153 +127,6 @@ def open_source(args):
     return file_frames(src), os.path.isdir(src)
 
 
-# --- drawing ---------------------------------------------------------------
-
-def draw_overlay(frame, red, targets, target, dx, dy, valid, fps, link, esp=""):
-    """Annotate the frame with both detections and the error vector."""
-    s = _ui_scale(frame)
-    thick = max(1, int(2 * s))
-
-    # Ring the candidates OUTSIDE their own edge - a circle drawn at the blob's
-    # own radius is invisible against the ink it traces.
-    for d in targets:
-        cv2.circle(frame, d.center, d.radius + int(4 * s) + 1, _BLUE, 1)
-
-    if red is not None:
-        cv2.circle(frame, red.center, red.radius + int(6 * s) + 2, _RED, thick)
-        cv2.drawMarker(frame, red.center, _RED, cv2.MARKER_CROSS, int(14 * s) + 4, 1)
-
-    if target is not None:
-        cv2.circle(frame, target.center, target.radius + int(6 * s) + 2, _GREEN, thick)
-        cv2.drawMarker(frame, target.center, _GREEN, cv2.MARKER_TILTED_CROSS,
-                       int(14 * s) + 4, 1)
-
-    if valid:
-        # The error vector itself: tail on the laser, head on the target.
-        cv2.arrowedLine(frame, red.center, target.center, _WHITE, thick,
-                        cv2.LINE_AA, tipLength=0.15)
-
-    lines = [
-        f"red: {'YES' if red is not None else 'no'}   "
-        f"black: {len(targets)}   target: {'YES' if target is not None else 'no'}",
-        f"E {dx:+.3f} {dy:+.3f} {1 if valid else 0}   "
-        f"{fps:.0f} fps   sent {link.sent}   fired {link.fired}   "
-        f"{link.port or 'no port'}",
-    ]
-    if esp:
-        # The newest line the firmware logged back on the shared UART - usually
-        # its own view of the same error, which makes a sign or scaling mistake
-        # obvious at a glance.
-        lines.append("esp32 | " + esp[:78])
-    for i, text in enumerate(lines):
-        org = (int(10 * s) + 2, int((30 + 26 * i) * s) + 8)
-        cv2.putText(frame, text, org, cv2.FONT_HERSHEY_SIMPLEX, 0.65 * s,
-                    _WHITE, max(1, int(2 * s)), cv2.LINE_AA)
-    return frame
-
-
-def _ui_scale(frame):
-    """Overlay scale factor: 1.0 at 1280 px wide, clamped so it stays legible.
-
-    Without this, text sized for a 720p camera frame covers half a small test
-    image, and the button drawn on a 448 px screenshot is wider than the scene.
-    """
-    return max(0.35, min(1.4, frame.shape[1] / 1280.0))
-
-
-class FireButton:
-    """An on-screen FIRE button: click it (or press 'f') to send one 'F'.
-
-    HighGUI has no widgets unless OpenCV was built with Qt, so the button is
-    just a rectangle painted on the frame plus a mouse callback that tests
-    whether a click landed inside it. It is drawn AFTER any --rotate, so what
-    the callback receives in window coordinates is what the user aimed at.
-
-    Its border carries the loop's state, so the operator can watch one thing
-    instead of reading numbers:
-
-        green   -- still converging, the error is too big to shoot on
-        red     -- the error is small: on target
-        blinking-- the ESP32 just reported ARRIVAL (its own axes settled)
-    """
-
-    BLINKS = 4
-    BLINK_PERIOD = 0.16     # seconds per half-cycle
-
-    def __init__(self):
-        self._rect = (0, 0, 0, 0)
-        self._clicked = False
-        self._lit_until = 0.0
-        self._blink_until = 0.0
-
-    def blink(self):
-        """Flash the border - the firmware says it has arrived on target."""
-        self._blink_until = time.time() + 2 * self.BLINKS * self.BLINK_PERIOD
-
-    def _border(self, now, on_target):
-        """(colour, extra thickness) of the border right now."""
-        if now < self._blink_until:
-            # Alternate on the half-cycle. Counting down from the end keeps the
-            # phase independent of the frame rate.
-            phase = int((self._blink_until - now) / self.BLINK_PERIOD) % 2
-            return ((255, 255, 255) if phase else (0, 215, 255)), 2
-        return (_RED if on_target else _GREEN), 0
-
-    def draw(self, view, on_target=False):
-        h, w = view.shape[:2]
-        s = _ui_scale(view)
-        bw, bh, margin = int(150 * s), int(52 * s), int(14 * s)
-        x1, y1 = margin, h - margin - bh
-        x2, y2 = x1 + bw, y1 + bh
-        self._rect = (x1, y1, x2, y2)
-
-        now = time.time()
-        lit = now < self._lit_until           # briefly after a shot is sent
-        colour, extra = self._border(now, on_target)
-
-        fill = (40, 40, 220) if lit else (30, 30, 90)
-        cv2.rectangle(view, (x1, y1), (x2, y2), fill, -1)
-        cv2.rectangle(view, (x1, y1), (x2, y2), colour,
-                      max(1, int(2 * s)) + extra)
-        cv2.putText(view, "FIRE (f)", (x1 + int(16 * s), y1 + int(34 * s)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7 * s, _WHITE,
-                    max(1, int(2 * s)), cv2.LINE_AA)
-        return view
-
-    def on_mouse(self, event, x, y, flags, _param):
-        if event != cv2.EVENT_LBUTTONDOWN:
-            return
-        x1, y1, x2, y2 = self._rect
-        if x1 <= x <= x2 and y1 <= y <= y2:
-            self._clicked = True
-
-    def take(self):
-        """True once per click/keypress; also lights the button for 300 ms."""
-        if not self._clicked:
-            return False
-        self._clicked = False
-        self.trigger()
-        return True
-
-    def trigger(self):
-        self._lit_until = time.time() + 0.3
-
-
-def show_masks(red_mask, black_mask, rotate):
-    """One window with both binary masks side by side, for threshold tuning."""
-    both = np.hstack([red_mask, black_mask])
-    scale = 900.0 / both.shape[1]
-    if scale < 1.0:
-        both = cv2.resize(both, None, fx=scale, fy=scale)
-    both = cv2.cvtColor(both, cv2.COLOR_GRAY2BGR)
-    cv2.putText(both, "red", (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.7, _RED, 2)
-    cv2.putText(both, "black", (both.shape[1] // 2 + 8, 24),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, _GREEN, 2)
-    if rotate:
-        both = cv2.rotate(both, _ROTATE[rotate])
-    cv2.imshow("masks (debug)", both)
-
-
 # --- main loop -------------------------------------------------------------
 
 def run(args):
@@ -290,35 +137,18 @@ def run(args):
 
     fire = FireButton()
     last_esp = ""
-    # Simulated target manager handles user-created simulated black dot clicks
-    from simulated_target import SimulatedTargetManager
+    # The simulated target manager owns the view window's mouse: it lets the
+    # FIRE button inspect each click first, then treats what is left over as a
+    # request to place, move or clear a stand-in black dot.
     sim = SimulatedTargetManager(fire, rotate=args.rotate)
+    controls = None
     if not args.headless:
         cv2.namedWindow(_WIN, cv2.WINDOW_AUTOSIZE)
-        # Composite mouse callback: let the FIRE button handle its clicks,
-        # then handle simulated-target toggles for left-clicks outside it.
-        def _map_display_to_frame(x, y, rotate, frame_shape):
-            if frame_shape is None:
-                return x, y
-            h, w = frame_shape[:2]
-            if rotate == 0:
-                return x, y
-            if rotate == 90:
-                # display = original rotated 90 CCW: (nx,ny) = (oy, w-1-ox)
-                return (w - 1 - y, x)
-            if rotate == 180:
-                return (w - 1 - x, h - 1 - y)
-            if rotate == 270:
-                return (y, h - 1 - x)
-            return x, y
-
         cv2.setMouseCallback(_WIN, sim.on_mouse)
 
-        # Controls UI moved to camera/controls.py
-        from controls import Controls
         controls = Controls(link, size=(420, 700))
-        cv2.namedWindow("controls", cv2.WINDOW_AUTOSIZE)
-        cv2.setMouseCallback("controls", controls.mouse)
+        cv2.namedWindow(_CONTROLS_WIN, cv2.WINDOW_AUTOSIZE)
+        cv2.setMouseCallback(_CONTROLS_WIN, controls.mouse)
 
     print("Press 'q' to quit, 'f' or the FIRE button to flash the laser."
           + ("  SPACE/n = next image." if folder_mode else ""))
@@ -366,13 +196,7 @@ def run(args):
                 if args.rotate:
                     view = cv2.rotate(view, _ROTATE[args.rotate])
                 cv2.imshow(_WIN, fire.draw(view, on_target))
-                # draw/update controls window
-                ctrl_img = controls.draw()
-                cv2.imshow("controls", ctrl_img)
-                # update mouse-handler state about the latest detections and
-                # frame geometry (in original frame coordinates)
-                targets_current = targets
-                last_frame_shape = frame.shape
+                cv2.imshow(_CONTROLS_WIN, controls.draw())
                 if debug:
                     show_masks(red_mask, black_mask, args.rotate)
 
@@ -400,12 +224,12 @@ def run(args):
                     link.fire()
                 elif fire.take():
                     link.fire()
-                # Previously we cleared simulated targets on any keypress.
-                # Keep simulated targets persistent; right-click now clears them.
+                # Simulated targets persist across keypresses; right-click in
+                # the view clears them.
                 if key == ord('d'):
                     debug = not debug
                     if not debug:
-                        cv2.destroyWindow("masks (debug)")
+                        hide_masks()
             else:
                 if args.verbose and on_wire:
                     print(f"E {dx:+.4f} {dy:+.4f} {1 if valid else 0}")

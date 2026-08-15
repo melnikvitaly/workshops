@@ -18,9 +18,13 @@ color filter directly.
 
 | File | |
 |---|---|
-| `detect_dots.py` | main script: frames → detection → error vector → COM, with the live view and the FIRE button |
+| `detect_dots.py` | main script: frame sources → detection → error vector → COM, plus the command line |
 | `dots.py` | the detection itself: red dot, black dots, target choice, error vector |
 | `serial_link.py` | the COM link and the wire format; also a standalone sender for bring-up |
+| `overlay.py` | what is drawn on each frame: detections, error arrow, status text, mask windows |
+| `fire_button.py` | the on-screen FIRE button and its border states (converging / on target / arrived) |
+| `controls.py` | the second window: gain presets, nudge, telemetry, query |
+| `simulated_target.py` | click or arrow-key a stand-in target dot when no black dot is printed |
 
 ## Install and run
 
@@ -68,8 +72,13 @@ Every frame is rendered with its detections drawn on it:
 - **white arrow** — the error vector, tail on the laser, head on the target;
 - top-left readout — what was found, the exact frame being sent, fps, counters.
 
-Keys: `q` quit · `f` fire · `d` toggle the binary masks · `SPACE`/`n` next image
-(folder mode).
+Keys: `q` quit · `f` fire · `d` toggle the binary masks · arrows move the
+simulated target · `SPACE`/`n` next image (folder mode).
+
+Mouse (view window): left-click places or moves a **simulated target** where no
+black dot is printed, right-click clears it. The arrow keys nudge it 24 px at a
+time, in the direction it moves on screen even under `--rotate`; with no dot yet
+the first arrow puts one at the frame centre.
 
 ### Seeing what the ESP32 says
 
