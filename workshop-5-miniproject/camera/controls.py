@@ -20,20 +20,44 @@ class Controls:
         self.prompt_state: Optional[Dict[str, Any]] = None
         self.last_message = ""
         # Preset gain combinations. (pan_kp, pan_ki, pan_kd), (tilt...)
+        #
+        # Weighted towards D, because that is the term worth sweeping on this
+        # rig: the gimbal overshoots and rings, which D fixes and I does not.
+        # I is deliberately rare - it is only interesting as the fix for the
+        # steady-state offset the PD rows leave standing, and as the thing that
+        # winds up in Runaway. Tilt runs slightly softer than pan throughout
+        # because it works against gravity.
+        #
+        # Four groups, in grid order: one term at a time -> two baselines ->
+        # the PD ladder (same P, rising D) -> PD at other P levels.
         self.PRESETS = [
-            {"name": "Default", "pan": (40.0, 4.0, 0.0), "tilt": (35.0, 4.0, 0.0)},
+            # --- one term at a time: what each does on its own ---
             {"name": "All Zero", "pan": (0.0, 0.0, 0.0), "tilt": (0.0, 0.0, 0.0)},
-            {"name": "All Non-Zero", "pan": (40.0, 4.0, 6.0), "tilt": (35.0, 4.0, 5.0)},
             {"name": "P-only", "pan": (50.0, 0.0, 0.0), "tilt": (45.0, 0.0, 0.0)},
             {"name": "I-only", "pan": (0.0, 6.0, 0.0), "tilt": (0.0, 6.0, 0.0)},
             {"name": "D-only", "pan": (0.0, 0.0, 6.0), "tilt": (0.0, 0.0, 5.0)},
-            {"name": "Low", "pan": (5.0, 0.5, 0.0), "tilt": (5.0, 0.5, 0.0)},
-            {"name": "Aggressive P", "pan": (80.0, 8.0, 0.0), "tilt": (70.0, 8.0, 0.0)},
-            {"name": "High", "pan": (500.0, 200.0, 0.0), "tilt": (500.0, 200.0, 0.0)},
-            {"name": "High D", "pan": (40.0, 4.0, 12.0), "tilt": (35.0, 4.0, 10.0)},
-            {"name": "Damped", "pan": (40.0, 4.0, 6.0), "tilt": (35.0, 4.0, 5.0)},
-            {"name": "Very Soft", "pan": (10.0, 1.0, 0.0), "tilt": (8.0, 1.0, 0.0)},
-            {"name": "Tiny Gains", "pan": (1.0, 0.1, 0.0), "tilt": (1.0, 0.1, 0.0)},
+
+            # --- baselines: the firmware default, and it plus D ---
+            {"name": "Default (PI)", "pan": (40.0, 4.0, 0.0), "tilt": (35.0, 4.0, 0.0)},
+            {"name": "Full PID", "pan": (40.0, 4.0, 6.0), "tilt": (35.0, 4.0, 5.0)},
+
+            # --- PD ladder: Default's P, no I, D climbing. Run these in order
+            # against Default (PI) to see D trade overshoot for a standing
+            # offset, then Full PID to see I close that offset back up.
+            {"name": "PD Light", "pan": (40.0, 0.0, 3.0), "tilt": (35.0, 0.0, 2.5)},
+            {"name": "PD", "pan": (40.0, 0.0, 6.0), "tilt": (35.0, 0.0, 5.0)},
+            {"name": "PD Heavy", "pan": (40.0, 0.0, 12.0), "tilt": (35.0, 0.0, 10.0)},
+            {"name": "PD Sluggish", "pan": (25.0, 0.0, 10.0), "tilt": (22.0, 0.0, 8.0)},
+
+            # --- the same PD shape at other P levels ---
+            {"name": "Aggressive PD", "pan": (80.0, 0.0, 10.0), "tilt": (70.0, 0.0, 9.0)},
+            {"name": "Soft PD", "pan": (10.0, 0.0, 2.0), "tilt": (8.0, 0.0, 1.6)},
+            {"name": "Tiny PD", "pan": (1.0, 0.0, 0.3), "tilt": (1.0, 0.0, 0.25)},
+
+            # Deliberately unstable: huge P with an integrator and nothing to
+            # damp it. Keep it last - it is the "what does windup look like"
+            # demo, not a tuning candidate.
+            {"name": "Runaway", "pan": (500.0, 200.0, 0.0), "tilt": (500.0, 200.0, 0.0)},
         ]
 
     def _make_buttons(self) -> List[Tuple[str, Tuple[int, int, int, int]]]:

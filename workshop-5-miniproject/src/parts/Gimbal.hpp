@@ -9,9 +9,9 @@
 //   _pan  - servo A (below) - horizontal axis
 //   _tilt - servo B (above) - vertical axis
 //
-// Unlike the workshop-3 version this gimbal is commanded by VELOCITY, not by
-// position: setVelocity() states how fast each axis should be turning and
-// update() integrates that into an angle each control step. That makes the
+// This gimbal is commanded by VELOCITY, not by position: setVelocity() states
+// how fast each axis should be turning and update() integrates that into an
+// angle each control step. That makes the
 // gimbal the integrator in the control loop - the PID upstream outputs a rate,
 // and the angle is its integral - and it means motion is inherently rate
 // limited, so the servos ramp instead of slamming between positions.

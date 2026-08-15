@@ -1,6 +1,6 @@
 ## Managed component used by StatusLed to drive the onboard WS2812 RGB LED.
 ##
-## 3.x, not the 2.4/2.5 line workshop-3 used: led_strip 2.5.5 fails to build
+## 3.x, not the older 2.4/2.5 line: led_strip 2.5.5 fails to build
 ## against ESP-IDF 6, because its SPI backend relies on esp_heap_caps.h arriving
 ## transitively and IDF 6 no longer provides it. 3.x also renames
 ## led_pixel_format -> color_component_format (see StatusLed.hpp).

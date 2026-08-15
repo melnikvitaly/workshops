@@ -5,9 +5,9 @@
 
 // Laser switched through a relay.
 //
-// Unlike the workshop-3 version, the laser here is normally held CONSTANT ON -
-// the camera can only measure the tracking error while the dot is visible. That
-// inverts what "fire" has to mean: a pulse that switches the laser *on* would be
+// The laser here is normally held CONSTANT ON - the camera can only measure the
+// tracking error while the dot is visible. That shapes what "fire" has to mean:
+// a pulse that switches the laser *on* would be
 // invisible against an already-lit beam, so firing instead blanks the beam for a
 // short moment and then restores it. The visible event is the gap.
 //

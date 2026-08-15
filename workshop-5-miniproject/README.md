@@ -22,11 +22,15 @@ tracker uses.
                  └────────── laser dot moves ◄──────┘
 ```
 
-## Why this is a real PID and workshop-3 was not
+## Demo
 
-Workshop 3 drove the gimbal open-loop: the servo was told an angle and assumed
-to be there. `Servo::angle()` returns the last value *written*, so feeding it
-back is algebra, not feedback — nothing physical could ever be corrected.
+[Video](https://drive.google.com/file/d/1_3Ry7DvBVp7bnQGnhnrT0xQXfL38_q39/view?usp=drive_link)
+
+## Why this is a real PID
+
+Driving a gimbal open-loop means telling the servo an angle and assuming it is
+there. `Servo::angle()` returns the last value *written*, so feeding it back is
+algebra, not feedback — nothing physical could ever be corrected.
 
 Here the measurement comes from a camera and is **independent of what was
 commanded**. That is what makes it feedback, and it is what lets the loop
@@ -49,21 +53,23 @@ Two structural consequences worth knowing:
 - 1× [5 mW 650 nm laser](https://uamper.com/%D0%9B%D0%B0%D0%B7%D0%B5%D1%80-5%D0%BC%D0%92%D1%82-650%D0%BD%D0%BC-%D1%82%D0%BE%D1%87%D0%BA%D0%B0), switched via relay
 - Passive buzzer, onboard WS2812 status LED, 2 buttons
 - ESP32-S3 DevKitC-1; servos powered from an external supply
-- A PC with a camera running the vision pipeline (not in this repo)
+- A PC with a camera running the vision pipeline — [`camera/`](camera/README.md),
+  in this repo. An OAK-1 by default, but any webcam works (`--source 0`)
 
-The potentiometer, encoder and joystick from workshop 3 are gone — the PC is
-the only input now.
+There is no potentiometer, encoder rotation or joystick — the PC is the only
+motion input now.
 
 ## Wiring
 
-Same as workshop 3, minus the pot and encoder. See `src/Pinout.hpp`.
+See `src/Pinout.hpp`.
 The error stream arrives on the **existing USB "UART" connector** (CP2102,
 UART0) — no extra wiring at all. GPIO 8, 10 and 18 are now free.
 
 ## UART contract
 
-**[`docs/uart-protocol.md`](docs/uart-protocol.md)** — the complete contract for
-whoever writes the PC side. Format in one line:
+**[`docs/uart-protocol.md`](docs/uart-protocol.md)** — the complete contract
+between the two sides. [`camera/`](camera/README.md) is the PC end of it, written
+against that document. Format in one line:
 
 ```
 E <dx> <dy> <valid>\n        tracking error, streamed   e.g.  E -0.124 0.058 1
@@ -138,8 +144,11 @@ measures one step rather than the whole tour.
 
 ## Code layout
 
+Both ends of the loop live here — the firmware in `src/`, the vision in
+`camera/`. They meet only at `docs/uart-protocol.md`.
+
 ```
-src/
+src/                       firmware (ESP-IDF / PlatformIO)
   utils/Pid.hpp            PID: error in, rate (deg/s) out. Anti-windup, filtered D.
   drivers/Uart.hpp         Non-blocking line reader; coexists with the console on UART0.
   inputs/Protocol.hpp      The wire format: decodes one line into a Frame. No hardware.
@@ -147,6 +156,15 @@ src/
   parts/Gimbal.hpp         Integrates commanded velocity into servo angles, clamped.
   DeviceController.hpp     The 50 Hz control step.
   TrackState.hpp           Loop state -> status LED + log.
+
+camera/                    the PC side (Python, see camera/README.md)
+  detect_dots.py           Frame sources, the main loop, the command line.
+  dots.py                  The detection: red dot, black dots, target choice, error.
+  serial_link.py           The COM link and the wire format; standalone sender too.
+  overlay.py               What is drawn on each frame; the mask windows.
+  fire_button.py           The on-screen FIRE button and its border states.
+  controls.py              Gain presets, nudge, telemetry, query -- tuning by click.
+  simulated_target.py      Click or arrow-key a target when no black dot is printed.
 ```
 
 The PIDs run **on frame arrival**, with `dt` measured between frames — not once
@@ -170,6 +188,10 @@ Q              print current gains
 `N` is what makes the comparison meaningful: it displaces the gimbal by a known
 amount without telling the controller, so the loop sees a pure disturbance that
 is identical every run. Hand-moving the target cannot give you that.
+
+`detect_dots.py` puts all four of those on buttons in a second window, plus a
+grid of gain presets — one term at a time, a PD ladder, and a deliberately
+unstable one — so a comparison is a click while the loop keeps running.
 
 **[`docs/pid-experiments.md`](docs/pid-experiments.md)** walks a sequence of six
 gain sets and what each one should look like. Gains revert to the `Config.hpp`

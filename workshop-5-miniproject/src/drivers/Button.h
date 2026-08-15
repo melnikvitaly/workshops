@@ -5,9 +5,8 @@
 
 // Debounced push button with press / release / long-press callbacks.
 //
-// Adapted from workshop-2-4: the Debug and external Config.h dependencies were
-// removed (debounce / long-press durations are passed in via the constructor),
-// and the unused interrupt path was dropped - this project polls via tick().
+// Debounce / long-press durations are passed in via the constructor, and there
+// is no interrupt path - this project polls via tick().
 //
 // Usage: register callbacks, then call tick() frequently to drive debouncing
 // and long-press timing.
