@@ -4,6 +4,46 @@ Gains are settable over UART, so an experiment is one typed line rather than a
 reflash. The point of this document is a *repeatable* procedure: comparing gain
 sets only means something if the disturbance is identical each time.
 
+## Terminology
+
+**Gains and coefficients are the same thing.** `Kp`, `Ki`, `Kd` are called the
+PID *gains* here and in the code, but *coefficients* (Ukr. *коефіцієнти*),
+*parameters* and *tuning constants* all name exactly these three numbers.
+Textbooks and course material tend to say coefficients; control engineering and
+firmware tend to say gains. Nothing changes but the word — if a source says "the
+proportional coefficient", that is `PAN_KP`.
+
+They are called gains because each one is a *multiplier*: the controller
+measures the error and each term multiplies its share of it, so raising `Kp`
+raises how hard the loop pushes back per unit of error, in exactly the sense an
+amplifier has gain.
+
+Two words that are **not** interchangeable with each other:
+
+- A *term* is one of the three contributions the controller sums (`P`, `I`, `D`);
+  the *gain* is the number that scales it. "Add D" and "raise Kd" mean the same
+  in practice, but "the D term" is the `Kd · d(error)/dt` part of the output
+  (low-pass filtered here — see `Pid.hpp`), not `Kd` itself.
+
+| In this repo | Also written as |
+|---|---|
+| gain | coefficient, parameter, tuning constant |
+| `Kp` / `PAN_KP` | proportional coefficient, K<sub>p</sub>, P gain |
+| `Ki` / `PAN_KI` | integral coefficient, K<sub>i</sub>, I gain |
+| `Kd` / `PAN_KD` | derivative coefficient, K<sub>d</sub>, D gain |
+| error | deviation, mismatch, e(t) — here `ex`/`ey` |
+| setpoint | reference, command, r(t) — here always zero, see below |
+| process variable | controlled variable, PV, measurement — here `ex`/`ey` again |
+
+Careful with *target*: in this project it means the black dot on the paper, the
+thing the laser is aimed at. It does **not** mean the setpoint, even though
+control texts often use it that way.
+
+That is because the setpoint here is zero: the controlled quantity is the *error
+vector itself*, and the job is to drive it to (0, 0). So `ex` and `ey` in the
+telemetry are the process variable, not a distance from some separate reference
+— which is why the setpoint never appears in the wire protocol at all.
+
 ## The four commands
 
 ```

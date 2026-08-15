@@ -7,7 +7,7 @@
 #include "DeviceController.hpp"
 #include "AppLogger.hpp"
 
-static const char *TAG = "APP";
+static const char *TAG = "ESP";
 
 // Holds every part and its driver, plus the single input source.
 static Device device;
