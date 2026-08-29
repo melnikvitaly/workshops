@@ -35,7 +35,7 @@ public:
     void power(uint8_t percents)
     {
         _pwm.power(percents);
-        _state = LEDState::ON;
+        _state = percents > 0 ? LEDState::ON : LEDState::OFF;
     }
 
     void blink(uint32_t timeInState)

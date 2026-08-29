@@ -12,8 +12,10 @@ struct Config
 
     // Task periods. In 2-3 every tick() ran at whatever rate the superloop
     // happened to spin at; here each task picks the rate it actually needs.
+    // ALERT_PERIOD_MS is the *idle* period: it is the xTaskNotifyWait timeout,
+    // so a button press wakes alertTask sooner than that.
     static constexpr uint32_t BUTTON_PERIOD_MS = 5;
-    static constexpr uint32_t ALERT_PERIOD_MS  = 1;
+    static constexpr uint32_t ALERT_PERIOD_MS  = 10;
     static constexpr uint32_t POT_PERIOD_MS    = 50;
     static constexpr uint32_t STATS_PERIOD_MS  = 5000;
 };

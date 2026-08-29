@@ -74,12 +74,22 @@ public:
     {
         if (percents > 100)
             percents = 100;
-        uint32_t newDuty = static_cast<uint32_t>(percents) * MAX_DUTY / 100;
-        if (newDuty == _duty && _on)
+
+        const uint32_t newDuty = static_cast<uint32_t>(percents) * MAX_DUTY / 100;
+        const bool     newOn   = percents > 0;
+
+        // Compare the whole output state, not the duty alone: at 0 % newDuty and
+        // _duty are both 0 while _on is already false, so a duty-only guard let
+        // every call through - one redundant LEDC write and one log line per
+        // potTask period for as long as the pot rests at zero.
+        if (newDuty == _duty && newOn == _on)
             return;
+
         _duty = newDuty;
-        _on   = percents > 0;
+        _on   = newOn;
         applyDuty(_duty);
-        dbg.print("PWM:%u%% duty=%lu", percents, static_cast<unsigned long>(_duty));
+        dbg.print("PWM:%u%% duty=%lu",
+                  static_cast<unsigned>(percents),
+                  static_cast<unsigned long>(_duty));
     }
 };

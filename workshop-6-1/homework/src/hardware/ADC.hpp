@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdlib>
 #include <esp_adc/adc_oneshot.h>
+#include <soc/soc_caps.h>
 #include "Debug.hpp"
 
 // Potentiometer on an ADC1 channel, read through the oneshot driver.
@@ -36,7 +37,8 @@ public:
         ESP_ERROR_CHECK(adc_oneshot_new_unit(&unitCfg, &_unit));
 
         adc_oneshot_chan_cfg_t chanCfg = {
-            .atten    = ADC_ATTEN_DB_12, // full 0..3.3V swing of the pot
+            .atten    = ADC_ATTEN_DB_12, // widest attenuation: covers the pot's
+                                         // whole swing, saturating near the rail
             .bitwidth = _bitwidth,
         };
         ESP_ERROR_CHECK(adc_oneshot_config_channel(_unit, _channel, &chanCfg));
@@ -58,7 +60,13 @@ public:
             return _lastPercents;
         _lastValue = value;
 
-        const int32_t maxCount = (1L << _bitwidth) - 1;
+        // ADC_BITWIDTH_DEFAULT is 0, not a width: it means "the widest the chip
+        // supports", so resolve it before it turns the division below into a
+        // divide by zero.
+        const uint8_t bits     = _bitwidth == ADC_BITWIDTH_DEFAULT
+                                     ? SOC_ADC_RTC_MAX_BITWIDTH
+                                     : static_cast<uint8_t>(_bitwidth);
+        const int32_t maxCount = (1L << bits) - 1;
         uint8_t       newValue = static_cast<uint8_t>(value * 100 / maxCount);
 
         if (abs(static_cast<int32_t>(_lastPercents) - static_cast<int32_t>(newValue)) >= HYSTERESIS_PERCENTS)

@@ -123,7 +123,7 @@ Board: `esp32-c3-devkitm-1`, framework `espidf` (IDF 6.0.1),
 | LED2      | 3    | LED + resistor to GND, LEDC ch2 / timer1     |
 | LED3      | 2    | LED + resistor to GND, LEDC ch0 / timer0     |
 | Button    | 5    | to GND, internal pull-up, active LOW         |
-| Pot wiper | 0    | ADC1_CH0, 12-bit, 12 dB atten (full 0–3.3 V) |
+| Pot wiper | 0    | ADC1_CH0, 12-bit, 12 dB atten (widest range) |
 
 GPIO2 is a strapping pin on the C3 — it must not be held low at reset. A plain
 LED to GND through a resistor is fine; the LEDC output is only driven after boot.

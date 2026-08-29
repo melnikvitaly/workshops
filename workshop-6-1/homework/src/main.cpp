@@ -84,7 +84,6 @@ static void alertTask(void *)
 {
     for (;;)
     {
-      
         // clear-on-entry 0 keeps bits that arrived while we were busy below;
         // clear-on-exit all consumes each event once. Only the return value says
         // whether `events` is fresh — on timeout it is left unchanged.
