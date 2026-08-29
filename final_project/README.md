@@ -1,0 +1,4 @@
+- take miniproject from workshop-5-miniproject
+- https://github.com/4ndr3aR/CSRT-tracker-standalone
+- different methods of imputs
+- 
