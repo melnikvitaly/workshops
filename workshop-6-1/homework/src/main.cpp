@@ -60,6 +60,15 @@ static TaskStat taskStats[TASK_COUNT] = {
 };
 #pragma endregion
 
+#pragma region EVENTS
+// One bit per event, so alertTask learns *which* event arrived and a second
+// producer later costs one more bit.
+namespace AlertEvent
+{
+constexpr uint32_t BUTTON_PRESS = 1u << 0;
+} // namespace AlertEvent
+#pragma endregion
+
 static void buttonTask(void *)
 {
     TickType_t lastWake = xTaskGetTickCount();
@@ -73,14 +82,23 @@ static void buttonTask(void *)
 
 static void alertTask(void *)
 {
-    TickType_t lastWake = xTaskGetTickCount();
     for (;;)
     {
+      
+        // clear-on-entry 0 keeps bits that arrived while we were busy below;
+        // clear-on-exit all consumes each event once. Only the return value says
+        // whether `events` is fresh — on timeout it is left unchanged.
+        uint32_t events = 0;
+        if (xTaskNotifyWait(0, UINT32_MAX, &events, pdMS_TO_TICKS(Config::ALERT_PERIOD_MS)) == pdTRUE)
+        {
+            if (events & AlertEvent::BUTTON_PRESS)
+                alertController.onButtonPress();
+        }
+
         alertController.tick();
         led1.tick();
         led2.tick();
         taskStats[TASK_ALERT].iterations.fetch_add(1, std::memory_order_relaxed);
-        xTaskDelayUntil(&lastWake, pdMS_TO_TICKS(Config::ALERT_PERIOD_MS));
     }
 }
 
@@ -132,13 +150,19 @@ extern "C" void app_main()
     pot.init();
     btn.init();
 
-    btn.onPress([] { alertController.onButtonPress(); /* Will be called in the buttons task*/ });
+    // Runs in buttonTask context: it only signals, it does not touch
+    // alertController. alertTask stays the single owner of the state machine.
+    btn.onPress([] { xTaskNotify(taskStats[TASK_ALERT].handle, AlertEvent::BUTTON_PRESS, eSetBits); });
 
     // Single-core C3: xTaskCreate is the right call — there is no second core to
     // pin to. On a dual-core part the same three lines become
     // xTaskCreatePinnedToCore(..., APP_CPU_NUM).
-    xTaskCreate(buttonTask, "button", 3072, nullptr, 5, &taskStats[TASK_BUTTON].handle);
+    //
+    // alertTask is created first on purpose: buttonTask runs at a higher
+    // priority than app_main and preempts it the moment it is created, so its
+    // notify target has to already exist.
     xTaskCreate(alertTask, "alert", 3072, nullptr, 4, &taskStats[TASK_ALERT].handle);
+    xTaskCreate(buttonTask, "button", 3072, nullptr, 5, &taskStats[TASK_BUTTON].handle);
     xTaskCreate(potTask, "pot", 3072, nullptr, 3, &taskStats[TASK_POT].handle);
     xTaskCreate(statsTask, "stats", 3072, nullptr, 1, nullptr);
 

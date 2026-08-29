@@ -32,17 +32,22 @@ The behaviour is identical; only the scheduling is different.
 | ----------------------------------- | ------------------------------------------------- |
 | `loop()` calls every `tick()`       | one task per `tick()`, created with `xTaskCreate` |
 | all ticks run at the same rate      | each task picks its own period                    |
-| `delay()` forbidden                 | `xTaskDelayUntil()` — blocks the task, not the CPU |
+| callback ran inline in `loop()`     | button notifies, `alertTask` owns the state        |
+| `delay()` forbidden                 | `xTaskDelayUntil()` / `xTaskNotifyWait()` — blocks the task, not the CPU |
 | `millis()`                          | `nowMs()` over `esp_timer_get_time()`             |
 | `LoopTracker` measures loop rate    | `statsTask` reports per-task rate + stack headroom |
 | Arduino framework, ESP32-C3         | ESP-IDF 6.0, ESP32-C3                             |
 
 | Task     | Period | Prio | Does                                       |
 | -------- | ------ | ---- | ------------------------------------------ |
-| `button` | 5 ms   | 5    | `btn.tick()` — debounce, fires `onPress`   |
-| `alert`  | 10 ms  | 4    | `alert.tick()`, `led1.tick()`, `led2.tick()` |
+| `button` | 5 ms   | 5    | `btn.tick()` — debounce, notifies `alert` on press |
+| `alert`  | 10 ms* | 4    | owns the state machine; woken by `AlertEvent` bits |
 | `pot`    | 50 ms  | 3    | `led3.power(pot.percent())`                |
 | `stats`  | 5 s    | 1    | logs iterations/period and stack high-water |
+
+\* `alert` blocks on `xTaskNotifyWait` with a 10 ms timeout rather than a
+fixed delay, so 10 ms is its idle period, not a fixed one — a press wakes it
+sooner.
 
 Priorities follow deadline tightness: the button must not miss a press, the
 potentiometer can be sampled lazily, statistics run on whatever is left over.
@@ -51,19 +56,53 @@ potentiometer can be sampled lazily, statistics run on whatever is left over.
 there is no second core to pin to. On a dual-core part (S3) the same three calls
 become `xTaskCreatePinnedToCore(..., APP_CPU_NUM)`.
 
-## Known trade-off: shared state without IPC
+## Ownership: the button signals, it does not call
 
-`buttonTask` calls `alert.onButtonPress()` directly, so `AlertController::_state`
-and `_stateStartedAt` are written by the button task and read by the alert task
-with no mutex or queue between them. This is the deliberate "tasks only" shape of
-this homework, and it is safe enough in practice here — the button task is higher
-priority, the writes are single-word, and `IDLE` is the only state
-`onButtonPress()` acts on — but it is not race-free by construction: the alert
-task can be preempted between its `_state` check and its `_state` write.
+`AlertController` belongs to `alertTask` — that task is the only code that ever
+touches `_state` or `_stateStartedAt`. `buttonTask` does not reach into it; on a
+press it sends a direct-to-task notification and returns:
 
-The proper fix is a queue: `buttonTask` posts an event, `alertTask` owns the state
-machine outright and is the only writer. That is one `xQueueCreate` and a
-`xQueueReceive` with a timeout in place of `xTaskDelayUntil`.
+```
+buttonTask                              alertTask
+  btn.tick()                              xTaskNotifyWait(0, ALL, &events, 10ms)
+    onPress ──xTaskNotify(────────────▶     └─ BUTTON_PRESS → onButtonPress()
+              BUTTON_PRESS, eSetBits)       └─ timeout      → (nothing)
+                                          alertController.tick(); led1/led2.tick()
+```
+
+The notification word is used as **event bits**, not as a counter: each event
+gets a name (`AlertEvent::BUTTON_PRESS`), so `alertTask` learns *which* event
+arrived rather than only that something did. Adding a second producer — a long
+press, a UART command, a timer — costs one more bit and one more `if`, with no
+change to the channel. `xTaskNotifyGive`/`ulTaskNotifyTake` are the same
+primitive in counting-semaphore mode and could only have said "N somethings".
+
+`xTaskNotifyWait(0, UINT32_MAX, …)` — clear nothing on entry, so bits that
+arrived while the task was busy survive; clear everything on exit, so each event
+is consumed exactly once. Bits are only cleared when a notification was really
+received, so the **return value**, not the bit pattern, is what says whether
+`events` is fresh. Repeated presses coalesce into one set bit, which matches
+`onButtonPress()` ignoring anything that arrives while the sequence is not
+`IDLE`.
+
+Beyond 32 events, multiple consumers of the same event, or an event that needs a
+payload, this stops being enough — that is what `EventGroupHandle_t` and queues
+are for.
+
+Two things follow. Ownership is now single-writer **by construction**, not by
+luck — no mutex needed, because no state is shared. And the press latency drops
+from "up to one 10 ms alert period" to "the next context switch", because the
+notification wakes the task instead of waiting for its next scheduled tick.
+
+Why a task notification rather than a queue or a binary semaphore: there is one
+consumer and no payload. A notification is a single word in the
+receiving task's TCB — no allocation, and roughly an order of magnitude cheaper
+than the equivalent queue operation. A queue would be the right call the moment the event needs to carry data
+(which button, how long it was held) or several presses must be buffered.
+
+`alertTask` is created before `buttonTask` on purpose: `buttonTask` has a higher
+priority than `app_main`, so it preempts it as soon as it exists, and its notify
+target must already be there.
 
 ## Build
 

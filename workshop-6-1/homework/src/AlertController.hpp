@@ -28,7 +28,7 @@ class AlertController
 public:
     AlertController(LED &led1, LED &led2, Debug dbg) : _led1(led1), _led2(led2), dbg(dbg) {}
 
-    // Called from the button task (see README: shared-state note).
+    // Called only from alertTask, which receives the button's notification.
     void onButtonPress()
     {
         if (_state != State::IDLE)
