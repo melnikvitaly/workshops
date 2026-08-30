@@ -1,13 +1,13 @@
 #include <Arduino.h>
 
-#define BUTTON_RIGHT 40
+#define BUTTON_RIGHT 4
 
 int16_t counter_right = 0;
+int16_t prev_counter_right = 0;
 
 void IRAM_ATTR reaction_right()
 {
-    counter_right++;
-    Serial.println("\nRIGHT Button Pressed! Count: " + String(counter_right));
+    counter_right++;    
 }
 
 void setup()
@@ -21,5 +21,10 @@ void setup()
 void loop()
 {
 
+    if(counter_right!=prev_counter_right)
+    {
+        prev_counter_right = counter_right;
+        Serial.println("\nRIGHT Button Pressed! Count: " + String(counter_right));
+    }
     delay(250);
 }
