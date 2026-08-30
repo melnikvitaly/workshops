@@ -33,10 +33,10 @@ STM: STM32F401CCU
   довжину рядка й скидає буфер при переповненні, тож зайві байти не ламають
   розбір.
 
-**STM32** — [`workshop-4-1/workshop-4-1-stm/workshop-4-1-stm/Core/Src/main.c`](/workshop-4-1/workshop-4-1-stm/workshop-4-1-stm/Core/Src/main.c)
+**STM32** — [`workshop-4-1-stm/workshop-4-1-stm/Core/Src/main.c`](workshop-4-1-stm/workshop-4-1-stm/Core/Src/main.c)
 
 - `MX_USART1_UART_Init()` налаштовує USART1 на 115200 8N1; піни PA9/PA10
-  вмикаються в [`stm32f4xx_hal_msp.c`](/workshop-4-1/workshop-4-1-stm/workshop-4-1-stm/Core/Src/stm32f4xx_hal_msp.c).
+  вмикаються в [`stm32f4xx_hal_msp.c`](workshop-4-1-stm/workshop-4-1-stm/Core/Src/stm32f4xx_hal_msp.c).
 - Головний цикл неблокуючий: за `HAL_GetTick()` раз на секунду надсилає чергову
   команду, а між тим `HAL_UART_Receive()` з таймаутом 100 мс дочитує вхідні
   байти по одному. Отримавши `LED_ON` / `LED_OFF`, плата перемикає PC13 і
