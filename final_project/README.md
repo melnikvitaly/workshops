@@ -1,4 +1,31 @@
 - take miniproject from workshop-5-miniproject
-- https://github.com/4ndr3aR/CSRT-tracker-standalone
-- different methods of imputs
-- 
+
+- different methods of inputs
+- Nodes:
+  - PC + Camera 
+    - take python scripts from workshop-5-miniproject
+    - red dot and black dot detection is run on PC
+      - encupsulate methods of recognitions in different files
+        - (method1) OpenCV (like now in  workshop-5-miniproject)
+        - (method2, DEFFER) - https://github.com/4ndr3aR/CSRT-tracker-standalone
+    - SENDS ERROR (vector from red to black dot) to ESP32-S3 Node
+      - implement different transports of sending data to ESP32-S3
+        - MQTT server (hosted on PC)
+        - UART (same port as LOGS)
+      - use same JSON format for both transports
+  - ESP32-S3 (Gimbal (2axis) with Laser and )
+    - take ESP IDF code from workshop-5-miniproject
+    - calculates based on error and moves Gimbal (controls velocity of each axis)
+    - additionally will render on I2C  0.96 display information about Gimbal state (current error, current PID gains, status of aiming)
+      - also renders status of WIFI/BLE connections and list of clients
+    - Also we will have the following methods of input
+      - joystick
+      - automatic (based on errors from PC)
+      - manual from PC (create separate python script that will allow control by PC mouse)      
+  - ESP32-C#-mini + Joystick
+    - Controls velocity manually
+    - Comunicates with ESP32-S3 using several methods:
+      - transports
+          -  NRF24L01+ wireless module 2.4 Ггц 
+          -  BLE
+  - STM32 will collect Telemetry from ESP32-S3 using SPI and write it to flash memory

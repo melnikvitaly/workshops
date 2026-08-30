@@ -1,4 +1,4 @@
-# Workshop 6-2
+# Workshop 6-2. Як працює FreeRTOS I: Завдання (Tasks) та Планування (Scheduler)
 
 
 ## Task
