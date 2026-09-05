@@ -1,0 +1,4 @@
+- No "magic" values in the code
+- All functions are on the same level of abstraction
+- SOLID-rules are applied to classes/functions
+- variable names are meaningful
