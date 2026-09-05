@@ -1,0 +1,4 @@
+- Need to include all topics from FreeRTOS module
+- Plan
+  - extend final project (workshop-7-final_project) (make some its simplified projection) with required parts
+  - 
