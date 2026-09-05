@@ -5,5 +5,7 @@
 - docs/architecture.md - documentation of the project
 - VERIFICATION/ - how project will be evaluated (MUST NOT  be referenced by other parts of project)
 
-## Coding
-- 
+## Done 
+
+- docs updated
+- вщсі.coding.md tolarated

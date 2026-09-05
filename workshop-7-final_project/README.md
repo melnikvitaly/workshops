@@ -21,7 +21,7 @@ every control step is logged to an SD card with timestamps.
                  └────────── laser dot moves ◄─────────┘
 
   PILOT ──ESP-NOW──► AIM          EYE ──MQTT──► AIM          AIM ──SPI──► VAULT
-   joystick, E-stop                config, telemetry              (Phase 1)
+   joystick, E-stop                config, telemetry           (Phase 1; VAULT clocks)
 ```
 
 **EYE** (PC) sees · **AIM** (ESP32-S3) decides and acts · **PILOT** (ESP32-C3) is
@@ -34,9 +34,10 @@ what the design commits to, the chip in brackets is how it happens to be hosted.
 > **Task list:** [`TASKS.md`](./TASKS.md) — the phased checklist extracted from this
 > plan, with requirement IDs against each item.
 >
-> **Plan status.** Phase 0 scores **39 / 42 = 92.9%** against
-> [`VERIFICATION/Requirements.html`](./VERIFICATION/Requirements.html) — 90.5% even
-> if every ambiguous item is graded against it. The pass bar is 80%.
+> **Plan status.** Phase 0 scores **41 / 42 = 97.6%** against
+> [`VERIFICATION/Requirements.html`](./VERIFICATION/Requirements.html) — the same on
+> every reading, since no ambiguous items are left. The pass bar is 80%. The one
+> missing item is a fabricated board, deliberately unspent.
 
 ---
 
@@ -75,7 +76,7 @@ so a node can be re-hosted on different hardware without a rename cascade.
 | **EYE** | Sees. Detection, error vector, operator console, broker | PC | 0 |
 | **AIM** | Decides and acts. Control loop, laser, storage, gateway | ESP32-S3 | 0 |
 | **PILOT** | Human input. Joystick, remote emergency stop | ESP32-C3 | 1 |
-| **VAULT** | Remembers. Storage medium only | STM32 | 1 |
+| **VAULT** | Remembers. Storage medium only — **SPI master, pulls records** | STM32 | 1 |
 
 The names are also the reason the STM32 could be deferred without a redesign:
 `VAULT` is a role, and in Phase 0 that role is played by `AIM` itself.
@@ -104,7 +105,7 @@ Schematic first, then layout, for **two boards**.
 
 ESP32-S3-WROOM-1; USB-C input, BQ24040 Li-Ion charger and TLV758P LDO; servo power
 rail; **MOSFET laser driver**; micro-SD on SPI; OLED I²C header; UART1 header;
-E-stop and control buttons.
+E-stop, `MODE` and control buttons.
 
 | Requirement | How this board answers it |
 |---|---|
@@ -170,8 +171,8 @@ workshop-7-final_project/
 
 ## 5. Demonstration
 
-The demo is a recorded video rather than a live run, which means it is shot to a
-list rather than improvised: the demonstration requirements are scored on what the
+The demo is a recorded video rather than a live run, which means it is shot to an
+accepted list rather than improvised: the demonstration requirements are scored on what the
 video *contains*, not on the fact that a recording exists. Showing the system work
 is the easy half — the video also has to show the limits being hit deliberately,
 explain the architecture, and walk through the board.

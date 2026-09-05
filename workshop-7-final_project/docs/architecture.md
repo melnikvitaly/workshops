@@ -63,12 +63,21 @@ namespace mapping are in [`../README.md`](../README.md#2-nodes).
 
 Deliberately the thinnest node in the system: it owns the medium and nothing else.
 
-- SPI **slave** to `AIM` (`AIM` is master), DMA, double-buffered.
+- **SPI master on both of its buses** — master to the SD card, and **master on the
+  link to `AIM`, which is the SPI slave.** `VAULT` pulls records; it is not fed them.
 - **No parsing, no timestamps, no state.** Records arrive fully formed and are
   written verbatim.
-- SPI **master** to the SD card; FatFs and the rotation scheme move here from `AIM`.
+- FatFs and the segment-rotation scheme move here from `AIM` unchanged.
 - Reports card present / free space / write errors / current segment back to `AIM`.
 - `IWDG`, refreshed only while the card and the link are both healthy.
+
+**Why `VAULT` is the master.** Storage timing belongs to the node that owns the
+card. As master it fetches when it is ready to write — after a `f_sync`, between
+block writes — instead of being interrupted mid-write by a master that has no idea
+what the card is doing. `AIM` never blocks on storage and never has to model
+`VAULT`'s state, which is what "storage medium only" was supposed to mean. It also
+keeps both SPI buses in one head: the same node clocks the card and the link, so
+there is one place where SPI timing is reasoned about.
 
 ---
 
@@ -124,7 +133,7 @@ position with PWM. Real deep sleep is `PILOT`'s job.
 | `PILOT` (ESP32-C3) ⟷ `AIM` *(Phase 1)* | **ESP-NOW** | duplex | Both ends are Espressif; no pairing, no broker, coexists with WiFi | Staleness timeout → `LINK_LOST` if it is the selected channel |
 | `AIM` ⟷ SD card | **SPI** master | write | Phase 0 storage | Four named conditions, §5 |
 | `AIM` ⟷ OLED | **I²C** 400 kHz | write | Only device on the bus | Log once, disable `ui`, **keep controlling** |
-| `AIM` ⟷ `VAULT` (STM32) *(Phase 1)* | **SPI**, `AIM` master | write + status | Fixed-size opaque records, DMA | Sequence + CRC, error counters, resync on framing loss |
+| `AIM` ⟷ `VAULT` (STM32) *(Phase 1)* | **SPI**, **`VAULT` master**, `AIM` slave | records out + status back | Fixed-size opaque records, DMA both ends. `AIM` raises `DRDY`; `VAULT` clocks when it is ready to write | Sequence + CRC, error counters, resync on framing loss. `AIM` flags `vault.link_lost` if no transaction completes within N ms |
 
 **UART0 is console only.** The data link moved to UART1 on spare GPIOs via a
 USB-TTL adapter, because sharing the port with log output is a known hazard —
@@ -150,6 +159,33 @@ The framing contract, which is required in writing:
 - Counters (`bad_crc`, `overlong`, `unparsed`, `out_of_range`) exposed in telemetry
   and on the OLED.
 
+### The `AIM` ⟷ `VAULT` link *(Phase 1)*
+
+`VAULT` is the master and `AIM` the slave, which inverts the usual "controller
+commands peripheral" reflex. Four consequences, all of which have to be designed
+rather than discovered:
+
+- **`DRDY`, a GPIO from `AIM` to `VAULT`.** A master with nothing to poll polls
+  anyway; a data-ready line turns that into an edge. `VAULT` clocks a frame when
+  `DRDY` is asserted *and* the card is ready for it.
+- **`AIM` must always have a transaction queued.** An ESP32 SPI slave that is
+  clocked with no buffer queued returns garbage, so `AIM` keeps two DMA buffers
+  queued at all times and refills on completion. Slave DMA buffers are 4-byte
+  aligned and a multiple of 4 bytes long.
+- **Full duplex earns its keep.** One fixed-size frame carries a record out on MISO
+  and `VAULT`'s status word back on MOSI in the same transaction — the status path
+  that used to need its own exchange is free.
+- **Liveness inverts too.** A master notices a dead slave immediately; a slave
+  notices nothing, because silence and idle look identical. `AIM` therefore runs a
+  timeout — no completed transaction within N ms while `DRDY` is asserted raises
+  `vault.link_lost`, and the log falls back to `AIM`'s own card.
+
+Clock rate is set by the ESP32 slave side, not the STM32: slave mode tolerates far
+less than master mode, so the link starts conservative and is measured before it is
+raised. The two buses stay separate — `VAULT` could clock the card and `AIM` on one
+bus with two chip selects, but sharing a bus with an SD card to save three pins on a
+board that is not pin-constrained is not a trade worth making.
+
 ---
 
 ## 4. Input channels
@@ -174,6 +210,39 @@ normally set by an MQTT configuration message.
   does not jump on handover.
 - The selected channel going stale → `LINK_LOST`. **No silent fallback** to another
   channel; exclusivity is the point.
+
+### Local mode button
+
+Selection is normally an MQTT message, which means that with the broker down the
+node cannot be re-tasked at all — a single point of failure in the config plane,
+not in the control loop. A **momentary `MODE` button on the `AIM` board** removes it.
+
+| Gesture | Effect |
+|---|---|
+| Short press | Advance to the next channel: `NONE → AUTO → MANUAL → NONE` (`PILOT` joins the cycle in Phase 1) |
+| Long press ≥ 1 s | Jump straight to `NONE` — cut all motion input without touching the E-stop latch |
+
+- **The button does not write configuration.** It posts the same
+  `config.set input.channel` item onto `cmd_q` that MQTT and NDJSON post, so it runs
+  through the one validate → apply → persist → acknowledge path and reuses the
+  handover reset (both PIDs reset, commanded velocity zeroed). One writer, one code
+  path, one set of counters — a second path that happened to skip the PID reset
+  would be a jump on handover that only ever reproduces locally.
+- **Owned by the `ui` task**, polled at 50 Hz with 30 ms debounce and acting on the
+  release edge. It is deliberately **not** an interrupt: channel selection is not
+  realtime, and the E-stop stays the only button on an ISR.
+- **Selecting is not arming.** Motion still requires `ARMED` and a fresh source, and
+  the handover reset zeroes velocity, so the button is safe to press in any state.
+- **Precedence is last-writer-wins**, and NVS keeps whichever came last. `.../config/set`
+  is therefore **never published retained** — otherwise a returning broker would
+  replay a stale channel over the operator's local choice. `.../config/state` *is*
+  retained and re-published on reconnect, so `EYE` learns what the button did.
+- **Feedback has to be local**, since the case this exists for is the broker being
+  down: the OLED shows the new channel immediately, the status LED blinks its
+  ordinal, and the change appears in the transition log and the SD `channel` column.
+- `MODE` selects channels and nothing else. Arming and fault acknowledgement stay
+  off it — overloading one button with safety-relevant actions is how a mode button
+  becomes a hazard.
 
 ### Emergency stop is not a channel
 
@@ -239,10 +308,33 @@ seq, t_mono_us, t_wall_iso, state, channel, ex, ey, vpan, vtilt, pan, tilt, flag
 CSV because the card should be directly useful on a PC, which is why SD was chosen
 over raw NOR flash.
 
-**Timestamps** are owned by `AIM`. Monotonic microseconds **always**; wall clock
-**when available**. Recording both means a log taken with no network is still
-ordered and still useful. The wall-clock source — SNTP, an on-board RTC, or set by
-`EYE` over the link — is still open; monotonic time works meanwhile.
+**Timestamps** are owned by `AIM`. **Phase 0 has no wall clock at all** — records
+carry monotonic microseconds since boot, and `t_wall_iso` is written **empty**. An
+empty field is the honest encoding: a placeholder epoch such as `1970-01-01` looks
+like a valid time to every reader that will ever open the file. The column stays in
+the schema so Phase 1 changes no record format — the readers, the plots and the
+`VAULT` handover all keep working.
+
+Two things replace the clock, and neither costs a part:
+
+- **`boot_id`** — a counter in NVS, incremented every boot, written into each
+  segment header. Monotonic time restarts at zero on reset, so `seq` and `t_mono_us`
+  alone cannot order segments written across a reboot; `(boot_id, seq)` can.
+- **A session anchor on `EYE`.** `AIM` publishes `boot_id` and its current
+  `t_mono_us` at handshake; `EYE`, which has a real clock, records that pair in its
+  own log. One line per session converts an entire Phase 0 log to wall time
+  offline — including alignment against the demo video.
+
+**Phase 1 adds the clock: SNTP as the source, `EYE` set-time over NDJSON as the
+offline fallback.** WiFi is already up, so SNTP costs no BOM and no bus. A DS3231
+was considered and declined: it adds a part, a coin cell and a second device on the
+OLED's I²C bus, and the only thing it buys over SNTP is time across a power cycle
+with no network — which `boot_id` plus the session anchor already covers.
+
+When the clock arrives mid-run, **past records are not rewritten and monotonic time
+is never stepped**. `AIM` emits a `TIMESET` event record carrying `t_mono_us` and the
+acquired wall time, which anchors the whole session retroactively, and fills
+`t_wall_iso` from that point on.
 
 **Failure handling.** Four named, tested conditions — *no card*, *card removed while
 running*, *card full*, *write error*. Each logs once, raises an OLED status flag,
