@@ -5,8 +5,9 @@ Reviewer role: experienced embedded developer, reviewing the plan in
 ([`VERIFICATION/Requirements.html`](./VERIFICATION/Requirements.html)) and against
 the topics actually covered in workshops 1–6 of this repo.
 
-**Revision 3** — round-2 answers folded in. All findings are now resolved except
-**R-13**. [`README.md`](./README.md) has been updated to match.
+**Revision 5** — R-13 accepted (scheduled last in Phase 0), `PILOT` deferred to the
+start of Phase 1 (Q-14 answered). One finding open: **R-25**.
+[`README.md`](./README.md) matches.
 
 **How to use this document.** Every point has a stable ID (`R-nn` findings,
 `F-nn` feature proposals, `S-nn` scope decisions, `Q-nn` questions).
@@ -20,16 +21,19 @@ the topics actually covered in workshops 1–6 of this repo.
 
 ## 0. Where the plan stands
 
-### Phase 0 score: 33.5 / 42 = **79.8%**
-
-**You are 0.2 percentage points under the bar.** Half an item.
+### Phase 0 score: 39 / 42 = **92.9%**
 
 | | Weighted | % |
 |---|---|---|
 | Plan as originally written | 12 / 42 | 29% |
 | After round 1 | 25.5 / 42 | 61% |
-| **After round 2 (Phase 0 as now defined)** | **33.5 / 42** | **79.8%** |
+| After round 2 | 33.5 / 42 | 79.8% — *under* |
+| After `AIM` board routed in Phase 0 (R-26) | 36.5 / 42 | 86.9% |
+| **After R-13 accepted** | **39 / 42** | **92.9%** |
 | Pass bar | 33.6 / 42 | 80% |
+
+Deferring `PILOT` to Phase 1 cost nothing, on one condition — see the DMA note under
+**Q-14** below.
 
 Per block, Phase 0 only:
 
@@ -39,34 +43,40 @@ Per block, Phase 0 only:
 | 2. Peripherals | 5 | **5** ↑ | 2.5 gets stated via R-15 |
 | 3. RTOS | 4 | **4** ↑ | 3.4 write-up lands with the docs |
 | 4. Control | 4 | 4 | — |
-| 5. Reliability | 4 | **2** | **R-13 still unanswered** |
-| 6. Performance | 4 | **4** ↑↑ | R-15 accepted — biggest single gain, +3.5 |
-| 7. PCB | 7 | **3** ↓↓ | **Layouts moved to Phase 1, no fabrication — lost 3.5** |
-| 8. Documentation | 5 | **5** ↑↑ | R-16 accepted, +4 |
-| 9. Demonstration | 4 | **1.5** | R-17 rejected |
-| **Total** | **42** | **33.5** | **79.8%** |
+| 5. Reliability | 4 | **4** ↑↑ | **R-13 accepted** — +2.5 |
+| 6. Performance | 4 | **4** | R-15 accepted. 6.2 now rests on SD SPI DMA — **Q-14** |
+| 7. PCB | 7 | **6** ↑↑ | **R-26 accepted — `AIM` board routed in Phase 0.** Only 7.7 (fabrication) missing |
+| 8. Documentation | 5 | **5** | R-16 accepted, +4 |
+| 9. Demonstration | 4 | **2.5** ↑ | 9.1 firmed by R-13; **R-25 open** |
+| **Total** | **42** | **39** | **92.9%** |
 
 Because the sheet is a checkbox per row, partials resolve one way or the other at
 grading:
 
 | Reading | Score | |
 |---|---|---|
-| Strict (every partial → no) | 30 / 42 | **71.4%** |
-| Weighted midpoint | 33.5 / 42 | **79.8%** |
-| Generous (every partial → yes) | 37 / 42 | **88.1%** |
+| Strict (every partial → no) | 38 / 42 | **90.5%** |
+| Weighted midpoint | 39 / 42 | **92.9%** |
+| Generous (every partial → yes) | 40 / 42 | **95.2%** |
 
-So it is genuinely borderline rather than safely passing. Three levers, any **one**
-of which clears the bar:
+Comfortable on every reading. **One lever left:**
 
 | Lever | Gain | Result |
 |---|---|---|
-| **Answer R-13** (the only open finding) | +2.5 | 36.0 / 42 = **85.7%** |
-| **Move PCB layouts back into Phase 0** (R-26) | +3.0 | 36.5 / 42 = **86.9%** |
-| **A shot list for the demo video** (R-25) | +2.5 | 36.0 / 42 = **85.7%** |
-| All three | — | ≈ 41 / 42 = **98%** (only 7.7 fabrication missing) |
+| **R-25** — a nine-shot list for the demo video | +2.0 | **41 / 42 = 97.6%** |
 
-Round 2 was a large net gain — R-15 and R-16 together added 7.5 items. The PCB
-re-phasing gave 3.5 of that back, and R-17's rejection left 2.5 on the table.
+41/42 is the practical ceiling: 7.7 (board fabricated) is deliberately unspent.
+
+### The remaining risk is schedule, not scope
+
+Phase 0 now ends with two large last tasks: the `AIM` layout (3 items) and the
+reliability hardening (2.5 items). **That is 5.5 items — 13% of the grade — sitting
+after a date-gated deadline** whose date is still unset (**Q-7**).
+
+Mitigation already applied to the plan: **F-06, the watchdog, is pulled forward.**
+It is an evening's work, independent of everything else, and worth a full item on
+its own. Only the parts that genuinely need a running system to harden — F-07
+reconnection, F-05 fuzzing, F-19 self-test — stay at the end.
 
 ---
 
@@ -111,6 +121,9 @@ re-phasing gave 3.5 of that back, and R-17's rejection left 2.5 on the table.
 
 | ID | Decision | Effect |
 |----|----------|--------|
+| **R-13** | **accept** | *"plan it as latest parts of Phase 0"* — **+2.5 items** (5.1, 5.2, 5.4, 9.1). F-06 pulled forward; F-05/F-07/F-19 scheduled last |
+| **Q-14** | answered | **`PILOT` firmware → start of Phase 1.** Costs 0 items provided SD SPI DMA covers 6.2; E-stop in Phase 0 is the local `AIM` button |
+| **R-26 + Q-13** | **accept** | **`AIM` board layout moves into Phase 0, scheduled last.** `PILOT` board layout stays Phase 1. **+3.0 items** — 7.2, 7.4, 7.5, 7.6. Phase 0 now passes even on a strict reading |
 | Node naming | requested | Nodes get **role names** independent of silicon: `EYE` (vision, PC), `AIM` (control, ESP32-S3), `PILOT` (remote, ESP32-C3), `VAULT` (storage, STM32). Used as log tags, MQTT topic segments and source directories. Input channels renamed `AUTO` / `MANUAL` / `PILOT` / `NONE`; boards renamed `AIM` board / `PILOT` board. Contributes to 1.5 and 8.3 |
 
 ---
@@ -232,7 +245,8 @@ segment of the video that scores 9.2.
 Read as: **Phase 0 = schematics for both boards; Phase 1 = layouts for both.** That
 is the only reading that makes the sentence consistent with R-02's "schematic and
 next step PCB layout" — but it is a typo-level ambiguity on the single highest-value
-block in the sheet, so please confirm (**Q-13**). The cost is quantified in **R-26**.
+block in the sheet. **Confirmed in round 3** — see **R-26**: the `AIM` board layout
+came back into Phase 0 as its last task, and only the `PILOT` layout stayed behind.
 
 ### S-04 — Ordering constraints `✅ RESOLVED — partial`
 
@@ -291,7 +305,40 @@ Decision: [ ] accept   [ ] reject   [ ] discuss
 Notes:
 ```
 
-### R-26 — Moving PCB layout to Phase 1 costs 3.5 items `🆕 NEW` `severity: high` `worth +3.0`
+### R-26 — PCB layout phasing `✅ RESOLVED — accepted` `+3.0` `answers Q-13`
+
+> *"move the `AIM` board to phase 0, but as latest tasks"*
+
+**Settled: `AIM` board schematic + layout in Phase 0, scheduled last; `PILOT` board
+schematic in Phase 0, its layout in Phase 1.** Block 7 goes from 3/7 to 6/7 and
+Phase 0 clears the bar on every reading. The original finding follows.
+
+#### Sequencing it last — fine, with one caveat
+
+Doing it last is the right call on the merits: no fabrication means no lead time, so
+the only reason to front-load it is gone, and firmware genuinely does benefit from
+going first.
+
+The caveat is arithmetic, not process. **You accepted S-04 #4 — Phase 0 is gated by
+a date — and this is now the last item before that gate.** Last means first in the
+firing line if anything slips, and it is the largest single block in the sheet:
+3 items, 7.1% of the grade, and the difference between 86.9% and 79.8%.
+
+Two cheap protections:
+
+1. **Reserve a dated slot for it** rather than leaving it to whatever time remains.
+   Extending the `workshop-5-1` layout is perhaps two evenings, not two weeks — it
+   only needs to be *scheduled*, not started early.
+2. **Sacrifice the `PILOT` board layout instead** if something has to give. It is
+   already Phase 1 and worth 0 additional items, so it is the correct thing to lose.
+
+Also note the knock-on: with a real layout in Phase 0, `DESIGN-REVIEW.md` now has
+actual routing decisions to explain — power-domain split, USB D± pair, SD return
+path — which is what 9.4 is asking for. Schematic-only decisions would have made
+that a thinner answer.
+
+<details>
+<summary>Original finding</summary>
 
 This is what put Phase 0 under the bar. Block 7 is the largest block in the sheet
 (7 of 42), and four of its seven items can only be evidenced by a **layout**:
@@ -324,21 +371,40 @@ If layout genuinely cannot fit Phase 0, the fallback that recovers half of it: p
 **test point symbols and a documented power-domain split on the schematic**, which
 firms 7.4 and 7.6 from P to Y — +1.0 for perhaps an hour.
 
+</details>
+
 ```text
-Decision: [ ] accept   [ ] reject   [ ] discuss
-Notes:
+Decision: [X] accept   [ ] reject   [ ] discuss
+Notes: move the AIM board to Phase 0, but as the latest tasks
 ```
 
 ---
 
 ## 4. Open findings
 
-**One left.**
+**One left: R-25.** R-13 is resolved below.
 
-### R-13 — No reliability plan, and the base project is documented as untested `⏳ OPEN` `severity: high` `governs 5.1, 5.2, 5.4, 9.1` `worth +2.5`
+### R-13 — Reliability `✅ RESOLVED — accepted, scheduled last in Phase 0` `+2.5`
 
-This is now the **only** unanswered finding and the single largest item on the
-table — worth +2.5, which alone takes Phase 0 from 79.8% to 85.7%.
+> *"Lets plan it as latest parts of the Phase0"*
+
+Right call on sequencing — most of this work wants a running system to harden, so
+doing it early would mean hardening something that is still changing shape.
+
+**One split, the same shape as R-14's:** F-06 (the watchdog) does *not* need a
+finished system. It is `esp_task_wdt` with `ctrl` and `safety` subscribed, plus
+reset-reason logging and a WDT counter in NVS — an evening, independent of
+everything else, worth a full item. It is pulled forward to step 6 in the plan's
+task order. The rest stays last:
+
+| Feature | When | Closes |
+|---|---|---|
+| **F-06** — watchdog, reset-reason logging | **step 6, early** | 5.1 |
+| F-07 — `EYE` reconnect: reopen the port, rebuild the DepthAI pipeline, log instead of swallowing | last | 5.2, 9.1 |
+| F-05 — `tools/fuzz_link.py` against the framing contract | last | 5.4 |
+| F-19 — boot self-test gating `ARMED` | last | reinforces 5.2, 9.2 |
+
+Background, unchanged:
 
 `workshop-5-miniproject`'s own TODO records that nothing reconnects: after the ESP32
 re-enumerates, the PC side prints *Serial write failed* forever and the gimbal sits
@@ -366,8 +432,8 @@ What it buys, item by item:
 | **F-19** — boot self-test gating `ARMED` (I2C scan, SD mount, servo sweep, radio ping) | S | reinforces 5.2, 9.2 |
 
 ```text
-Decision: [ ] accept   [ ] reject   [ ] discuss
-Notes:
+Decision: [X] accept   [ ] reject   [ ] discuss
+Notes: plan it as latest parts of Phase 0
 ```
 
 ---
@@ -415,35 +481,35 @@ since revision 2.
 | 4.3 | Parameters configurable | Y | Y | Config plane (F-23) |
 | 4.4 | Boundary conditions | Y | Y | Clamps + `static_assert`, documented via R-16 |
 
-### 5. Надійність — 2 / 4 `R-13 open`
+### 5. Надійність — 4 / 4 ↑↑ `R-13 accepted`
 
-| # | Requirement | Rev 2 | Now | Why |
+| # | Requirement | Rev 4 | Now | Why |
 |---|-------------|-------|-----|-----|
-| 5.1 | WDT | N | **N** | **R-13 open** — F-06 not committed |
-| 5.2 | Peripheral error handling | P | P | SD conditions covered (R-24); serial and camera are not |
+| 5.1 | WDT | N | **Y** ↑ | F-06, pulled forward to step 6 |
+| 5.2 | Peripheral error handling | P | **Y** ↑ | SD conditions (R-24) + `EYE` reconnect (F-07) |
 | 5.3 | Invalid data validated | Y | Y | Framing contract (R-09) |
-| 5.4 | No hang on bad input | P | P | Needs F-05 (**R-13**) |
+| 5.4 | No hang on bad input | P | **Y** ↑ | F-05 fuzzer |
 
 ### 6. Продуктивність — 4 / 4 ↑↑
 
 | # | Requirement | Rev 2 | Now | Why |
 |---|-------------|-------|-----|-----|
 | 6.1 | Critical-section timing | N | **Y** ↑ | R-15 — SD write latency in telemetry, `esp_timer` on the PID step |
-| 6.2 | DMA where appropriate | P | **Y** ↑ | C3 `adc_continuous`. **Depends on the C3 landing in Phase 0** |
+| 6.2 | DMA where appropriate | Y | **Y** ⚠ | **Now rests on SD SPI DMA** — `PILOT` moved to Phase 1. Verify against your IDF version (**Q-14**) |
 | 6.3 | No redundant copies | N | **Y** ↑ | R-15 → F-10 data-path paragraph |
 | 6.4 | CPU not overloaded | N | **Y** ↑ | R-15 → run-time stats on the OLED |
 
-### 7. PCB — 3 / 7 ↓↓ `R-26`
+### 7. PCB — 6 / 7 ↑↑ `R-26 accepted`
 
-| # | Requirement | Rev 2 | Now | Why |
+| # | Requirement | Rev 3 | Now | Why |
 |---|-------------|-------|-----|-----|
 | 7.1 | Schematic | Y | Y | Both boards, Phase 0 |
-| 7.2 | 2-layer routed | Y | **N** ↓ | Layout → Phase 1 (S-01) |
-| 7.3 | Power filtering | Y | Y | Schematic-level decision |
-| 7.4 | Power/logic separated | Y | **P** ↓ | Rails on the schematic; pours and star ground need layout |
-| 7.5 | High-speed routing | Y | **N** ↓ | Needs layout |
-| 7.6 | Test points | Y | **P** ↓ | Symbols yes, placement no |
-| 7.7 | Fabricated | P | **N** ↓ | S-04 — not ordering. Settled |
+| 7.2 | 2-layer routed | N | **Y** ↑ | `AIM` board routed in Phase 0 |
+| 7.3 | Power filtering | Y | Y | Schematic + layout |
+| 7.4 | Power/logic separated | P | **Y** ↑ | Pours and star ground now exist |
+| 7.5 | High-speed routing | N | **Y** ↑ | USB D± pair, SD return path |
+| 7.6 | Test points | P | **Y** ↑ | Placed, not just symbols |
+| 7.7 | Fabricated | N | N | S-04 — not ordering. Settled |
 
 ### 8. Документація — 5 / 5 ↑↑
 
@@ -455,16 +521,19 @@ since revision 2.
 | 8.4 | Startup instructions | P | **Y** ↑ | R-16 |
 | 8.5 | Interfaces explained | N | **Y** ↑ | R-16 + the README's interface table |
 
-### 9. Демонстрація — 1.5 / 4 `R-25`
+### 9. Демонстрація — 2.5 / 4 `R-25`
 
 | # | Requirement | Rev 2 | Now | Why |
 |---|-------------|-------|-----|-----|
-| 9.1 | Stable ≥ 5 min | RISK | P | Video planned; **R-13 open** makes an unbroken take a gamble |
+| 9.1 | Stable ≥ 5 min | P | **Y** ↑ | R-13's F-07 makes an unbroken take reliable |
 | 9.2 | Boundary modes | N | N | No shot list — **R-25** |
-| 9.3 | Architecture explained | N | P | Material exists via R-16; needs narration |
-| 9.4 | PCB decisions explained | N | P | Schematic decisions exist; no `DESIGN-REVIEW.md` |
+| 9.3 | Architecture explained | P | P | Material exists via R-16; needs narration |
+| 9.4 | PCB decisions explained | P | P | Real routing decisions now exist; `DESIGN-REVIEW.md` not yet written |
 
-**Total: Y = 30 · P = 7 · N = 5 → 33.5 / 42 = 79.8%.**
+**Total: Y = 38 · P = 2 · N = 2 → 39 / 42 = 92.9%.**
+
+Everything outstanding is in block 9 (9.2, 9.3, 9.4 — all **R-25**) plus 7.7,
+deliberately unspent.
 
 ---
 
@@ -493,14 +562,19 @@ since revision 2.
 `F-14b` MOSFET laser driver · `F-16` STM32 · `F-21` fault injection · SD DMA ·
 BLE transport · Board B layout · CSRT (R-19)
 
-### Blocked on R-13
+### Adopted via R-13 — scheduled last in Phase 0
 
-| ID | Feature | Closes |
-|----|---------|--------|
-| F-05 | `tools/fuzz_link.py` | 5.4 |
-| F-06 | `esp_task_wdt`, reset-reason logging | 5.1 |
-| F-07 | PC-side reconnect, no swallowed exceptions | 5.2, 9.1 |
-| F-19 | Boot self-test gating `ARMED` | 5.2, 9.2 |
+| ID | Feature | When | Closes |
+|----|---------|------|--------|
+| F-06 | `esp_task_wdt`, reset-reason logging, WDT counter in NVS | **pulled forward** | 5.1 |
+| F-07 | `EYE` reconnect, no swallowed exceptions | last | 5.2, 9.1 |
+| F-05 | `tools/fuzz_link.py` | last | 5.4 |
+| F-19 | Boot self-test gating `ARMED` | last | 5.2, 9.2 |
+
+### Moved to Phase 1 with `PILOT`
+
+`F-11` deep sleep, GPIO wake, battery sense · `EspNowTransport` · the `radio` task ·
+the `PILOT` input channel · remote E-stop (the local `AIM` button covers Phase 0)
 
 ### Reshaped by R-25
 
@@ -519,15 +593,21 @@ PC + ESP32-S3 + SD card + ESP32-C3 joystick. **No STM32.**
 - FreeRTOS port (F-01), config plane (F-23), exclusive channel selector (F-03)
 - UART1 data link + framing contract (F-04, R-08, R-09)
 - SD logging with rolling files, health and throughput telemetry (F-22, R-15, R-24)
-- ESP-NOW joystick, C3 deep sleep, `adc_continuous` (F-04, F-11) — **6.2 depends on this**
 - FSM + diagram (F-02), performance instrumentation (F-08–F-10), documentation (F-17)
 - Laser boot-safe GPIO + interlock, firmware only (F-14a)
-- **Schematics for both boards** — and, per **R-26**, ideally Board A's layout too
+- Watchdog (F-06) — pulled forward, an evening, worth a full item
+- **Schematics for both boards**
+- **Last: route the `AIM` board** (R-26, 3 items) **and the reliability hardening**
+  (F-07, F-05, F-19 — 2.5 items). Both need reserved slots, not leftover time
 
 ### S-02 — Phase 1
 
-Board A + B layouts · MOSFET laser driver (F-14b) · STM32 storage controller (F-16) ·
-SD DMA · fault injection (F-21) · BLE transport · CSRT discussion (R-19)
+**First: `PILOT` firmware** (F-11, ESP-NOW, deep sleep, joystick ADC) and the
+`PILOT` board layout. Then MOSFET laser driver (F-14b) · `VAULT` storage node
+(F-16) · fault injection (F-21) · BLE transport · CSRT discussion (R-19).
+
+If the Phase 0 date arrives with work outstanding, **the `PILOT` board layout is the
+correct thing to sacrifice** — it is already here and worth 0 additional items.
 
 ### S-03 — Phase 2
 
@@ -545,11 +625,10 @@ fabrication; #4 stands but still needs its date (**Q-7**).
 
 | # | Question | Status |
 |---|----------|--------|
-| **Q-13** | **Confirm the PCB phasing** — schematics both boards in Phase 0, layouts both in Phase 1? Your note says "Phase1" twice, which I read as a typo | **Open — worth 3 items (R-26)** |
-| **Q-14** | Will the C3 joystick firmware definitely be in Phase 0? | **Open** — 6.2 rests on its `adc_continuous` |
+| **Q-7** | **Phase 0 deadline date?** | **Open — top question.** 5.5 items now sit in the two last tasks before this gate |
+| **DMA** | Does your ESP-IDF version give the `sdspi` bus a DMA channel at `spi_bus_initialize`? | **Open — verify.** With `PILOT` in Phase 1, requirement 6.2 rests on this. If not, 6.2 waits for Phase 1 (−1 item) |
 | Q-3 | Is 6.4 "CPU < 70%" or "shown not overloaded"? | Open — changes what you report |
 | Q-5 | Do you own the joystick, SD module, C3, servos? | Open |
-| Q-7 | Phase 0 deadline date? | Open — S-04 #4 depends on it |
 | Q-8 | Wall-clock source: SNTP, DS3231, or PC-set? | Open — monotonic works meanwhile |
 | Q-9 | Local override for `input.channel` when the broker is down? | Open |
 | Q-11 | Log retention (segment size × count)? | Open |
@@ -557,32 +636,30 @@ fabrication; #4 stands but still needs its date (**Q-7**).
 | ~~Q-4~~ | ~~Superloop argument?~~ | **Moot — FreeRTOS** |
 | ~~Q-10~~ | ~~Which board if only one?~~ | **Answered — both schematics** |
 | ~~Q-12~~ | ~~C3 in Phase 0?~~ | Superseded by **Q-14** |
+| ~~Q-13~~ | ~~PCB phasing?~~ | **Answered — `AIM` layout in Phase 0, last; `PILOT` layout Phase 1** |
+| ~~Q-14~~ | ~~`PILOT` firmware in Phase 0?~~ | **Answered — no, start of Phase 1** |
 
 ---
 
 ## 9. Summary
 
-**Round 2 was a big net gain.** R-15 (+3.5) and R-16 (+4) are the two best-value
-answers in either round — 7.5 items for work that is instrumentation and prose, no
-new hardware. R-12 added 2 more.
+**Phase 0 scores 39 / 42 = 92.9%**, and 90.5% even if every partial is graded
+against you. Comfortably clear on any reading.
 
-**But Phase 0 lands at 79.8%, half an item under the bar.** Three things put it
-there, and each has a cheap fix:
+**One finding open — R-25**, worth +2.0: a nine-shot list written before you record
+the demo video, closing 9.2, 9.3 and 9.4. That reaches 41 / 42 (97.6%), the ceiling
+with fabrication deliberately unspent.
 
-1. **R-13 is still unanswered** — the only open finding, worth +2.5. Its two halves
-   are a watchdog on the S3 and reconnection logic on the PC. Note that it is also
-   what makes R-25's unbroken five-minute take reliable rather than a gamble.
-2. **PCB layout moved to Phase 1** (R-26), worth +3.0. You are not fabricating, so
-   a layout costs drawing time only — and `workshop-5-1` is most of Board A already.
-   Routing **one** board in Phase 0 is the recommendation; both is not needed.
-3. **R-17's rejection** left block 9 at 1.5/4. Your reasoning was sound, and the
-   remedy shrinks to **a one-page shot list** (R-25) worth +2.5 — most importantly
-   one unbroken five-minute take for 9.1.
+**The remaining risk is schedule, not scope.** Phase 0 ends with two large tasks —
+the `AIM` board layout (3 items) and the reliability hardening (2.5 items). 13% of
+the grade sits after a date-gated deadline whose date is still unset (**Q-7**). The
+watchdog has been pulled forward to soften that; the rest genuinely benefits from a
+running system to harden.
 
-Any one of the three clears 80%. All three put you at roughly 41/42, with only
-fabrication (7.7) deliberately unspent.
+**One thing to verify rather than assume:** with `PILOT` in Phase 1, requirement 6.2
+(DMA) rests entirely on the SD SPI path. ESP-IDF's `sdspi` driver takes a DMA
+channel at `spi_bus_initialize` in the standard example — confirm it holds in your
+IDF version. If it does not, 6.2 waits for `PILOT`'s `adc_continuous` in Phase 1 and
+Phase 0 is 38 / 42 (90.5%), still well clear.
 
-**One thing I'd still do regardless of R-13's answer:** the five-line firmware half
-of R-14 — `gpio_set_level()` before `gpio_config()`, plus the internal pull-up. The
-board-side MOSFET can wait for Phase 1 as you decided; the code-side defect is in
-the files you are about to copy.
+**Task list:** [`TASKS.md`](./TASKS.md).
