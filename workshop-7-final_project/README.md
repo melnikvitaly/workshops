@@ -20,8 +20,8 @@ every control step is logged to an SD card with timestamps.
                  │                                     │
                  └────────── laser dot moves ◄─────────┘
 
-  PILOT ──ESP-NOW──► AIM          EYE ──MQTT──► AIM          AIM ──SPI──► VAULT
-   joystick, E-stop                config, telemetry           (Phase 1; VAULT clocks)
+  Phase 1:  PILOT ──ESP-NOW──► AIM     EYE ──MQTT──► AIM     AIM ──SPI──► VAULT
+             joystick, E-stop         config, telemetry      VAULT clocks
 ```
 
 **EYE** (PC) sees · **AIM** (ESP32-S3) decides and acts · **PILOT** (ESP32-C3) is
@@ -48,8 +48,8 @@ project**; nothing from Phase 1 opens until Phase 0 demonstrates end-to-end.
 
 | Phase | Nodes | Contents |
 |-------|-------|----------|
-| **0 — graded** | EYE (PC), AIM (ESP32-S3) | Tracking loop on FreeRTOS, FSM, SD logging with health telemetry, UART1 + MQTT to `EYE`, performance instrumentation, documentation, schematics for both boards, **`AIM` board layout and reliability work (last tasks)** |
-| **1 — after Phase 0 demos** | + PILOT (ESP32-C3), + VAULT (STM32) | **`PILOT` firmware and board layout (first)**, MOSFET laser driver, `VAULT` storage node, fault-injection console, BLE telemetry, CSRT |
+| **0 — graded** | EYE (PC), AIM (ESP32-S3) | Tracking loop on FreeRTOS, FSM, SD logging with health telemetry, **UART1 as the only link** — control *and* config plane, performance instrumentation, documentation, the `AIM` schematic, **`AIM` board layout and reliability work (last tasks)** |
+| **1 — after Phase 0 demos** | + PILOT (ESP32-C3), + VAULT (STM32) | **`PILOT` firmware, schematic and board layout (first)**, MQTT config plane and WiFi telemetry, log rotation, MOSFET laser driver, `VAULT` storage node, fault-injection console, BLE telemetry, CSRT |
 | **2 — cut without regret** | — | NRF24L01+, on-camera YOLO, target-velocity feed-forward, joystick OLED, PWM laser brightness |
 
 **Ordering principle:** firmware first, board layout and reliability hardening last.
@@ -73,7 +73,7 @@ so a node can be re-hosted on different hardware without a rename cascade.
 
 | Name | Role | Runs on | Phase |
 |------|------|---------|-------|
-| **EYE** | Sees. Detection, error vector, operator console, broker | PC | 0 |
+| **EYE** | Sees. Detection, error vector, operator console (broker: Phase 1) | PC | 0 |
 | **AIM** | Decides and acts. Control loop, laser, storage, gateway | ESP32-S3 | 0 |
 | **PILOT** | Human input. Joystick, remote emergency stop | ESP32-C3 | 1 |
 | **VAULT** | Remembers. Storage medium only — **SPI master, pulls records** | STM32 | 1 |
@@ -82,7 +82,7 @@ The names are also the reason the STM32 could be deferred without a redesign:
 `VAULT` is a role, and in Phase 0 that role is played by `AIM` itself.
 
 ```text
-log tag   chip        MQTT topic                          source directory
+log tag   chip        MQTT topic (Phase 1)                source directory
 EYE       PC          lasergimbal/eye/…                   eye/
 AIM       ESP32-S3    lasergimbal/aim/{telemetry,config}  firmware/aim/
 PILOT     ESP32-C3    lasergimbal/pilot/…                 firmware/pilot/
@@ -99,7 +99,8 @@ safety interlock.
 
 ## 3. Hardware and PCB
 
-Schematic first, then layout, for **two boards**.
+Schematic first, then layout. **Phase 0 draws and routes one board — `AIM`.**
+The `PILOT` board, schematic included, is Phase 1.
 
 ### `AIM` board — laser gimbal controller (ESP32-S3) — *the graded board*
 
@@ -114,74 +115,16 @@ E-stop, `MODE` and control buttons.
 | High-speed routing | USB D± as a 90 Ω differential pair, length-matched, no stubs or vias on the pair; SD SPI kept short with a continuous return path directly beneath it; RF keep-out under the module |
 | Test points | 3V3, VSERVO, VBAT, GND ×2, laser gate, SD SCK/MOSI/MISO/CS, UART1 TX/RX — labelled |
 
-### `PILOT` board — wireless remote (ESP32-C3)
+### `PILOT` board — wireless remote (ESP32-C3) — *Phase 1*
 
 ESP32-C3-MINI-1, USB-C + charger + LDO, 2-axis joystick with RC filtering, E-stop
 button, optional OLED header, optional nRF24 header (Phase 2), battery connector,
 test points.
 
-### Per-board deliverables
 
-The output set is plots, render, BOM and a clean DRC, plus a `DESIGN-REVIEW.md` per
-board explaining the handful of decisions actually made.
-**That document is what the PCB half of the demo is built on**, so it argues the
-power-domain split, the USB D± pair and the SD return path rather than listing them.
+## 4. Demonstration
 
-> **Note.** The verification block is satisfied by *one* board done properly, which
-> is why the `AIM` board is routed in Phase 0 and the `PILOT` board's layout waits
-> for Phase 1. The `PILOT` board's **schematic** is still Phase 0.
-
----
-
-## 4. Repository layout
-
-The final project is **fully autonomous**. Sources are **copied** in, never
-referenced across directories; nothing in the build reaches outside this folder.
-
-```text
-workshop-7-final_project/
-  README.md              this plan
-  TASKS.md               phased checklist
-  PROVENANCE.md          what was copied from where, at which commit
-  firmware/
-    aim/                 gimbal controller — ESP32-S3 (ESP-IDF / PlatformIO)
-      src/
-        drivers/         Uart, Pwm, Sdcard, Ssd1306, LaserDriver
-        parts/           Gimbal, Laser, StatusLed
-        tasks/           ctrl, safety, link_uart, link_net, radio, logger, ui
-        transport/       ITransport + Uart / Mqtt / EspNow implementations
-        utils/           Pid, RingQueue, Crc8
-        Config.hpp  ConfigStore.hpp  StateMachine.hpp  Pinout.hpp
-    pilot/               wireless remote — ESP32-C3
-    vault/               storage controller — STM32 (Phase 1)
-  eye/                   vision host — PC (Python)
-    camera/              detection, overlay, controls, serial link
-    tools/               fuzz_link.py, log plotting, soak analysis
-  hardware/
-    aim-board/           ESP32-S3 controller — KiCad, DRC, plots, BOM, DESIGN-REVIEW.md
-    pilot-board/         ESP32-C3 remote — KiCad, DRC, plots, BOM, DESIGN-REVIEW.md
-  mqtt/config/           mosquitto.conf, credentials (not committed)
-  docs/
-    architecture.md      system architecture (this plan's technical half)
-    …                    interfaces, protocol, bringup
-  VERIFICATION/          requirements sheet + coverage tracking
-```
-
----
-
-## 5. Demonstration
-
-The demo is a recorded video rather than a live run, which means it is shot to an
-accepted list rather than improvised: the demonstration requirements are scored on what the
-video *contains*, not on the fact that a recording exists. Showing the system work
-is the easy half — the video also has to show the limits being hit deliberately,
-explain the architecture, and walk through the board.
-
-The one that is easy to miss is stability. An edited highlight reel does not
-demonstrate it; a single continuous take does, so the cut includes one unbroken
-five-minute run with the uptime counter on screen.
-
-The shot list is in [`TASKS.md`](./TASKS.md).
+TBD
 
 ---
 

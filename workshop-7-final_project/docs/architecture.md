@@ -34,9 +34,10 @@ namespace mapping are in [`../README.md`](../README.md#2-nodes).
   - **method 2 (Phase 2)** — CSRT tracker. Note this needs `opencv-contrib-python`
     (`cv2.TrackerCSRT_create()`), not the plain `opencv-python`; and it is a
     *tracker*, so it needs an initial box and periodic re-detection to correct drift.
-- Streams the error vector to `AIM` over **UART1** or **MQTT**.
-- Hosts the Mosquitto broker and the operator UI: gain presets, nudge, telemetry
-  graph, fire button, and the configuration messages that select the input channel.
+- Streams the error vector to `AIM` over **UART1** — the only link in Phase 0.
+- Hosts the operator UI: gain presets, nudge, telemetry graph, fire button, and the
+  NDJSON configuration lines that select the input channel. The Mosquitto broker
+  arrives with the Phase 1 config plane.
 - A separate script drives the gimbal manually from the mouse.
 
 ### AIM — gimbal controller *(ESP32-S3; the core of the project)*
@@ -45,7 +46,8 @@ namespace mapping are in [`../README.md`](../README.md#2-nodes).
 - Owns the **SD card** over SPI, and owns **timestamps** for every record.
 - Renders state on a 0.96" I²C OLED: error, gains, aiming status, active input
   channel, link and storage health, CPU load.
-- Publishes telemetry over WiFi/MQTT — **only when enabled in configuration**.
+- Publishes telemetry over WiFi/MQTT *(Phase 1)* — **only when enabled in
+  configuration**. In Phase 0 telemetry rides the same UART1 NDJSON channel.
 - Accepts commands from exactly one input channel at a time (§4).
 
 ### PILOT — wireless remote *(ESP32-C3; Phase 1)*
@@ -67,7 +69,8 @@ Deliberately the thinnest node in the system: it owns the medium and nothing els
   link to `AIM`, which is the SPI slave.** `VAULT` pulls records; it is not fed them.
 - **No parsing, no timestamps, no state.** Records arrive fully formed and are
   written verbatim.
-- FatFs and the segment-rotation scheme move here from `AIM` unchanged.
+- FatFs and the segment-rotation scheme move here from `AIM` unchanged — both
+  nodes gain rotation in Phase 1, so there is one scheme, not two.
 - Reports card present / free space / write errors / current segment back to `AIM`.
 - `IWDG`, refreshed only while the card and the link are both healthy.
 
@@ -90,9 +93,9 @@ there is one place where SPI timing is reasoned about.
 | `ctrl` | 1 | high | 20 ms, `vTaskDelayUntil` | PIDs, gimbal, servo PWM | reads `cmd_q`, writes `log_q` |
 | `safety` | 1 | realtime | blocks on notify | E-stop, laser interlock, WDT arbiter | ISR → task notification |
 | `link_uart` | 0 | normal | event | UART1 RX/TX, framing | writes `cmd_q` |
-| `link_net` | 0 | normal | event | WiFi, MQTT, config plane | writes `cmd_q`, reads `tlm_q` |
-| `radio` | 0 | normal | event | ESP-NOW from the joystick | writes `cmd_q` |
-| `logger` | 0 | **low** | drains `log_q` | SD card, FatFs, rotation | reads `log_q` |
+| `link_net` *(Phase 1)* | 0 | normal | event | WiFi, MQTT, config plane | writes `cmd_q`, reads `tlm_q` |
+| `radio` *(Phase 1)* | 0 | normal | event | ESP-NOW from the joystick | writes `cmd_q` |
+| `logger` | 0 | **low** | drains `log_q` | SD card, FatFs (rotation: Phase 1) | reads `log_q` |
 | `ui` | 0 | low | 100 ms | OLED render | reads shared state under mutex |
 
 Rules that make this structure work, and that the write-up must state explicitly:
@@ -129,7 +132,8 @@ position with PWM. Real deep sleep is `PILOT`'s job.
 | Link | Interface | Role | Why | On failure |
 |------|-----------|------|-----|------------|
 | `EYE` (PC) ⟷ `AIM` (ESP32-S3), control | **UART1**, 115200 8N1 | duplex | Lowest latency; dead time sets the gain ceiling | 300 ms without a valid frame → `LINK_LOST`, axes stop, PIDs reset |
-| `EYE` ⟷ `AIM`, config + telemetry | **MQTT** over WiFi | duplex | Config plane and telemetry; broker on `EYE` | Backoff reconnect; MQTT Last Will announces the drop |
+| `EYE` ⟷ `AIM`, config + telemetry | **UART1** NDJSON, same wire as the control path | duplex | Phase 0 needs no second transport: one link, one failure mode, nothing to reconcile on reconnect | Same 300 ms staleness rule; config state re-sent on the next valid frame |
+| `EYE` ⟷ `AIM`, config + telemetry *(Phase 1)* | **MQTT** over WiFi | duplex | Off-loads the config plane and telemetry from the control link; broker on `EYE` | Backoff reconnect; MQTT Last Will announces the drop |
 | `PILOT` (ESP32-C3) ⟷ `AIM` *(Phase 1)* | **ESP-NOW** | duplex | Both ends are Espressif; no pairing, no broker, coexists with WiFi | Staleness timeout → `LINK_LOST` if it is the selected channel |
 | `AIM` ⟷ SD card | **SPI** master | write | Phase 0 storage | Four named conditions, §5 |
 | `AIM` ⟷ OLED | **I²C** 400 kHz | write | Only device on the bus | Log once, disable `ui`, **keep controlling** |
@@ -147,7 +151,7 @@ Split by traffic class:
 | Class | Path | Format |
 |-------|------|--------|
 | Control (error vector, at frame rate) | UART1 | compact ASCII — `E <dx> <dy> <valid>` |
-| Config, commands, telemetry | UART1 + MQTT | **NDJSON**, one object per line |
+| Config, commands, telemetry | UART1 (MQTT in Phase 1) | **NDJSON**, one object per line |
 
 The framing contract, which is required in writing:
 
@@ -191,7 +195,8 @@ board that is not pin-constrained is not a trade worth making.
 ## 4. Input channels
 
 **Exactly one channel is processed at a time.** Selection is a configuration value,
-normally set by an MQTT configuration message.
+normally set by an NDJSON configuration line from `EYE` over UART1 (by MQTT as well,
+once Phase 1 adds it).
 
 | `input.channel` | Source | Accepted when |
 |---|---|---|
@@ -201,7 +206,7 @@ normally set by an MQTT configuration message.
 | `NONE` | — | Motion commands ignored entirely |
 
 - Selection is **validated, applied, persisted to NVS and acknowledged** on the
-  config state topic. A silently ignored mode change is indistinguishable from a
+  config-state channel. A silently ignored mode change is indistinguishable from a
   broken one.
 - **Non-selected channels are still received and counted**, then dropped before the
   controller, with a per-channel `dropped_inactive` counter. Exclusivity is
@@ -213,9 +218,10 @@ normally set by an MQTT configuration message.
 
 ### Local mode button
 
-Selection is normally an MQTT message, which means that with the broker down the
-node cannot be re-tasked at all — a single point of failure in the config plane,
-not in the control loop. A **momentary `MODE` button on the `AIM` board** removes it.
+Selection normally arrives from `EYE` over the link, which means that with the link
+down the node cannot be re-tasked at all — a single point of failure in the config
+plane, not in the control loop — and in Phase 1 the same argument covers a dead
+broker. A **momentary `MODE` button on the `AIM` board** removes it.
 
 | Gesture | Effect |
 |---|---|
@@ -223,8 +229,9 @@ not in the control loop. A **momentary `MODE` button on the `AIM` board** remove
 | Long press ≥ 1 s | Jump straight to `NONE` — cut all motion input without touching the E-stop latch |
 
 - **The button does not write configuration.** It posts the same
-  `config.set input.channel` item onto `cmd_q` that MQTT and NDJSON post, so it runs
-  through the one validate → apply → persist → acknowledge path and reuses the
+  `config.set input.channel` item onto `cmd_q` that the NDJSON config path posts,
+  so it runs through the one validate → apply → persist → acknowledge path and
+  reuses the
   handover reset (both PIDs reset, commanded velocity zeroed). One writer, one code
   path, one set of counters — a second path that happened to skip the PID reset
   would be a jump on handover that only ever reproduces locally.
@@ -233,11 +240,12 @@ not in the control loop. A **momentary `MODE` button on the `AIM` board** remove
   realtime, and the E-stop stays the only button on an ISR.
 - **Selecting is not arming.** Motion still requires `ARMED` and a fresh source, and
   the handover reset zeroes velocity, so the button is safe to press in any state.
-- **Precedence is last-writer-wins**, and NVS keeps whichever came last. `.../config/set`
-  is therefore **never published retained** — otherwise a returning broker would
-  replay a stale channel over the operator's local choice. `.../config/state` *is*
-  retained and re-published on reconnect, so `EYE` learns what the button did.
-- **Feedback has to be local**, since the case this exists for is the broker being
+- **Precedence is last-writer-wins**, and NVS keeps whichever came last. `EYE` is
+  told what the button did on the next valid frame. *(Phase 1, once MQTT carries
+  the config plane: `.../config/set` must be published **non-retained**, or a
+  returning broker replays a stale channel over the operator's local choice, while
+  `.../config/state` stays retained and is re-published on reconnect.)*
+- **Feedback has to be local**, since the case this exists for is the link being
   down: the OLED shows the new channel immediately, the status LED blinks its
   ordinal, and the change appears in the transition log and the SD `channel` column.
 - `MODE` selects channels and nothing else. Arming and fault acknowledgement stay
@@ -268,33 +276,33 @@ zone.{pan,tilt}.{min,max}        laser.brightness        telemetry.rate_hz
 log.sd.enabled                   telemetry.wifi.enabled  telemetry.ble.enabled
 ```
 
-- **Precedence:** compiled defaults → NVS → runtime message (MQTT `.../config/set`,
-  or NDJSON over UART1).
-- Every write validated, applied, persisted and **acknowledged** on `.../config/state`;
-  rejections carry a reason.
+- **Precedence:** compiled defaults → NVS → runtime message (NDJSON over UART1;
+  MQTT `.../config/set` joins it in Phase 1).
+- Every write validated, applied, persisted and **acknowledged** on the config-state
+  channel (`.../config/state` once MQTT lands); rejections carry a reason.
 - A **schema version** in NVS, so a stale blob is rejected rather than misread.
 - `factory reset` command.
 - **Defaults are the safe ones:** transmission off, logging on, `input.channel = NONE`,
   laser off.
 
-**Storage and transmission are independent switches.** Turning WiFi telemetry off
+**Storage and transmission are independent switches.** Turning telemetry off
 does not stop recording to the card — otherwise a demo with WiFi disabled silently
 stops producing the evidence the soak test depends on.
 
 ### SD card logging
 
-Rolling files with overwrite of the oldest when full.
+One append-only file in Phase 0; rolling segments in Phase 1.
 
-**Layout.** `N` pre-created fixed-size segments `LOG0000.CSV … LOG00NN.CSV`, plus
-`INDEX.TXT` holding the current segment, write offset and a monotonic sequence
-number. Segments are **overwritten in place** (`f_lseek` + `f_write`) rather than
-deleted and recreated — that avoids FAT churn and the power-loss window that comes
-with it. Each segment header carries its sequence number so a reader can order
-segments after a wrap.
+**Layout.** A single append-only `LOG.CSV`, opened at boot and appended to for the
+life of the run, with a **`BOOT` marker record** as its first line. When the card
+fills, `sd.full` is raised and logging stops — the control loop does not. Rotation
+buys nothing in Phase 0: a card outlasts any demo or soak run several times over,
+and *card full* is one of the four failure conditions that has to be demonstrated
+anyway. It is designed and deferred rather than skipped — see below.
 
 **Write path.** `ctrl` and the link tasks push records to `log_q`; `logger` drains,
 batches into a 4–8 KB buffer aligned to the card's block size, and writes whole
-blocks. `f_sync` on segment boundaries and every N seconds — never per record.
+blocks. `f_sync` every N seconds and on unmount — never per record.
 
 **Back-pressure.** `log_q` is deep and the policy is **drop-oldest with a counter**,
 never block. Telemetry is lossy by design; the control loop is not.
@@ -315,21 +323,26 @@ like a valid time to every reader that will ever open the file. The column stays
 the schema so Phase 1 changes no record format — the readers, the plots and the
 `VAULT` handover all keep working.
 
-Two things replace the clock, and neither costs a part:
+One thing replaces the clock, and it costs nothing:
 
-- **`boot_id`** — a counter in NVS, incremented every boot, written into each
-  segment header. Monotonic time restarts at zero on reset, so `seq` and `t_mono_us`
-  alone cannot order segments written across a reboot; `(boot_id, seq)` can.
-- **A session anchor on `EYE`.** `AIM` publishes `boot_id` and its current
-  `t_mono_us` at handshake; `EYE`, which has a real clock, records that pair in its
-  own log. One line per session converts an entire Phase 0 log to wall time
-  offline — including alignment against the demo video.
+- **The `BOOT` marker record.** Monotonic time restarts at zero on reset, so without
+  a marker a reader cannot tell a reboot from a backwards jump in `seq`. The marker
+  carries the reset reason and `t_mono_us = 0`, and `EYE` — which has a real clock —
+  notes its arrival in its own log. One line per session converts an entire Phase 0
+  log to wall time offline, including alignment against the demo video.
+
+**Phase 1 adds rotation**, and it is the same design deferred rather than dropped:
+`N` pre-created fixed-size segments `LOG0000.CSV … LOG00NN.CSV` plus `INDEX.TXT`,
+**overwritten in place** (`f_lseek` + `f_write`) rather than deleted and recreated —
+which avoids FAT churn and the power-loss window that comes with it — with a
+sequence number in each segment header and a **`boot_id`** counter in NVS, so
+`(boot_id, seq)` orders segments across both a wrap and a reboot.
 
 **Phase 1 adds the clock: SNTP as the source, `EYE` set-time over NDJSON as the
 offline fallback.** WiFi is already up, so SNTP costs no BOM and no bus. A DS3231
 was considered and declined: it adds a part, a coin cell and a second device on the
 OLED's I²C bus, and the only thing it buys over SNTP is time across a power cycle
-with no network — which `boot_id` plus the session anchor already covers.
+with no network — which `boot_id` plus the `BOOT` marker already covers.
 
 When the clock arrives mid-run, **past records are not rewritten and monotonic time
 is never stepped**. `AIM` emits a `TIMESET` event record carrying `t_mono_us` and the
@@ -348,7 +361,7 @@ the active channels — not just internal state:
 
 ```text
 sd.present      sd.mounted            sd.full            sd.free_bytes
-sd.segment      sd.write_errors       sd.dropped_records sd.queue_depth
+sd.write_errors sd.dropped_records    sd.queue_depth     (sd.segment: Phase 1)
 sd.write_bytes_per_s   sd.write_max_latency_us   sd.write_p95_latency_us
 ```
 

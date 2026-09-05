@@ -17,16 +17,14 @@ Nodes: `EYE` + `AIM`. Ends on a fixed date (**still unset — decide this first*
 
 ### 1. Autonomous project tree
 
-- [ ] Create `firmware/aim/`, `eye/`, `hardware/`, `docs/` per README §4
+- [ ] Create `firmware/aim/`, `eye/`, `hardware/`, `docs/` per the structure in `CLAUDE.md`
 - [ ] Copy sources from `workshop-5-miniproject` — **copy, never reference**
-- [ ] Write `PROVENANCE.md`: what came from where, at which commit
 - [ ] Build cleanly with no path reaching outside `workshop-7-final_project/`
 - [ ] Commit the `final_project/` → `workshop-7-final_project/` move so history survives
-- [ ] Fill in `mqtt/config/mosquitto.conf`; keep credentials out of the repo
 
 ### 2. FreeRTOS port, FSM, config plane ⟦1.1 1.3 1.5 2.4 3.1 3.2 3.3 3.4⟧
 
-- [ ] Seven tasks per `docs/architecture.md` §2: `ctrl`, `safety`, `link_uart`, `link_net`, `logger`, `ui` (`radio` is Phase 1)
+- [ ] Five tasks per `docs/architecture.md` §2: `ctrl`, `safety`, `link_uart`, `logger`, `ui` (`link_net` and `radio` are Phase 1)
 - [ ] `cmd_q` — one queue, tagged-union item, many producers / one consumer ⟦3.2⟧
 - [ ] Config mutex; `ctrl` takes a local copy, never holds it across the PID ⟦3.3⟧
 - [ ] E-stop path: ISR → `vTaskNotifyGiveFromISR` → `safety` ⟦2.3⟧
@@ -40,22 +38,20 @@ Nodes: `EYE` + `AIM`. Ends on a fixed date (**still unset — decide this first*
 - [ ] Exclusive channel selector — `AUTO` / `MANUAL` / `NONE`; switching resets PIDs and zeroes velocity
 - [ ] Non-selected channels received and counted (`dropped_inactive`), dropped before the controller
 - [ ] **Local `MODE` button** — short press cycles `NONE → AUTO → MANUAL → NONE`; long press ≥ 1 s → `NONE` ⟦5.2⟧
-- [ ] Button posts the same `config.set input.channel` item onto `cmd_q` as MQTT — one validate → apply → persist → acknowledge path, same handover reset
+- [ ] Button posts the same `config.set input.channel` item onto `cmd_q` as an NDJSON config line — one validate → apply → persist → acknowledge path, same handover reset
 - [ ] `ui` owns it: 50 Hz poll, 30 ms debounce, release edge, **no ISR** (E-stop stays the only button interrupt)
-- [ ] `.../config/set` published **non-retained** so a returning broker cannot replay a stale channel over the button; `.../config/state` retained and re-published on reconnect
-- [ ] Local feedback with the broker down: OLED channel name, LED blink ordinal, transition logged to SD
+- [ ] Local feedback with the link down: OLED channel name, LED blink ordinal, transition logged to SD
 - [ ] **E-stop is not a channel** — accepted from any transport, any state ⟦5.4⟧
 
 ### 3. UART1 link and framing contract ⟦2.2 5.3⟧
 
 - [ ] Move the data link to UART1 on spare GPIOs; UART0 stays console-only
-- [ ] `ITransport` interface + `UartTransport`, `MqttTransport` ⟦1.5⟧
+- [ ] `ITransport` interface + `UartTransport` — the seam `MqttTransport` and `EspNowTransport` drop into in Phase 1 ⟦1.5⟧
 - [ ] Compact ASCII on the control path; NDJSON for config, commands, telemetry
 - [ ] 256-byte line cap → discard to next newline **and count it**, never grow ⟦5.3⟧
 - [ ] Range-check every numeric field; reject `NaN` / `inf` explicitly ⟦4.4⟧
 - [ ] CRC-8 on NDJSON lines; mismatches counted, not fatal
 - [ ] Counters `bad_crc`, `overlong`, `unparsed`, `out_of_range` in telemetry and on the OLED
-- [ ] MQTT reconnect with backoff + Last Will
 - [ ] Laser boot-safe GPIO — `gpio_set_level()` **before** `gpio_config()`, internal pull-up *(F-14a, ~5 lines)*
 - [ ] `laserPermitted()` interlock in `safety`, denial reason logged
 
@@ -63,18 +59,16 @@ Nodes: `EYE` + `AIM`. Ends on a fixed date (**still unset — decide this first*
 
 - [ ] `esp_vfs_fat_sdspi_mount`, SPI master
 - [ ] **Confirm the SPI bus gets a DMA channel at `spi_bus_initialize`** — requirement 6.2 rests on this now that `PILOT` is Phase 1 ⟦6.2⟧
-- [ ] Pre-created fixed-size segments `LOG0000.CSV …` + `INDEX.TXT`; overwrite in place, never delete/create
-- [ ] Segment header carries its sequence number so a reader can order them after a wrap
+- [ ] Single append-only `LOG.CSV`; a `BOOT` marker record at every start-up carrying the reset reason
 - [ ] `logger` at lowest priority; batch to 4–8 KB aligned to the card block size
-- [ ] `f_sync` on segment boundaries and every N seconds — never per record
+- [ ] `f_sync` every N seconds and on unmount — never per record
 - [ ] `log_q` deep, **drop-oldest with a counter**, never block ⟦6.4⟧
 - [ ] Record format: `seq, t_mono_us, t_wall_iso, state, channel, ex, ey, vpan, vtilt, pan, tilt, flags`
 - [ ] Timestamps owned by `AIM`: **Phase 0 is monotonic only** — `t_wall_iso` written **empty**, never a placeholder epoch
-- [ ] `boot_id` counter in NVS, incremented each boot and written into every segment header — `(boot_id, seq)` orders segments across a reboot
-- [ ] `AIM` publishes `boot_id` + current `t_mono_us` at handshake; `EYE` records the pair as the **session anchor** so logs convert to wall time offline
+- [ ] `EYE` notes each `BOOT` marker against its own clock — one line per session converts the whole log to wall time offline, including alignment against the demo video
 - [ ] Four failure conditions — no card, removed while running, full, write error. Each logs once, flags the OLED, **never stops the loop** ⟦5.2⟧
 - [ ] Mount retried on a slow timer
-- [ ] Health telemetry: `sd.present`, `sd.mounted`, `sd.full`, `sd.free_bytes`, `sd.segment`, `sd.write_errors`, `sd.dropped_records`, `sd.queue_depth`
+- [ ] Health telemetry: `sd.present`, `sd.mounted`, `sd.full`, `sd.free_bytes`, `sd.write_errors`, `sd.dropped_records`, `sd.queue_depth`
 - [ ] Throughput telemetry: `sd.write_bytes_per_s`, `sd.write_max_latency_us`, `sd.write_p95_latency_us` ⟦6.1⟧
 
 ### 5. Performance instrumentation ⟦2.5 6.1 6.3 6.4⟧
@@ -104,15 +98,14 @@ Nodes: `EYE` + `AIM`. Ends on a fixed date (**still unset — decide this first*
 - [ ] Mermaid block diagram + FSM diagram ⟦8.2 1.4⟧
 - [ ] **Name which variables cross task boundaries and what protects each one** ⟦3.4⟧
 - [ ] `docs/interfaces.md` — every interface: pins, speed, **why chosen**, failure behaviour ⟦8.5⟧
-- [ ] `docs/protocol.md` — control ASCII + NDJSON + MQTT topics ⟦8.5⟧
+- [ ] `docs/protocol.md` — control ASCII + NDJSON framing and the config plane (MQTT topics land in Phase 1) ⟦8.5⟧
 - [ ] `docs/bringup.md` — flash order, first-run checks, expected LED/OLED states ⟦8.4⟧
 - [ ] Document the clamps, anti-windup and the `static_assert` — an examiner will not find them in `Config.hpp` ⟦4.4⟧
 
-### 8. Schematics — both boards ⟦7.1 7.3⟧
+### 8. Schematic — the `AIM` board ⟦7.1 7.3⟧
 
 - [ ] `AIM` board: ESP32-S3-WROOM-1, USB-C + BQ24040 + TLV758P (from `workshop-5-1`), servo rail, MOSFET laser driver, micro-SD, OLED header, UART1 header, E-stop + **`MODE`** + control buttons (`MODE` on a non-strapping GPIO, pull-up + RC) ⟦7.1⟧
 - [ ] Power filtering: bulk on the servo rail sized for stall current, 10 µF + 100 nF per rail, 100 nF at every IC pin, ferrite between servo rail and logic, RC on analog ⟦7.3⟧
-- [ ] `PILOT` board schematic: ESP32-C3-MINI-1, charger + LDO, joystick with RC filtering, E-stop button, optional OLED and nRF24 headers, battery connector
 
 ### 9. `AIM` board layout — LAST ⟦7.2 7.4 7.5 7.6⟧
 
@@ -147,9 +140,8 @@ Nodes: `EYE` + `AIM`. Ends on a fixed date (**still unset — decide this first*
 - [ ] Power on → self-test → zone tour, direction check explained ⟦9.3⟧
 - [ ] Arm → tracking → move the target by hand ⟦9.1⟧
 - [ ] `N` nudge disturbance → recovery, telemetry graph visible ⟦9.2⟧
-- [ ] Channel switch via MQTT config → `AUTO` yields to `MANUAL`, PIDs reset ⟦9.2 9.3⟧
-- [ ] Kill the broker → `MODE` button still cycles the channel, OLED confirms, config/state re-syncs on reconnect ⟦9.2 5.2⟧
-- [ ] Unplug the data link → failsafe → reconnect ⟦9.2⟧
+- [ ] Channel switch via an NDJSON config line over UART1 → `AUTO` yields to `MANUAL`, PIDs reset ⟦9.2 9.3⟧
+- [ ] Unplug the data link → failsafe → `MODE` button still cycles the channel with no link at all, OLED confirms → reconnect and re-sync ⟦9.2 5.2⟧
 - [ ] Pull the SD card mid-track → `sd.present` false, gimbal keeps tracking ⟦9.2⟧
 - [ ] Garbage on UART1 → error counters climb, uptime does not ⟦9.2⟧
 - [ ] **One unbroken 5-minute take with the uptime counter on screen** ⟦9.1⟧
@@ -177,7 +169,20 @@ Nodes: `EYE` + `AIM`. Ends on a fixed date (**still unset — decide this first*
 - [ ] Counters and session ID in RTC slow memory across sleeps
 - [ ] Battery voltage on ADC; low-battery warning to the `AIM` OLED
 - [ ] Measure and report actual sleep current
+- [ ] `PILOT` board **schematic**: ESP32-C3-MINI-1, charger + LDO, joystick with RC filtering, E-stop button, optional OLED and nRF24 headers, battery connector — moved here from Phase 0, since 7.1 is answered by the `AIM` schematic alone
 - [ ] `PILOT` board layout — *the correct thing to sacrifice if the calendar slips*
+
+### MQTT config plane and network telemetry
+
+> Moved out of Phase 0 whole: 4.3 is answered by the NDJSON config plane over
+> UART1, and 2.2 is answered three times over without it.
+
+- [ ] `MqttTransport` behind `ITransport`; `link_net` task on `AIM`
+- [ ] Fill in `mqtt/config/mosquitto.conf`; keep credentials out of the repo
+- [ ] MQTT reconnect with backoff + Last Will
+- [ ] `.../config/set` published **non-retained** so a returning broker cannot replay a stale channel over the `MODE` button; `.../config/state` retained and re-published on reconnect
+- [ ] MQTT topic map added to `docs/protocol.md`
+- [ ] WiFi telemetry gated on `telemetry.wifi.enabled`, independent of SD logging
 
 ### Laser hardware
 
@@ -206,6 +211,8 @@ Nodes: `EYE` + `AIM`. Ends on a fixed date (**still unset — decide this first*
 
 - [ ] **Wall clock** — SNTP as the source, `EYE` set-time over NDJSON as the offline fallback (DS3231 declined: extra part, coin cell, second device on the OLED I²C bus)
 - [ ] `TIMESET` event record on acquisition — never rewrite past records, never step monotonic time
+- [ ] **Log rotation** — `N` pre-created fixed-size segments `LOG0000.CSV …` + `INDEX.TXT`, overwritten in place, never deleted and recreated; segment header carries its sequence number; `sd.segment` added back to health telemetry
+- [ ] `boot_id` counter in NVS written into every segment header — `(boot_id, seq)` orders segments across a wrap and a reboot
 - [ ] SD DMA on `AIM`, if not already covered in Phase 0
 - [ ] `INJECT` fault-injection console — `link_drop`, `corrupt`, `stall`, `i2c_fail`, `heap`
 - [ ] BLE telemetry transport, config-gated
@@ -231,8 +238,8 @@ Nodes: `EYE` + `AIM`. Ends on a fixed date (**still unset — decide this first*
 - [ ] **Q-7** — Phase 0 deadline date. Both last tasks depend on it
 - [ ] **DMA** — does your ESP-IDF version give the `sdspi` bus a DMA channel at `spi_bus_initialize`? Requirement 6.2 rests on it
 - [ ] **Q-3** — is 6.4 "CPU < 70%" or "shown not to be overloaded"?
-- [x] **Q-8** — wall-clock source — **answered: none in Phase 0** (monotonic + `boot_id` + session anchor); **SNTP + `EYE` fallback in Phase 1**
-- [x] **Q-9** — local override for `input.channel` when the broker is down — **answered: `MODE` button on `AIM`, cycles to the next channel**
-- [ ] **Q-11** — log retention: segment size × count
+- [x] **Q-8** — wall-clock source — **answered: none in Phase 0** (monotonic only, one `BOOT` marker per run); **SNTP + `EYE` fallback in Phase 1**
+- [x] **Q-9** — local override for `input.channel` when the config plane is down — **answered: `MODE` button on `AIM`, cycles to the next channel**. Note the premise moved: with MQTT in Phase 1 the button now covers a dead **UART1 link**, not a dead broker
+- [ ] **Q-11** — log retention: segment size × count *(Phase 1, with rotation)*
 - [x] **Q-5** — parts on hand: joystick, SD module, ESP32-C3, servos — **all owned**
 - [x] **R-25** — demo shot list **accepted**; §11 is the list to shoot to
