@@ -31,6 +31,14 @@ what the design commits to, the chip in brackets is how it happens to be hosted.
 > **Architecture:** [`docs/architecture.md`](./docs/architecture.md) — the technical
 > design: task set, link contracts, wire formats, storage, control and safety.
 >
+> **Interfaces:** [`docs/interfaces.md`](./docs/interfaces.md) — the authoritative
+> pin map, plus every bus with its speed, its rationale and its failure behaviour.
+>
+> **Protocol:** [`docs/protocol.md`](./docs/protocol.md) — the wire contract both
+> ends implement: control ASCII, NDJSON, CRC-8 and the config plane.
+>
+> **Conventions:** [`docs/coding.md`](./docs/coding.md) — the firmware rules.
+>
 > **Task list:** [`TASKS.md`](./TASKS.md) — the phased checklist extracted from this
 > plan, with requirement IDs against each item.
 >
@@ -124,7 +132,11 @@ test points.
 
 ## 4. Demonstration
 
-TBD
+The shot list is accepted and lives in [`TASKS.md`](./TASKS.md) §11 — shoot to it.
+It covers self-test and zone tour, tracking, a nudge disturbance and recovery, a
+channel switch over UART1, link loss with the `MODE` button still working, an SD
+card pulled mid-track, garbage on the link, and one unbroken five-minute take with
+the uptime counter on screen.
 
 ---
 

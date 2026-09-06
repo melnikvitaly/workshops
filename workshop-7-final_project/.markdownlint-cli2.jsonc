@@ -1,0 +1,10 @@
+{
+  // Project markdown style. Prose wraps at 80; tables and code blocks do not,
+  // because breaking a table row changes what it means.
+  "config": {
+    "MD013": { "line_length": 80, "tables": false, "code_blocks": false },
+    // Compact pipe tables (|---|---|) are the convention across all docs here.
+    "MD060": false
+  },
+  "ignores": ["node_modules/**", "**/.history/**"]
+}

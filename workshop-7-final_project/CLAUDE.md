@@ -45,7 +45,13 @@ workshop-7-final_project/
 - **Monitor serial output:** `pio device monitor`
 - **Clean build files:** `pio run -t clean`
 
+## Writing Documents/Comments
+
+- alway be concise/clear/use non-advanced English and structure text ly list/tables/headers/paragraphs etc
+- when referencing something from codebase or documentation - use markdown link
+
 ## Done
 
 - docs updated
-- вщсі.coding.md tolarated
+- coding.md tolerated
+- always check using `markdownlint-cli2` all generated md files

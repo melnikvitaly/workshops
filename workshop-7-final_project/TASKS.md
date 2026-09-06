@@ -79,7 +79,7 @@ Nodes: `EYE` + `AIM`. Ends on a fixed date (**still unset — decide this first*
 - [ ] Toggle a spare GPIO across the control step; capture on the logic analyser, put the screenshot in the README ⟦6.1⟧
 - [ ] Write the "data path" paragraph — every copy from camera pixel to servo angle ⟦6.3⟧
 - [ ] State the timer/hardware-event configuration explicitly (LEDC, `esp_timer`) ⟦2.5⟧
-- [ ] Say **why not** DMA on UART1 — 6.2 rewards judgement, not usage
+- [x] Say **why not** DMA on UART1 — 6.2 rewards judgement, not usage
 
 ### 6. Watchdog *(pulled forward — one evening, worth a full item)* ⟦5.1⟧
 
@@ -97,8 +97,8 @@ Nodes: `EYE` + `AIM`. Ends on a fixed date (**still unset — decide this first*
 - [ ] `docs/architecture.md` — node roles, task table, FSM, data path, decisions ⟦8.3⟧
 - [ ] Mermaid block diagram + FSM diagram ⟦8.2 1.4⟧
 - [ ] **Name which variables cross task boundaries and what protects each one** ⟦3.4⟧
-- [ ] `docs/interfaces.md` — every interface: pins, speed, **why chosen**, failure behaviour ⟦8.5⟧
-- [ ] `docs/protocol.md` — control ASCII + NDJSON framing and the config plane (MQTT topics land in Phase 1) ⟦8.5⟧
+- [x] `docs/interfaces.md` — every interface: pins, speed, **why chosen**, failure behaviour ⟦8.5⟧
+- [x] `docs/protocol.md` — control ASCII + NDJSON framing and the config plane (MQTT topics land in Phase 1) ⟦8.5⟧
 - [ ] `docs/bringup.md` — flash order, first-run checks, expected LED/OLED states ⟦8.4⟧
 - [ ] Document the clamps, anti-windup and the `static_assert` — an examiner will not find them in `Config.hpp` ⟦4.4⟧
 
