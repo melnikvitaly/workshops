@@ -17,10 +17,10 @@ Nodes: `EYE` + `AIM`. Ends on a fixed date (**still unset — decide this first*
 
 ### 1. Autonomous project tree
 
-- [ ] Create `firmware/aim/`, `eye/`, `hardware/`, `docs/` per the structure in `CLAUDE.md`
-- [ ] Copy sources from `workshop-5-miniproject` — **copy, never reference**
-- [ ] Build cleanly with no path reaching outside `workshop-7-final_project/`
-- [ ] Commit the `final_project/` → `workshop-7-final_project/` move so history survives
+- [x] Create `firmware/aim/`, `eye/`, `hardware/`, `docs/` per the structure in `CLAUDE.md`
+- [x] Copy sources from `workshop-5-miniproject` — **copy, never reference**
+- [x] Build cleanly with no path reaching outside `workshop-7-final_project/`
+- [x] Commit the `final_project/` → `workshop-7-final_project/` move so history survives
 
 ### 2. FreeRTOS port, FSM, config plane ⟦1.1 1.3 1.5 2.4 3.1 3.2 3.3 3.4⟧
 

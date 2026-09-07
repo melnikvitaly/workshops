@@ -1,0 +1,16 @@
+# Firmware — PlatformIO / ESP-IDF build output
+.pio/
+managed_components/
+build.log
+sdkconfig.old
+*.sdkconfig.old
+
+# Vision host — Python
+__pycache__/
+.venv/
+.cache/
+
+# Editor / tooling
+node_modules/
+.vscode/c_cpp_properties.json
+.vscode/launch.json
