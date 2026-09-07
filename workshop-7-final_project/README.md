@@ -140,7 +140,7 @@ the uptime counter on screen.
 
 ---
 
-## Verification
+## Verification of final project by board
 
 - Requirements: [`VERIFICATION/Requirements.html`](./VERIFICATION/Requirements.html)
   ([source sheet](https://docs.google.com/spreadsheets/d/1Eip9bvWQhd6_9XutWGIf_u8ECNoNm-KQcv1kDBZhbcY/edit?gid=0#gid=0))
