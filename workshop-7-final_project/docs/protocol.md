@@ -49,7 +49,8 @@ spaces or tabs. Floats may use any format `strtof` accepts (`-0.124`, `.5`,
 
 | Direction | Frame | Meaning |
 |---|---|---|
-| `EYE` → `AIM` | `E <dx> <dy> <valid>` | Tracking error, streamed |
+| `EYE` → `AIM` | `E <dx> <dy> <valid>` | Tracking error, streamed — the `AUTO` channel |
+| `EYE` → `AIM` | `M <vpan> <vtilt>` | Direct axis velocity, deg/s — the `MANUAL` channel |
 | `EYE` → `AIM` | `F` | Fire one shot |
 | `EYE` → `AIM` | `K <axis> <kp> <ki> <kd>` | Set PID gains live; `axis` = `p` \| `t` \| `b` |
 | `EYE` → `AIM` | `N <dpan> <dtilt>` | Open-loop nudge, in degrees |
@@ -59,9 +60,15 @@ spaces or tabs. Floats may use any format `strtof` accepts (`-0.124`, `.5`,
 
 `E` carries the error vector normalised to `[-1, 1]`, defined as
 `error = target_position − laser_dot_position`, with `valid = 1` only when both
-the dot and the target were seen in that frame. `N` displaces the gimbal without
+the dot and the target were seen in that frame. `M` is the manual counterpart:
+`EYE`'s mouse script sends a pan/tilt rate directly, bypassing the PID, and it is
+processed only while `input.channel = MANUAL`. `N` displaces the gimbal without
 telling the controller, which makes it a repeatable open-loop disturbance — the
 only honest way to compare two gain sets.
+
+Frames for the non-selected channel (an `E` frame while `MANUAL` is active, or an
+`M` frame while `AUTO` is active) are still parsed and counted as `drop_inact`,
+then dropped before the controller (§5).
 
 Per-frame telemetry has moved to NDJSON (§3.4); the `T` frame now only toggles the
 stream on and off.
@@ -93,6 +100,7 @@ Applied before any value reaches the controller. A field that fails increments
 | Field | Accepted |
 |---|---|
 | `dx`, `dy` | finite, `[-1.0, 1.0]` |
+| `vpan`, `vtilt` | finite, `[-1000.0, 1000.0]` deg/s — the per-axis rate ceiling clamps further downstream |
 | `valid` | `0` or `1` |
 | `kp`, `ki`, `kd` | finite, `[0.0, 1000.0]` — negative gains invert the loop |
 | `dpan`, `dtilt` | finite, `[-30.0, 30.0]` degrees |

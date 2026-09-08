@@ -24,36 +24,36 @@ Nodes: `EYE` + `AIM`. Ends on a fixed date (**still unset — decide this first*
 
 ### 2. FreeRTOS port, FSM, config plane ⟦1.1 1.3 1.5 2.4 3.1 3.2 3.3 3.4⟧
 
-- [ ] Five tasks per `docs/architecture.md` §2: `ctrl`, `safety`, `link_uart`, `logger`, `ui` (`link_net` and `radio` are Phase 1)
-- [ ] `cmd_q` — one queue, tagged-union item, many producers / one consumer ⟦3.2⟧
-- [ ] Config mutex; `ctrl` takes a local copy, never holds it across the PID ⟦3.3⟧
-- [ ] E-stop path: ISR → `vTaskNotifyGiveFromISR` → `safety` ⟦2.3⟧
-- [ ] Static allocation; `vApplicationMallocFailedHook`, `vApplicationStackOverflowHook`
-- [ ] No `malloc` after init, never in an ISR
-- [ ] `StateMachine.hpp` — `BOOT → SELFTEST → ZONE_TOUR → DISARMED → ARMED`, plus `PARKED`, `LINK_LOST`, latched `FAULT` ⟦1.3⟧
-- [ ] Laser forced off in `FAULT`, `PARKED`, `DISARMED`, `LINK_LOST`
-- [ ] Every transition logged with its trigger
-- [ ] Config plane: schema, NVS, precedence, validate → apply → persist → **acknowledge** ⟦4.3⟧
-- [ ] Schema version in NVS; `factory reset`; safe defaults (transmission off, logging on, `input.channel = NONE`, laser off)
-- [ ] Exclusive channel selector — `AUTO` / `MANUAL` / `NONE`; switching resets PIDs and zeroes velocity
-- [ ] Non-selected channels received and counted (`dropped_inactive`), dropped before the controller
-- [ ] **Local `MODE` button** — short press cycles `NONE → AUTO → MANUAL → NONE`; long press ≥ 1 s → `NONE` ⟦5.2⟧
-- [ ] Button posts the same `config.set input.channel` item onto `cmd_q` as an NDJSON config line — one validate → apply → persist → acknowledge path, same handover reset
-- [ ] `ui` owns it: 50 Hz poll, 30 ms debounce, release edge, **no ISR** (E-stop stays the only button interrupt)
-- [ ] Local feedback with the link down: OLED channel name, LED blink ordinal, transition logged to SD
-- [ ] **E-stop is not a channel** — accepted from any transport, any state ⟦5.4⟧
+- [x] Five tasks per `docs/architecture.md` §2: `ctrl`, `safety`, `link_uart`, `logger`, `ui` (`link_net` and `radio` are Phase 1)
+- [x] `cmd_q` — one queue, tagged-union item, many producers / one consumer ⟦3.2⟧
+- [x] Config mutex; `ctrl` takes a local copy, never holds it across the PID ⟦3.3⟧
+- [x] E-stop path: ISR → `vTaskNotifyGiveFromISR` → `safety` ⟦2.3⟧
+- [x] Static allocation; `vApplicationMallocFailedHook`, `vApplicationStackOverflowHook`
+- [x] No `malloc` after init, never in an ISR
+- [x] `StateMachine.hpp` — `BOOT → SELFTEST → ZONE_TOUR → DISARMED → ARMED`, plus `PARKED`, `LINK_LOST`, latched `FAULT` ⟦1.3⟧
+- [x] Laser forced off in `FAULT`, `PARKED`, `DISARMED`, `LINK_LOST` (also `BOOT`, `SELFTEST`; `laserPermitted()` gate in `safety`)
+- [x] Every transition logged with its trigger (`evt` line, `ESP_LOGI`, `log_q`)
+- [x] Config plane: schema, NVS, precedence, validate → apply → persist → **acknowledge** ⟦4.3⟧
+- [x] Schema version in NVS; `factory reset`; safe defaults (transmission off, logging on, `input.channel = NONE`, laser off)
+- [x] Exclusive channel selector — `AUTO` / `MANUAL` / `NONE`; switching resets PIDs and zeroes velocity
+- [x] Non-selected channels received and counted (`drop_inact`), dropped before the controller
+- [x] **Local `MODE` button** — short press cycles `NONE → AUTO → MANUAL → NONE`; long press ≥ 1 s → `NONE` ⟦5.2⟧
+- [x] MODE button and NDJSON `cfg.set` share one path — `ConfigStore::set` (validate → apply → persist → acknowledge); `ctrl` runs the handover reset off the snapshot diff, whichever writer changed the channel
+- [x] `ui` owns it: 50 Hz poll, 30 ms debounce, release edge, **no ISR** (E-stop stays the only button interrupt)
+- [x] Local feedback with the link down: OLED channel name, LED blink ordinal, transition on `log_q` (SD sink is task #4)
+- [x] **E-stop is not a channel** — accepted from any transport, any state ⟦5.4⟧
 
 ### 3. UART1 link and framing contract ⟦2.2 5.3⟧
 
-- [ ] Move the data link to UART1 on spare GPIOs; UART0 stays console-only
-- [ ] `ITransport` interface + `UartTransport` — the seam `MqttTransport` and `EspNowTransport` drop into in Phase 1 ⟦1.5⟧
-- [ ] Compact ASCII on the control path; NDJSON for config, commands, telemetry
-- [ ] 256-byte line cap → discard to next newline **and count it**, never grow ⟦5.3⟧
-- [ ] Range-check every numeric field; reject `NaN` / `inf` explicitly ⟦4.4⟧
-- [ ] CRC-8 on NDJSON lines; mismatches counted, not fatal
-- [ ] Counters `bad_crc`, `overlong`, `unparsed`, `out_of_range` in telemetry and on the OLED
-- [ ] Laser boot-safe GPIO — `gpio_set_level()` **before** `gpio_config()`, internal pull-up *(F-14a, ~5 lines)*
-- [ ] `laserPermitted()` interlock in `safety`, denial reason logged
+- [x] Move the data link to UART1 on spare GPIOs; UART0 stays console-only
+- [x] `ITransport` interface + `UartTransport` — the seam `MqttTransport` and `EspNowTransport` drop into in Phase 1 ⟦1.5⟧
+- [x] Compact ASCII on the control path; NDJSON for config, commands, telemetry
+- [x] 256-byte line cap → discard to next newline **and count it**, never grow ⟦5.3⟧
+- [x] Range-check every numeric field per §2.3; reject `NaN` / `inf` explicitly ⟦4.4⟧
+- [x] CRC-8 on NDJSON lines; mismatches counted, not fatal
+- [x] Counters `bad_crc`, `overlong`, `unparsed`, `out_of_range` (+ `drop_inact`, `uart_err`) in `tlm.sys` and on the OLED
+- [x] Laser boot-safe GPIO — `gpio_set_level()` **before** `gpio_config()`, internal pull-up *(F-14a, ~5 lines)*
+- [x] `laserPermitted()` interlock in `safety`, denial reason logged (`evt laser_denied`)
 
 ### 4. SD logging and health telemetry ⟦2.2 2.4 6.2⟧
 

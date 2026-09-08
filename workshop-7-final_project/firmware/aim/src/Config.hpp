@@ -34,13 +34,8 @@ namespace config
     constexpr ledc_channel_t TILT_PWM_CHANNEL = LEDC_CHANNEL_1;
     constexpr ledc_timer_t TILT_PWM_TIMER = LEDC_TIMER_1;
 
-    // --- Buzzer / PWM --------------------------------------------------------
-    // The buzzer owns its OWN timer (TIMER_2) because it retunes frequency per
-    // tone; the servos keep TIMER_0/1 at a steady 50 Hz, so the buzzer can never
-    // disturb them.
-    constexpr ledc_channel_t BUZZER_PWM_CHANNEL = LEDC_CHANNEL_2;
-    constexpr ledc_timer_t BUZZER_PWM_TIMER = LEDC_TIMER_2;
-    constexpr ledc_timer_bit_t BUZZER_PWM_RES = LEDC_TIMER_10_BIT;
+    // The buzzer/Beeper from workshop-5 is dropped: interfaces.md §1 has no pin
+    // for it, and OLED + status LED are the documented feedback path.
 
     // --- Gimbal travel limits (degrees) --------------------------------------
     // Hard mechanical stops. The gimbal never commands outside these.
@@ -231,42 +226,11 @@ namespace config
                   "invisible while blanked, so a longer gap trips the link failsafe "
                   "and discards the PID integral on every shot");
 
-    // --- Buzzer tones --------------------------------------------------------
-    constexpr uint32_t BEEP_FIRE_HZ = 2200;
-    constexpr uint32_t BEEP_FIRE_MS = LASER_FIRE_BLANK_MS; // tone marks the gap
-    constexpr uint32_t BEEP_ON_HZ = 2600;
-    constexpr uint32_t BEEP_OFF_HZ = 1400;
-    constexpr uint32_t BEEP_TOGGLE_MS = 90;
-
-    // --- Button --------------------------------------------------------------
-    constexpr uint32_t BTN_DEBOUNCE_MS = 25;
-    constexpr uint32_t BTN_LONG_PRESS_MS = 800;
-
-    // --- Loop timing ---------------------------------------------------------
-    // The fast loop drains the UART so incoming frames are never left sitting
-    // in the buffer. The control step - run the PIDs, integrate velocity into
-    // angles, drive the servos - is rate-limited to UPDATE_PERIOD_MS, since the
-    // servos only accept a fresh pulse every 20 ms anyway.
-    constexpr uint32_t LOOP_PERIOD_MS = 2;    // fast loop (UART drain, buttons)
-    constexpr uint32_t UPDATE_PERIOD_MS = 20; // control step (~50 Hz)
-    constexpr float UPDATE_PERIOD_S = UPDATE_PERIOD_MS / 1000.0f;
-
-    // --- Logging -------------------------------------------------------------
-    // The console shares UART0 with the incoming error stream, so anything
-    // logged continuously is noise on the PC's RX and competes with the frames
-    // we are trying to receive. Telemetry is a dedicated `T ...` uplink frame,
-    // so the PC can render it without treating console text as data. Keeping it
-    // ON by default makes that live state visible as soon as tracking starts.
-    //
-    // It is rate limited to one line per LOG_MIN_INTERVAL_MS when the error
-    // moves, then sends a low-rate heartbeat while settled so the PC can tell
-    // a healthy quiet loop from a stale link. Turn it off ('T 0', or here) if
-    // the link needs the bandwidth back.
-    constexpr bool LOG_TELEMETRY = true;
-
-    constexpr float LOG_EPSILON = 0.01f;   // min error change worth a log line
-    constexpr uint32_t LOG_MIN_INTERVAL_MS = 100; // and never faster than this
-    constexpr uint32_t TELEMETRY_HEARTBEAT_MS = 1000; // settled-loop proof of life
+    // --- Control step timing -----------------------------------------------
+    // The ctrl task runs at this period with vTaskDelayUntil; the servos only
+    // accept a fresh pulse every 20 ms anyway.
+    constexpr uint32_t UPDATE_PERIOD_MS = 20; // ~50 Hz
+    constexpr float    UPDATE_PERIOD_S  = UPDATE_PERIOD_MS / 1000.0f;
 
     // --- Status LED colours --------------------------------------------------
     struct Rgb
@@ -277,4 +241,111 @@ namespace config
     constexpr Rgb LED_LOST = {32, 12, 0};     // amber:  armed, no valid frame
     constexpr Rgb LED_DISARMED = {0, 0, 24};  // blue:   loop disarmed
     constexpr Rgb LED_TOUR = {20, 0, 24};     // violet: walking the zone at boot
+    constexpr Rgb LED_FAULT = {40, 0, 0};     // red:    latched fault
+    constexpr Rgb LED_PARKED = {2, 2, 2};     // dim:    idle
+
+    // --- FSM timing --------------------------------------------------------
+    // DISARMED + channel NONE, untouched for this long -> PARKED (servos idle,
+    // laser off). Any button press leaves PARKED.
+    constexpr uint32_t PARK_IDLE_MS = 30000;
+
+    // --- ui buttons (MODE, CONTROL) - polled at 50 Hz by the ui task ---------
+    constexpr uint32_t UI_DEBOUNCE_MS  = 30;   // docs/architecture.md §4
+    constexpr uint32_t UI_LONGPRESS_MS = 1000; // MODE long press -> NONE
+
+    // --- Task stack sizes (words) ----------------------------------------------
+    // Static allocation: every task carries a StackType_t array this long.
+    // Sized with headroom; uxTaskGetStackHighWaterMark is dumped at boot.
+    constexpr uint32_t STACK_SAFETY     = 3072;
+    constexpr uint32_t STACK_CTRL       = 4096;
+    constexpr uint32_t STACK_LINK_UART  = 4096;
+    constexpr uint32_t STACK_UI         = 4096;
+    constexpr uint32_t STACK_LOGGER     = 4096;
+
+    // --- Task priorities / cores --------------------------------------------
+    constexpr int PRIO_SAFETY    = 24; // realtime - just blocks on the notify
+    constexpr int PRIO_CTRL      = 20; // high - hard 20 ms deadline
+    constexpr int PRIO_LINK_UART = 10; // normal - event driven
+    constexpr int PRIO_UI        = 4;  // low
+    constexpr int PRIO_LOGGER    = 3;  // lowest - the only task allowed a long block
+    constexpr int CORE_CTRL      = 1;
+    constexpr int CORE_SAFETY    = 1;
+    constexpr int CORE_IO        = 0;  // link_uart, ui, logger
+
+    // --- Queue depths --------------------------------------------------------
+    constexpr int CMD_Q_LEN = 24;
+    constexpr int LOG_Q_LEN = 64; // deep, drop-oldest with a counter
+
+    // --- Config plane ------------------------------------------------------
+    // Exactly one input channel is processed at a time (docs/architecture.md §4).
+    enum class Channel : uint8_t { None = 0, Auto = 1, Manual = 2 };
+
+    inline const char *channelName(Channel c)
+    {
+        switch (c)
+        {
+        case Channel::None:   return "NONE";
+        case Channel::Auto:   return "AUTO";
+        case Channel::Manual: return "MANUAL";
+        }
+        return "?";
+    }
+
+    // Short press on MODE advances NONE -> AUTO -> MANUAL -> NONE.
+    inline Channel nextChannel(Channel c)
+    {
+        switch (c)
+        {
+        case Channel::None:   return Channel::Auto;
+        case Channel::Auto:   return Channel::Manual;
+        case Channel::Manual: return Channel::None;
+        }
+        return Channel::None;
+    }
+
+    // Bumped whenever ConfigBlob's layout or semantics change. A stored blob
+    // with a different version is rejected and the compiled defaults reloaded -
+    // a stale blob is never reinterpreted.
+    constexpr uint16_t SCHEMA_VERSION = 1;
+
+    // The persisted configuration. POD and trivially copyable: written to NVS
+    // as one blob and copied out under the config mutex by ctrl each step.
+    struct ConfigBlob
+    {
+        uint8_t input_channel; // Channel
+
+        float pid_pan_kp, pid_pan_ki, pid_pan_kd;
+        float pid_tilt_kp, pid_tilt_ki, pid_tilt_kd;
+
+        float zone_pan_min, zone_pan_max;
+        float zone_tilt_min, zone_tilt_max;
+
+        uint8_t laser_brightness;      // 0..100, Phase 1 PWM - stored only in Phase 0
+        uint8_t telemetry_rate_hz;     // 1..50
+        uint8_t log_sd_enabled;        // 0/1
+        uint8_t telemetry_wifi_enabled; // 0/1
+        uint8_t telemetry_ble_enabled;  // 0/1
+    };
+
+    // Safe defaults (docs/architecture.md §5): transmission off, logging on,
+    // channel NONE, laser off.
+    constexpr ConfigBlob CONFIG_DEFAULTS = {
+        /* input_channel          */ (uint8_t)Channel::None,
+        /* pid_pan_{kp,ki,kd}     */ PAN_KP, PAN_KI, PAN_KD,
+        /* pid_tilt_{kp,ki,kd}    */ TILT_KP, TILT_KI, TILT_KD,
+        /* zone_pan_{min,max}     */ WORK_PAN_MIN, WORK_PAN_MAX,
+        /* zone_tilt_{min,max}    */ WORK_TILT_MIN, WORK_TILT_MAX,
+        /* laser_brightness       */ 0,
+        /* telemetry_rate_hz      */ 10,
+        /* log_sd_enabled         */ 1,
+        /* telemetry_wifi_enabled */ 0,
+        /* telemetry_ble_enabled  */ 0,
+    };
+
+    // Field bounds for validation. Gains per docs/protocol.md §2.3.
+    constexpr float GAIN_MIN = 0.0f;
+    constexpr float GAIN_MAX = 1000.0f;
+    constexpr uint8_t TELEMETRY_RATE_MIN = 1;
+    constexpr uint8_t TELEMETRY_RATE_MAX = 50;
+    constexpr uint8_t LASER_BRIGHTNESS_MAX = 100;
 }

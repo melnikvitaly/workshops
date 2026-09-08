@@ -16,11 +16,19 @@ public:
 
     void init()
     {
+        // Boot-safe order (docs/interfaces.md §7): drive the inactive level
+        // BEFORE gpio_config() makes the pin an output, and enable the internal
+        // pull-up so the pre-init window rests off too. gpio_config() enables
+        // the output first, which would otherwise briefly drive the reset-state
+        // level - on the laser gate that lights the beam.
+        const int inactiveLevel = _activeHigh ? 0 : 1;
+        gpio_set_level(_pin, inactiveLevel);
+
         gpio_config_t io = {
             .pin_bit_mask = (1ULL << _pin),
             .mode         = GPIO_MODE_OUTPUT,
-            .pull_up_en   = GPIO_PULLUP_DISABLE,
-            .pull_down_en = GPIO_PULLDOWN_DISABLE,
+            .pull_up_en   = _activeHigh ? GPIO_PULLUP_DISABLE : GPIO_PULLUP_ENABLE,
+            .pull_down_en = _activeHigh ? GPIO_PULLDOWN_ENABLE : GPIO_PULLDOWN_DISABLE,
             .intr_type    = GPIO_INTR_DISABLE,
         };
         gpio_config(&io);

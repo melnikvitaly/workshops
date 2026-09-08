@@ -30,6 +30,10 @@ class Gimbal
 
     ViewPort _viewPortAngles; // working window (degrees); its centre is the park pose
 
+    // Hard mechanical stops, kept so the working zone can be re-derived at runtime.
+    float _mechPanLo, _mechPanHi;
+    float _mechTiltLo, _mechTiltHi;
+
     // Effective travel: mechanical limits narrowed to the working window.
     float _panLo, _panHi;
     float _tiltLo, _tiltHi;
@@ -73,6 +77,8 @@ public:
            float panMaxRate = DEFAULT_MAX_RATE, float tiltMaxRate = DEFAULT_MAX_RATE)
         : _pan(pan), _tilt(tilt),
           _viewPortAngles(viewPort),
+          _mechPanLo(panMin), _mechPanHi(panMax),
+          _mechTiltLo(tiltMin), _mechTiltHi(tiltMax),
           _panLo(maxf(panMin, viewPort.center.x - viewPort.halfWidth())),
           _panHi(minf(panMax, viewPort.center.x + viewPort.halfWidth())),
           _tiltLo(maxf(tiltMin, viewPort.center.y - viewPort.halfHeight())),
@@ -89,6 +95,19 @@ public:
     }
 
     ViewPort viewPort() const { return _viewPortAngles; }
+
+    // Re-derive the effective travel from a new working zone (degrees),
+    // intersected with the hard mechanical limits. Used by the config plane
+    // when `zone.*` changes at runtime; the caller has already range-checked.
+    void setWorkingZone(float panMin, float panMax, float tiltMin, float tiltMax)
+    {
+        _viewPortAngles = ViewPort::fromBounds(panMin, panMax, tiltMin, tiltMax);
+        _panLo  = maxf(_mechPanLo, _viewPortAngles.center.x - _viewPortAngles.halfWidth());
+        _panHi  = minf(_mechPanHi, _viewPortAngles.center.x + _viewPortAngles.halfWidth());
+        _tiltLo = maxf(_mechTiltLo, _viewPortAngles.center.y - _viewPortAngles.halfHeight());
+        _tiltHi = minf(_mechTiltHi, _viewPortAngles.center.y + _viewPortAngles.halfHeight());
+        moveTo(_pan.angle(), _tilt.angle()); // re-clamp the current pose
+    }
 
     // Command the axis rates (deg/s), clamped to the hard rate ceiling. Held
     // until the next call, so a dropped frame does not stall the motion

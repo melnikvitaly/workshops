@@ -114,12 +114,45 @@ Rules that make this structure work, and that the write-up must state explicitly
 - The architecture document names **which variables cross task boundaries and what
   protects each one**.
 
+### What crosses a task boundary, and what protects it
+
+| Variable | Producers → consumers | Protection |
+|---|---|---|
+| `cmd_q` | `link_uart`, `ui` → `ctrl` | static FreeRTOS queue (tagged-union item) |
+| `log_q` | `ctrl`, `link_uart` → `logger` | static FreeRTOS queue, drop-oldest with a counter |
+| `ConfigStore` blob | `link_uart`, `ui` write → `ctrl` snapshot | static mutex; `ctrl` copies the whole struct out and releases before the PID |
+| `Fsm::state` | `ctrl` writes → `ui`, `link_uart`, `safety` read | `std::atomic<State>` |
+| `estopLatched` | `safety` writes → `ctrl`, `laserPermitted()` read | `std::atomic<bool>` |
+| `estopSource` | ISR / `link_uart` write → `ctrl` read | `std::atomic<EstopSource>` |
+| `linkFresh` | `ctrl` writes → `safety` / `laserPermitted()` read | `std::atomic<bool>` |
+| receiver counters (`bad_crc`, `unparsed`, `oor`, `drop_inact`, `logDropped`) | `link_uart`, `ctrl` write → `ui`, `link_uart` read | `std::atomic<uint32_t>` |
+| E-stop signal | E-stop ISR / `link_uart` → `safety` task | task notification (`vTaskNotifyGiveFromISR` / `xTaskNotifyGive`) |
+| `TelemSample` (latest control sample) | `ctrl` writes → `link_uart` reads | none — single writer, lossy reader, telemetry only |
+| `safetyTaskHandle` | `app_main` sets once, before the ISR is installed | publish-before-use ordering |
+
+The config plane runs **one path** — `ConfigStore::set()` — for every writer. An
+NDJSON `cfg.set` and the local `MODE` button both call it (validate → apply →
+persist to NVS → the caller emits `cfg.state`); the NVS commit happens in the
+writer's task (`link_uart` or `ui`), never on `ctrl`. `ctrl` notices a changed
+`input.channel` in its next snapshot and runs the handover reset — both PIDs
+reset, commanded velocity zeroed — so there is one reset path regardless of which
+writer changed the channel.
+
 ### State machine
 
 States: `BOOT → SELFTEST → ZONE_TOUR → DISARMED → ARMED → …`, with
 `PARKED` (idle), `LINK_LOST` (selected channel silent) and a latched `FAULT` that
-requires operator acknowledgement. The laser is forced off in `FAULT`, `PARKED`,
-`DISARMED` and `LINK_LOST`.
+requires operator acknowledgement. The laser is forced off in `BOOT`, `SELFTEST`,
+`DISARMED`, `LINK_LOST`, `PARKED` and `FAULT`; it is permitted only in `ZONE_TOUR`
+(lit for the boot geometry check, no link required) and `ARMED` (lit only while
+the selected channel is fresh). `laserPermitted()` in `safety` is the single gate.
+
+Every transition is logged with its trigger — an `evt` line on the link, an
+`ESP_LOGI`, and a `log_q` record. Triggers are short stable tokens: `boot`,
+`selftest.ok`, `tour.done`, `btn.control`, `link.stale`, `link.fresh`, `estop`,
+`fault.ack`, `idle`, `cfg.channel`. `FAULT` is latched; only `fault.ack` (the
+`CONTROL` button or `{"t":"cfg.set","k":"fault.ack","v":true}`) leaves it, to
+`DISARMED`.
 
 **`PARKED`, not deep sleep, is `AIM`'s idle mode**: servos detached, laser off,
 display dimmed, WiFi modem-sleep. The ESP32-S3 cannot deep sleep while holding servo

@@ -1,1 +1,10 @@
 CONFIG_FREERTOS_HZ=1000
+
+# Static allocation discipline (docs/coding.md "Memory"): every task and queue is
+# created with xTaskCreateStatic / xQueueCreateStatic.
+CONFIG_FREERTOS_SUPPORT_STATIC_ALLOCATION=y
+
+# Fail loud on a stack overflow. Heap-allocation failures after init are caught
+# by heap_caps_register_failed_alloc_callback() in main.cpp - ESP-IDF does not
+# route them through FreeRTOS's configUSE_MALLOC_FAILED_HOOK.
+CONFIG_FREERTOS_CHECK_STACKOVERFLOW_CANARY=y
