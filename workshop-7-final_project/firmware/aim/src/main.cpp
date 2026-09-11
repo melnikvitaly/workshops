@@ -15,6 +15,7 @@
 #include "ipc/Ipc.hpp"
 #include "ipc/CmdQueue.hpp"
 #include "ConfigStore.hpp"
+#include "drivers/Sdcard.hpp"
 #include "transport/UartTransport.hpp"
 #include "transport/Ndjson.hpp"
 #include "tasks/Safety.hpp"
@@ -33,12 +34,13 @@ static const char *TAG = "AIM";
 static Ipc          ipc;
 static ConfigStore  configStore;
 static UartTransport uart;
+static Sdcard       sdCard; // logger owns mount/retry - see tasks/Logger.hpp
 
 // --- task objects ---------------------------------------------------------
 static SafetyTask   safetyTask{ipc};
 static CtrlTask     ctrlTask{ipc};
 static LinkUartTask linkUartTask{ipc};
-static LoggerTask   loggerTask{ipc};
+static LoggerTask   loggerTask{ipc, sdCard};
 static UiTask       uiTask{ipc};
 
 // --- static task stacks + control blocks -------------------------------------

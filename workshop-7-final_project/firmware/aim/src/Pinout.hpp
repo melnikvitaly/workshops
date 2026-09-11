@@ -19,12 +19,13 @@ namespace pinout
     // rests off (docs/interfaces.md §7). External pull-up is the Phase 1 board fix.
     constexpr gpio_num_t LASER_GATE = GPIO_NUM_6;
 
-    // --- micro-SD on SPI2 / FSPI (IOMUX pins) - wired in task #4 --------------
+    // --- micro-SD on SPI2 / FSPI (IOMUX pins) --------------------------------
+    // No card-detect line: the socket has no CD switch, so "removed while
+    // running" is caught on the next failed write (docs/interfaces.md §4.1).
     constexpr gpio_num_t SD_CS   = GPIO_NUM_10;
     constexpr gpio_num_t SD_MOSI = GPIO_NUM_11;
     constexpr gpio_num_t SD_SCK  = GPIO_NUM_12;
     constexpr gpio_num_t SD_MISO = GPIO_NUM_13;
-    constexpr gpio_num_t SD_CD   = GPIO_NUM_14; // card detect - decision pending, interfaces.md §4.1
 
     // --- OLED on I2C0 --------------------------------------------------------
     constexpr int        OLED_I2C_PORT = 0; // I2C_NUM_0
@@ -57,5 +58,5 @@ namespace pinout
     constexpr gpio_num_t SCOPE      = GPIO_NUM_47; // toggled across the control step - task #5
     constexpr gpio_num_t STATUS_LED = GPIO_NUM_48; // onboard WS2812
 
-    // Free and uncommitted: 1, 9 (21/33/34/37/38 held for the Phase 1 SPI slave link).
+    // Free and uncommitted: 1, 9, 14 (21/33/34/37/38 held for the Phase 1 SPI slave link).
 }

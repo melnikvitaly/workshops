@@ -44,11 +44,30 @@ struct Ipc
     std::atomic<uint32_t> logDropped{0};   // log_q drop-oldest
 
     // Latest control sample for the tlm line. Single writer (ctrl), lossy reader
-    // (link_uart) - telemetry tolerates a torn float, so no lock. The full
-    // tlm.sd / tlm.sys schema is tasks #4 / #5.
+    // (link_uart) - telemetry tolerates a torn float, so no lock.
     struct TelemSample
     {
         float ex, ey, vpan, vtilt, pan, tilt;
     };
     TelemSample telem{};
+
+    // SD health + write performance (docs/architecture.md §5, docs/protocol.md
+    // §3.4 tlm.sd). Single writer (logger), lossy readers (link_uart, ui) - same
+    // no-lock rule as TelemSample. Fixed-width: these cross a queue-free boundary
+    // into a wire message and onto the OLED.
+    struct Sd
+    {
+        uint8_t  present  = 0; // a mount has succeeded and not since failed
+        uint8_t  mounted  = 0; // FAT volume currently mounted
+        uint8_t  full     = 0; // card full - writing stopped, loop still runs
+        uint64_t freeBytes = 0;
+        uint32_t writeErrors    = 0;
+        uint32_t droppedRecords = 0; // mirrors ipc.logDropped for the wire
+        uint32_t queueDepth     = 0; // log_q occupancy at the last drain
+        uint32_t syncCount      = 0; // f_sync calls since boot
+        uint32_t writeBytesPerS = 0;
+        uint32_t writeMaxLatencyUs = 0; // early warning for the card-stall problem
+        uint32_t writeP95LatencyUs = 0;
+    };
+    Sd sd{};
 };

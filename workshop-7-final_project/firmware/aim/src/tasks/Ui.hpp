@@ -200,6 +200,21 @@ private:
         std::snprintf(l, sizeof(l), "UP: %lus", (unsigned long)up);
         _oled.text(0, 5, l);
 
+        char sdf[8];
+        if (_ipc.sd.full)
+            std::snprintf(sdf, sizeof(sdf), "FULL");
+        else if (_ipc.sd.writeErrors)
+            std::snprintf(sdf, sizeof(sdf), "E%lu",
+                          (unsigned long)(_ipc.sd.writeErrors > 999 ? 999 : _ipc.sd.writeErrors));
+        else
+            std::snprintf(sdf, sizeof(sdf), "OK");
+        const uint32_t freeMb = (uint32_t)(_ipc.sd.freeBytes >> 20);
+        char sdl[40];
+        std::snprintf(sdl, sizeof(sdl), "SD:%c%c %s %luM",
+                      _ipc.sd.present ? 'P' : '-', _ipc.sd.mounted ? 'M' : '-',
+                      sdf, (unsigned long)freeMb);
+        _oled.text(0, 6, sdl);
+
         if (_oled.flush() != ESP_OK && _oledOk)
         {
             _oledOk = false;

@@ -128,6 +128,7 @@ Rules that make this structure work, and that the write-up must state explicitly
 | receiver counters (`bad_crc`, `unparsed`, `oor`, `drop_inact`, `logDropped`) | `link_uart`, `ctrl` write → `ui`, `link_uart` read | `std::atomic<uint32_t>` |
 | E-stop signal | E-stop ISR / `link_uart` → `safety` task | task notification (`vTaskNotifyGiveFromISR` / `xTaskNotifyGive`) |
 | `TelemSample` (latest control sample) | `ctrl` writes → `link_uart` reads | none — single writer, lossy reader, telemetry only |
+| `Sd` (SD health + write stats) | `logger` writes → `link_uart`, `ui` read | none — single writer, lossy readers, telemetry only |
 | `safetyTaskHandle` | `app_main` sets once, before the ISR is installed | publish-before-use ordering |
 
 The config plane runs **one path** — `ConfigStore::set()` — for every writer. An
@@ -394,8 +395,9 @@ the active channels — not just internal state:
 
 ```text
 sd.present      sd.mounted            sd.full            sd.free_bytes
-sd.write_errors sd.dropped_records    sd.queue_depth     (sd.segment: Phase 1)
+sd.write_errors sd.dropped_records    sd.queue_depth     sd.sync_count
 sd.write_bytes_per_s   sd.write_max_latency_us   sd.write_p95_latency_us
+(sd.segment: Phase 1)
 ```
 
 Two things this buys beyond visibility:
@@ -408,10 +410,12 @@ Two things this buys beyond visibility:
 
 **DMA.** With `PILOT` in Phase 1, the SD path is the only DMA candidate left in
 Phase 0. ESP-IDF's `sdspi` driver takes a DMA channel when the SPI bus is
-initialised (`spi_bus_initialize(..., SPI_DMA_CH_AUTO)` in the IDF `sd_card/sdspi`
-example) — **confirm this against the IDF version in use**, because requirement 6.2
-now rests on it. If it does not hold, `PILOT`'s `adc_continuous` covers 6.2 when it
-lands in Phase 1.
+initialised with `spi_bus_initialize(..., SPI_DMA_CH_AUTO)`. **Confirmed on the
+version in use** — ESP-IDF 6.0.1 (`framework-espidf` 4.60001.0): the bus gets an
+auto-assigned channel and the `sdspi` device inherits it, so every block write is
+DMA-backed. `Sdcard::mount()` logs the fact at boot. Requirement 6.2 rests on
+this now that `PILOT` is Phase 1; `PILOT`'s `adc_continuous` is the Phase 1
+backstop.
 
 ---
 

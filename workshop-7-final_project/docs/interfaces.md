@@ -24,7 +24,6 @@ Module: **ESP32-S3-WROOM-1**, quad-flash / **no octal PSRAM** (`N4` or `N8`, not
 | `SD_MOSI` | 11 | SPI2 out | FSPID — IOMUX |
 | `SD_SCK` | 12 | SPI2 out | FSPICLK — IOMUX |
 | `SD_MISO` | 13 | SPI2 in | FSPIQ — IOMUX |
-| `SD_CD` | 14 | in, pull-up | Card detect, socket switch. **Decision pending — §4.1** |
 | `OLED_SDA` | 15 | I²C0 open-drain | External 4.7 kΩ pull-up to 3V3 |
 | `OLED_SCL` | 16 | I²C0 open-drain | External 4.7 kΩ pull-up to 3V3 |
 | `LINK_TX` | 17 | UART1 out | To the USB-TTL adapter's RX |
@@ -37,7 +36,7 @@ Module: **ESP32-S3-WROOM-1**, quad-flash / **no octal PSRAM** (`N4` or `N8`, not
 | `STATUS_LED` | 48 | RMT out | WS2812 |
 | `BOOT_BTN` | 0 | in | On-module. Strapping — boot select only, no runtime use |
 
-**Free and uncommitted:** 1, 9, 21, 33, 34, 37, 38.
+**Free and uncommitted:** 1, 9, 14, 21, 33, 34, 37, 38.
 
 **Reserved, do not use:** 3 / 45 / 46 (strapping), 19 / 20 (USB D−/D+),
 39–42 (JTAG), 43 / 44 (UART0 console), 26–32 (SPI flash).
@@ -163,8 +162,13 @@ on a PC. That is the whole argument, and it is also why the record format is CSV
 **Why DMA here and nowhere else in Phase 0.** SD writes are 4–8 KB blocks —
 large, periodic, and issued from `logger` while `ctrl` has a 20 ms deadline to
 meet. Without DMA the CPU copies every byte of every block.
-**Confirm the driver takes a channel on the IDF version in use** — requirement 6.2
-rests on it now that `PILOT` is Phase 1.
+
+**Confirmed.** On the ESP-IDF version in use (**6.0.1**, `framework-espidf`
+4.60001.0), `spi_bus_initialize(SPI2_HOST, …, SPI_DMA_CH_AUTO)` allocates a DMA
+channel, and the `sdspi` device registered on that bus inherits it — so every
+block write goes out over DMA, not a CPU copy. `Sdcard::mount()` logs a line at
+boot (`"SPI2 bus up (SPI_DMA_CH_AUTO) …"`) so the claim is visible on the
+console. Requirement 6.2 rests on this now that `PILOT` is Phase 1.
 
 **On failure — the four named conditions.** Each logs once, raises an OLED status
 flag, and **never stops the control loop**:
@@ -172,23 +176,20 @@ flag, and **never stops the control loop**:
 | Condition | Detected by | Response |
 |---|---|---|
 | No card at boot | mount fails | `sd.present = 0`, retry mount on a 5 s timer |
-| Removed while running | `SD_CD` edge, or a write error | unmount, `sd.present = 0`, keep queueing, drop-oldest |
-| Card full | short `f_write` / `f_getfree` | `sd.full = 1`, stop writing, keep running |
-| Write error | `f_write` / `f_sync` return | `sd.write_errors++`, remount once, then degrade |
+| Removed while running | a failed `fwrite` / `fsync` | close file, one remount attempt, then `sd.present = 0`; `log_q` keeps draining drop-oldest |
+| Card full | short `fwrite`, free bytes near zero | `sd.full = 1`, stop writing, keep running |
+| Write error | `fwrite` / `fsync` return | `sd.write_errors++`, remount once, then degrade |
 
-### 4.1 Decision pending — `SD_CD`
+### 4.1 No card-detect line — `SD_CD` dropped
 
-GPIO14 is reserved above for the socket's card-detect switch. Without it,
-"removed while running" is detectable only *after* a failed write — which means
-`sd.present` and `sd.mounted` carry the same information, and one of the two
-telemetry fields in
-[`architecture.md` §5](./architecture.md#5-configuration-and-storage) is
-redundant. With it, removal is an edge and the log records the moment it
-happened.
-
-It costs one pin, a socket variant that has the switch, and one pull-up.
-**Confirm the socket before the schematic is drawn** ([`TASKS.md`](../TASKS.md)
-§8). If the part on hand has no CD switch, delete the row and record that here.
+GPIO14 was reserved for the socket's card-detect switch. The socket on hand has
+no such switch, so the row is deleted from §1 and GPIO14 returns to the free
+pool. Consequence: "removed while running" is detected only *after* the next
+failed write, so `sd.present` and `sd.mounted` carry distinct information only
+across the mount-retry window (once the retry runs, a card that is gone reads
+`present = 0, mounted = 0` and a card that is back reads `1, 1`). This is
+acceptable for Phase 0 — the demo shot is "pull the card, gimbal keeps
+tracking", and the write-error path delivers that within one batch flush.
 
 ---
 

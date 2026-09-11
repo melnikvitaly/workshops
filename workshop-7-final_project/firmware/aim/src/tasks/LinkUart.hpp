@@ -314,12 +314,17 @@ private:
             emitTlm(c);
         }
 
-        // tlm.sys carries the framing counters at a fixed 1 Hz (docs/protocol.md
-        // §3.4 / §5); the sd.* health message is task #4.
+        // tlm.sys (framing counters) and tlm.sd (storage health) both ride a
+        // fixed 1 Hz, independent of telemetry.rate_hz (docs/protocol.md §3.4).
         if (_lastSysMs == 0 || now - _lastSysMs >= SYS_PERIOD_MS)
         {
             _lastSysMs = now;
             emitTlmSys();
+        }
+        if (_lastSdMs == 0 || now - _lastSdMs >= SYS_PERIOD_MS)
+        {
+            _lastSdMs = now;
+            emitTlmSd();
         }
     }
 
@@ -358,11 +363,30 @@ private:
         _ipc.link->writeLine(line);
     }
 
+    void emitTlmSd()
+    {
+        const Ipc::Sd s = _ipc.sd; // lossy read, telemetry only
+        char line[240];
+        std::snprintf(line, sizeof(line),
+                      "{\"t\":\"tlm.sd\",\"up\":%llu,\"pres\":%u,\"mnt\":%u,\"full\":%u,"
+                      "\"free\":%llu,\"werr\":%lu,\"drop\":%lu,\"qd\":%lu,\"bps\":%lu,"
+                      "\"lmax\":%lu,\"lp95\":%lu}",
+                      (unsigned long long)esp_timer_get_time(),
+                      (unsigned)s.present, (unsigned)s.mounted, (unsigned)s.full,
+                      (unsigned long long)s.freeBytes,
+                      (unsigned long)s.writeErrors, (unsigned long)s.droppedRecords,
+                      (unsigned long)s.queueDepth, (unsigned long)s.writeBytesPerS,
+                      (unsigned long)s.writeMaxLatencyUs, (unsigned long)s.writeP95LatencyUs);
+        ndjson::seal(line, sizeof(line));
+        _ipc.link->writeLine(line);
+    }
+
     static constexpr uint32_t SYS_PERIOD_MS = 1000;
 
     Ipc     &_ipc;
     bool     _telemetryOn = false;
     uint32_t _lastTlmMs   = 0;
     uint32_t _lastSysMs   = 0;
+    uint32_t _lastSdMs    = 0;
     char     _valBuf[24]  = {0};
 };

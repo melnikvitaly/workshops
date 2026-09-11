@@ -260,7 +260,7 @@ namespace config
     constexpr uint32_t STACK_CTRL       = 4096;
     constexpr uint32_t STACK_LINK_UART  = 4096;
     constexpr uint32_t STACK_UI         = 4096;
-    constexpr uint32_t STACK_LOGGER     = 4096;
+    constexpr uint32_t STACK_LOGGER     = 6144; // FatFs + stdio buffers; batch buffer is in BSS
 
     // --- Task priorities / cores --------------------------------------------
     constexpr int PRIO_SAFETY    = 24; // realtime - just blocks on the notify
@@ -275,6 +275,19 @@ namespace config
     // --- Queue depths --------------------------------------------------------
     constexpr int CMD_Q_LEN = 24;
     constexpr int LOG_Q_LEN = 64; // deep, drop-oldest with a counter
+
+    // --- SD logging (docs/architecture.md §5, docs/interfaces.md §4) ---------
+    // One append-only LOG.CSV. logger batches whole blocks and f_syncs on a
+    // timer - never per record. A card stall can block a single write 100-250 ms,
+    // which is why logger is the lowest-priority task and the only long blocker.
+    constexpr char     SD_MOUNT_POINT[]   = "/sdcard";
+    constexpr char     SD_LOG_PATH[]      = "/sdcard/LOG.CSV";
+    constexpr uint32_t SD_BATCH_BYTES     = 4096;  // flush at one FATFS_SECTOR_4096 block
+    constexpr uint32_t SD_BATCH_MAX_BYTES = 8192;  // batch buffer ceiling (BSS)
+    constexpr uint32_t SD_SYNC_SECONDS    = 5;     // f_sync cadence
+    constexpr uint32_t SD_MOUNT_RETRY_MS  = 5000;  // retry a failed / absent mount
+    constexpr uint32_t SD_LOOP_TICK_MS    = 200;   // log_q receive timeout - bounds the timers
+    constexpr uint32_t SD_FREE_POLL_MS    = 2000;  // sd.free_bytes refresh
 
     // --- Config plane ------------------------------------------------------
     // Exactly one input channel is processed at a time (docs/architecture.md §4).

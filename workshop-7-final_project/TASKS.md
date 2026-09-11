@@ -57,19 +57,20 @@ Nodes: `EYE` + `AIM`. Ends on a fixed date (**still unset — decide this first*
 
 ### 4. SD logging and health telemetry ⟦2.2 2.4 6.2⟧
 
-- [ ] `esp_vfs_fat_sdspi_mount`, SPI master
-- [ ] **Confirm the SPI bus gets a DMA channel at `spi_bus_initialize`** — requirement 6.2 rests on this now that `PILOT` is Phase 1 ⟦6.2⟧
-- [ ] Single append-only `LOG.CSV`; a `BOOT` marker record at every start-up carrying the reset reason
-- [ ] `logger` at lowest priority; batch to 4–8 KB aligned to the card block size
-- [ ] `f_sync` every N seconds and on unmount — never per record
-- [ ] `log_q` deep, **drop-oldest with a counter**, never block ⟦6.4⟧
-- [ ] Record format: `seq, t_mono_us, t_wall_iso, state, channel, ex, ey, vpan, vtilt, pan, tilt, flags`
-- [ ] Timestamps owned by `AIM`: **Phase 0 is monotonic only** — `t_wall_iso` written **empty**, never a placeholder epoch
+- [x] `esp_vfs_fat_sdspi_mount`, SPI master — `drivers/Sdcard.hpp`
+- [x] **Confirm the SPI bus gets a DMA channel at `spi_bus_initialize`** — yes on
+      ESP-IDF 6.0.1 (`SPI_DMA_CH_AUTO`), logged at boot ⟦6.2⟧
+- [x] Single append-only `LOG.CSV`; a `BOOT` marker record at every start-up carrying the reset reason
+- [x] `logger` at lowest priority; batch to 4–8 KB aligned to the card block size
+- [x] `f_sync` every N seconds and on unmount — never per record
+- [x] `log_q` deep, **drop-oldest with a counter**, never block ⟦6.4⟧
+- [x] Record format: `seq, t_mono_us, t_wall_iso, state, channel, ex, ey, vpan, vtilt, pan, tilt, flags`
+- [x] Timestamps owned by `AIM`: **Phase 0 is monotonic only** — `t_wall_iso` written **empty**, never a placeholder epoch
 - [ ] `EYE` notes each `BOOT` marker against its own clock — one line per session converts the whole log to wall time offline, including alignment against the demo video
-- [ ] Four failure conditions — no card, removed while running, full, write error. Each logs once, flags the OLED, **never stops the loop** ⟦5.2⟧
-- [ ] Mount retried on a slow timer
-- [ ] Health telemetry: `sd.present`, `sd.mounted`, `sd.full`, `sd.free_bytes`, `sd.write_errors`, `sd.dropped_records`, `sd.queue_depth`
-- [ ] Throughput telemetry: `sd.write_bytes_per_s`, `sd.write_max_latency_us`, `sd.write_p95_latency_us` ⟦6.1⟧
+- [x] Four failure conditions — no card, removed while running, full, write error. Each logs once, flags the OLED, **never stops the loop** ⟦5.2⟧
+- [x] Mount retried on a slow timer
+- [x] Health telemetry: `sd.present`, `sd.mounted`, `sd.full`, `sd.free_bytes`, `sd.write_errors`, `sd.dropped_records`, `sd.queue_depth`
+- [x] Throughput telemetry: `sd.write_bytes_per_s`, `sd.write_max_latency_us`, `sd.write_p95_latency_us` ⟦6.1⟧
 
 ### 5. Performance instrumentation ⟦2.5 6.1 6.3 6.4⟧
 
@@ -236,7 +237,7 @@ Nodes: `EYE` + `AIM`. Ends on a fixed date (**still unset — decide this first*
 ## Open questions
 
 - [ ] **Q-7** — Phase 0 deadline date. Both last tasks depend on it
-- [ ] **DMA** — does your ESP-IDF version give the `sdspi` bus a DMA channel at `spi_bus_initialize`? Requirement 6.2 rests on it
+- [x] **DMA** — **yes.** ESP-IDF 6.0.1: `spi_bus_initialize(SPI2_HOST, …, SPI_DMA_CH_AUTO)` allocates a channel, `sdspi` inherits it. Logged at boot by `Sdcard::mount()`. Requirement 6.2 holds
 - [ ] **Q-3** — is 6.4 "CPU < 70%" or "shown not to be overloaded"?
 - [x] **Q-8** — wall-clock source — **answered: none in Phase 0** (monotonic only, one `BOOT` marker per run); **SNTP + `EYE` fallback in Phase 1**
 - [x] **Q-9** — local override for `input.channel` when the config plane is down — **answered: `MODE` button on `AIM`, cycles to the next channel**. Note the premise moved: with MQTT in Phase 1 the button now covers a dead **UART1 link**, not a dead broker

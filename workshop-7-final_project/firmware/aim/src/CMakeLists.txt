@@ -12,6 +12,9 @@ idf_component_register(
     REQUIRES
         driver
         esp_driver_i2c
+        esp_driver_sdspi
+        fatfs
+        sdmmc
         esp_timer
         nvs_flash
         espressif__led_strip
