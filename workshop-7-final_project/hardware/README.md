@@ -9,5 +9,4 @@ KiCad projects for the boards, one directory per board.
 
 The `aim-board/` design extends the power section from `workshop-5-1` (USB-C +
 BQ24040 + TLV758P), **copied in**, not referenced. See
-[`../TASKS.md`](../TASKS.md) sections 8 and 9 for the deliverables and
 [`../docs/interfaces.md`](../docs/interfaces.md) for the pin map.

@@ -296,9 +296,9 @@ acknowledgement — `{"t":"cfg.set","k":"fault.ack","v":true}` or the local
 `CONTROL` button.
 
 Routing E-stop through channel selection would mean that selecting `AUTO` disables
-`PILOT`'s emergency stop in Phase 1. That is a safety defect, not a design
-preference, which is why the exemption is stated in the protocol rather than left
-to the implementation.
+the emergency stop on any other input channel. That is a safety defect, not a
+design preference, which is why the exemption is stated in the protocol rather
+than left to the implementation.
 
 ---
 
@@ -320,28 +320,7 @@ them is ever fatal.
 non-selected channels are still received and counted, then dropped before the
 controller.
 
-**The fuzzer's success criterion** ([`TASKS.md`](../TASKS.md) §10): under
-truncated lines, 10 kB lines, NUL bytes, binary noise, `NaN`, `1e300`, half a
-frame followed by a reset and stale replays — these counters increase, `up`
-never resets, and the gimbal never moves.
-
----
-
-## 6. Phase 1 — MQTT
-
-The config and telemetry classes move to MQTT unchanged: the same JSON objects
-become the payloads, and the `*XX` suffix is dropped because MQTT over TCP already
-carries its own integrity check.
-
-| Topic | Payload | Retained |
-|---|---|---|
-| `lasergimbal/aim/config/set` | `cfg.set` object | **No** |
-| `lasergimbal/aim/config/state` | `cfg.state` object | Yes, re-published on reconnect |
-| `lasergimbal/aim/telemetry` | `tlm` object | No |
-| `lasergimbal/aim/events` | `evt` object | No |
-| `lasergimbal/aim/status` | Last Will | Yes |
-
-**`config/set` must be non-retained.** A retained `set` is replayed by the broker
-on every reconnect, which would silently overwrite whatever the operator last
-chose with the `MODE` button. `config/state` is retained precisely because it
-describes what *is*, not what was once asked for.
+**The fuzzer's success criterion:** under truncated lines, 10 kB lines, NUL
+bytes, binary noise, `NaN`, `1e300`, half a frame followed by a reset and
+stale replays — these counters increase, `up` never resets, and the gimbal
+never moves.

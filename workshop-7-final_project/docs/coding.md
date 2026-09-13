@@ -79,17 +79,13 @@ Every path runs inside a task from the table in
 - **DO** set a pin's level with `gpio_set_level()` **before** `gpio_config()`
   makes it an output. `gpio_config()` enables the output first, which briefly
   drives the reset-state level — on the laser gate that lights the beam.
-- **DON'T** use ADC2 anywhere. It is unusable while WiFi is on, and WiFi arrives
-  in Phase 1.
+- **DON'T** use ADC2 anywhere. It is unusable while WiFi is on.
 
 ## Configuration and secrets
 
 - **DO** put runtime-settable values in the config plane
   ([`architecture.md` §5](./architecture.md#5-configuration-and-storage)), so they
   are validated, persisted to NVS and acknowledged.
-- **DON'T** hardcode WiFi or MQTT credentials. They belong in NVS or in a
-  git-ignored header that is never committed. Broker credentials stay out of
-  [`mqtt/config/`](../mqtt/config) in the repository.
 
 ## Build
 

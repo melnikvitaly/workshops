@@ -5,8 +5,7 @@ tasks are structured, how the nodes talk, and the contracts that the control,
 storage and safety paths hold to.
 
 The project plan — phases, hardware deliverables, repository layout and the demo —
-is in [`../README.md`](../README.md); the phased checklist is in
-[`../TASKS.md`](../TASKS.md).
+is in [`../README.md`](../README.md).
 
 **Contents**
 
@@ -24,20 +23,15 @@ is in [`../README.md`](../README.md); the phased checklist is in
 
 Each node has a **role name** that does not mention its silicon, so a node can be
 re-hosted on different hardware without a rename cascade. The role table and the
-namespace mapping are in [`../README.md`](../README.md#2-nodes).
+namespace mapping are in [`nodes.md`](./nodes.md).
 
 ### EYE — vision and operator console *(PC)*
 
 - Detects the red laser dot and the black target dot, computes the error vector.
-- Detection methods are encapsulated behind one interface:
-  - **method 1 (Phase 0)** — OpenCV threshold + shape gate
-  - **method 2 (Phase 2)** — CSRT tracker. Note this needs `opencv-contrib-python`
-    (`cv2.TrackerCSRT_create()`), not the plain `opencv-python`; and it is a
-    *tracker*, so it needs an initial box and periodic re-detection to correct drift.
-- Streams the error vector to `AIM` over **UART1** — the only link in Phase 0.
+- Detection is encapsulated behind one interface: OpenCV threshold + shape gate.
+- Streams the error vector to `AIM` over **UART1** — the only link.
 - Hosts the operator UI: gain presets, nudge, telemetry graph, fire button, and the
-  NDJSON configuration lines that select the input channel. The Mosquitto broker
-  arrives with the Phase 1 config plane.
+  NDJSON configuration lines that select the input channel.
 - A separate script drives the gimbal manually from the mouse.
 
 ### AIM — gimbal controller *(ESP32-S3; the core of the project)*
@@ -46,41 +40,8 @@ namespace mapping are in [`../README.md`](../README.md#2-nodes).
 - Owns the **SD card** over SPI, and owns **timestamps** for every record.
 - Renders state on a 0.96" I²C OLED: error, gains, aiming status, active input
   channel, link and storage health, CPU load.
-- Publishes telemetry over WiFi/MQTT *(Phase 1)* — **only when enabled in
-  configuration**. In Phase 0 telemetry rides the same UART1 NDJSON channel.
+- Telemetry rides the UART1 NDJSON channel.
 - Accepts commands from exactly one input channel at a time (§4).
-
-### PILOT — wireless remote *(ESP32-C3; Phase 1)*
-
-- 2-axis analog joystick controls gimbal velocity.
-- **ESP-NOW** to `AIM` (primary). BLE and NRF24 are alternatives behind the same
-  transport interface, Phase 1/2.
-- Battery powered with real **deep sleep**: auto-sleep after inactivity, wake on the
-  joystick button GPIO, counters preserved in RTC memory.
-- Carries a **remote emergency stop** button. In Phase 0 the E-stop is the local
-  button on the `AIM` board, which works with no radio at all — so deferring `PILOT`
-  costs no safety, only convenience.
-
-### VAULT — storage node *(STM32; Phase 1)*
-
-Deliberately the thinnest node in the system: it owns the medium and nothing else.
-
-- **SPI master on both of its buses** — master to the SD card, and **master on the
-  link to `AIM`, which is the SPI slave.** `VAULT` pulls records; it is not fed them.
-- **No parsing, no timestamps, no state.** Records arrive fully formed and are
-  written verbatim.
-- FatFs and the segment-rotation scheme move here from `AIM` unchanged — both
-  nodes gain rotation in Phase 1, so there is one scheme, not two.
-- Reports card present / free space / write errors / current segment back to `AIM`.
-- `IWDG`, refreshed only while the card and the link are both healthy.
-
-**Why `VAULT` is the master.** Storage timing belongs to the node that owns the
-card. As master it fetches when it is ready to write — after a `f_sync`, between
-block writes — instead of being interrupted mid-write by a master that has no idea
-what the card is doing. `AIM` never blocks on storage and never has to model
-`VAULT`'s state, which is what "storage medium only" was supposed to mean. It also
-keeps both SPI buses in one head: the same node clocks the card and the link, so
-there is one place where SPI timing is reasoned about.
 
 ---
 
@@ -93,9 +54,7 @@ there is one place where SPI timing is reasoned about.
 | `ctrl` | 1 | high | 20 ms, `vTaskDelayUntil` | PIDs, gimbal, servo PWM | reads `cmd_q`, writes `log_q` |
 | `safety` | 1 | realtime | blocks on notify | E-stop, laser interlock, WDT arbiter | ISR → task notification |
 | `link_uart` | 0 | normal | event | UART1 RX/TX, framing | writes `cmd_q` |
-| `link_net` *(Phase 1)* | 0 | normal | event | WiFi, MQTT, config plane | writes `cmd_q`, reads `tlm_q` |
-| `radio` *(Phase 1)* | 0 | normal | event | ESP-NOW from the joystick | writes `cmd_q` |
-| `logger` | 0 | **low** | drains `log_q` | SD card, FatFs (rotation: Phase 1) | reads `log_q` |
+| `logger` | 0 | **low** | drains `log_q` | SD card, FatFs | reads `log_q` |
 | `ui` | 0 | low | 100 ms | OLED render | reads shared state under mutex |
 
 Rules that make this structure work, and that the write-up must state explicitly:
@@ -156,8 +115,8 @@ Every transition is logged with its trigger — an `evt` line on the link, an
 `DISARMED`.
 
 **`PARKED`, not deep sleep, is `AIM`'s idle mode**: servos detached, laser off,
-display dimmed, WiFi modem-sleep. The ESP32-S3 cannot deep sleep while holding servo
-position with PWM. Real deep sleep is `PILOT`'s job.
+display dimmed. The ESP32-S3 cannot deep sleep while holding servo position with
+PWM.
 
 ---
 
@@ -166,12 +125,9 @@ position with PWM. Real deep sleep is `PILOT`'s job.
 | Link | Interface | Role | Why | On failure |
 |------|-----------|------|-----|------------|
 | `EYE` (PC) ⟷ `AIM` (ESP32-S3), control | **UART1**, 115200 8N1 | duplex | Lowest latency; dead time sets the gain ceiling | 300 ms without a valid frame → `LINK_LOST`, axes stop, PIDs reset |
-| `EYE` ⟷ `AIM`, config + telemetry | **UART1** NDJSON, same wire as the control path | duplex | Phase 0 needs no second transport: one link, one failure mode, nothing to reconcile on reconnect | Same 300 ms staleness rule; config state re-sent on the next valid frame |
-| `EYE` ⟷ `AIM`, config + telemetry *(Phase 1)* | **MQTT** over WiFi | duplex | Off-loads the config plane and telemetry from the control link; broker on `EYE` | Backoff reconnect; MQTT Last Will announces the drop |
-| `PILOT` (ESP32-C3) ⟷ `AIM` *(Phase 1)* | **ESP-NOW** | duplex | Both ends are Espressif; no pairing, no broker, coexists with WiFi | Staleness timeout → `LINK_LOST` if it is the selected channel |
+| `EYE` ⟷ `AIM`, config + telemetry | **UART1** NDJSON, same wire as the control path | duplex | One link, one failure mode, nothing to reconcile on reconnect | Same 300 ms staleness rule; config state re-sent on the next valid frame |
 | `AIM` ⟷ SD card | **SPI** master | write | Phase 0 storage | Four named conditions, §5 |
 | `AIM` ⟷ OLED | **I²C** 400 kHz | write | Only device on the bus | Log once, disable `ui`, **keep controlling** |
-| `AIM` ⟷ `VAULT` (STM32) *(Phase 1)* | **SPI**, **`VAULT` master**, `AIM` slave | records out + status back | Fixed-size opaque records, DMA both ends. `AIM` raises `DRDY`; `VAULT` clocks when it is ready to write | Sequence + CRC, error counters, resync on framing loss. `AIM` flags `vault.link_lost` if no transaction completes within N ms |
 
 **UART0 is console only.** The data link moved to UART1 on spare GPIOs via a
 USB-TTL adapter, because sharing the port with log output is a known hazard —
@@ -185,7 +141,7 @@ Split by traffic class:
 | Class | Path | Format |
 |-------|------|--------|
 | Control (error vector, at frame rate) | UART1 | compact ASCII — `E <dx> <dy> <valid>` |
-| Config, commands, telemetry | UART1 (MQTT in Phase 1) | **NDJSON**, one object per line |
+| Config, commands, telemetry | UART1 | **NDJSON**, one object per line |
 
 The framing contract, which is required in writing:
 
@@ -197,46 +153,17 @@ The framing contract, which is required in writing:
 - Counters (`bad_crc`, `overlong`, `unparsed`, `out_of_range`) exposed in telemetry
   and on the OLED.
 
-### The `AIM` ⟷ `VAULT` link *(Phase 1)*
-
-`VAULT` is the master and `AIM` the slave, which inverts the usual "controller
-commands peripheral" reflex. Four consequences, all of which have to be designed
-rather than discovered:
-
-- **`DRDY`, a GPIO from `AIM` to `VAULT`.** A master with nothing to poll polls
-  anyway; a data-ready line turns that into an edge. `VAULT` clocks a frame when
-  `DRDY` is asserted *and* the card is ready for it.
-- **`AIM` must always have a transaction queued.** An ESP32 SPI slave that is
-  clocked with no buffer queued returns garbage, so `AIM` keeps two DMA buffers
-  queued at all times and refills on completion. Slave DMA buffers are 4-byte
-  aligned and a multiple of 4 bytes long.
-- **Full duplex earns its keep.** One fixed-size frame carries a record out on MISO
-  and `VAULT`'s status word back on MOSI in the same transaction — the status path
-  that used to need its own exchange is free.
-- **Liveness inverts too.** A master notices a dead slave immediately; a slave
-  notices nothing, because silence and idle look identical. `AIM` therefore runs a
-  timeout — no completed transaction within N ms while `DRDY` is asserted raises
-  `vault.link_lost`, and the log falls back to `AIM`'s own card.
-
-Clock rate is set by the ESP32 slave side, not the STM32: slave mode tolerates far
-less than master mode, so the link starts conservative and is measured before it is
-raised. The two buses stay separate — `VAULT` could clock the card and `AIM` on one
-bus with two chip selects, but sharing a bus with an SD card to save three pins on a
-board that is not pin-constrained is not a trade worth making.
-
 ---
 
 ## 4. Input channels
 
 **Exactly one channel is processed at a time.** Selection is a configuration value,
-normally set by an NDJSON configuration line from `EYE` over UART1 (by MQTT as well,
-once Phase 1 adds it).
+normally set by an NDJSON configuration line from `EYE` over UART1.
 
 | `input.channel` | Source | Accepted when |
 |---|---|---|
 | `AUTO` | Error vector from `EYE`'s (PC) vision pipeline | `ARMED`, source fresh |
 | `MANUAL` | Mouse-driven velocity from `EYE`'s manual script | `ARMED`, source fresh |
-| `PILOT` *(Phase 1)* | ESP-NOW frames from `PILOT` (ESP32-C3) | `ARMED`, source fresh |
 | `NONE` | — | Motion commands ignored entirely |
 
 - Selection is **validated, applied, persisted to NVS and acknowledged** on the
@@ -254,12 +181,12 @@ once Phase 1 adds it).
 
 Selection normally arrives from `EYE` over the link, which means that with the link
 down the node cannot be re-tasked at all — a single point of failure in the config
-plane, not in the control loop — and in Phase 1 the same argument covers a dead
-broker. A **momentary `MODE` button on the `AIM` board** removes it.
+plane, not in the control loop. A **momentary `MODE` button on the `AIM` board**
+removes it.
 
 | Gesture | Effect |
 |---|---|
-| Short press | Advance to the next channel: `NONE → AUTO → MANUAL → NONE` (`PILOT` joins the cycle in Phase 1) |
+| Short press | Advance to the next channel: `NONE → AUTO → MANUAL → NONE` |
 | Long press ≥ 1 s | Jump straight to `NONE` — cut all motion input without touching the E-stop latch |
 
 - **The button does not write configuration.** It posts the same
@@ -275,10 +202,7 @@ broker. A **momentary `MODE` button on the `AIM` board** removes it.
 - **Selecting is not arming.** Motion still requires `ARMED` and a fresh source, and
   the handover reset zeroes velocity, so the button is safe to press in any state.
 - **Precedence is last-writer-wins**, and NVS keeps whichever came last. `EYE` is
-  told what the button did on the next valid frame. *(Phase 1, once MQTT carries
-  the config plane: `.../config/set` must be published **non-retained**, or a
-  returning broker replays a stale channel over the operator's local choice, while
-  `.../config/state` stays retained and is re-published on reconnect.)*
+  told what the button did on the next valid frame.
 - **Feedback has to be local**, since the case this exists for is the link being
   down: the OLED shows the new channel immediately, the status LED blinks its
   ordinal, and the change appears in the transition log and the SD `channel` column.
@@ -293,9 +217,6 @@ regardless of `input.channel`. It is handled by the realtime `safety` task and
 latches `FAULT`; recovery needs an explicit operator acknowledgement. The local
 button on the `AIM` board does the same over a wire and works with no radio at all.
 
-Routing E-stop through channel selection would mean that selecting `AUTO`
-disables `PILOT`'s emergency stop — a safety defect, not a design preference.
-
 ---
 
 ## 5. Configuration and storage
@@ -307,32 +228,30 @@ One versioned, flat key space rather than ad-hoc settings:
 ```text
 input.channel                    pid.pan.{kp,ki,kd}      pid.tilt.{kp,ki,kd}
 zone.{pan,tilt}.{min,max}        laser.brightness        telemetry.rate_hz
-log.sd.enabled                   telemetry.wifi.enabled  telemetry.ble.enabled
+log.sd.enabled
 ```
 
-- **Precedence:** compiled defaults → NVS → runtime message (NDJSON over UART1;
-  MQTT `.../config/set` joins it in Phase 1).
+- **Precedence:** compiled defaults → NVS → runtime message (NDJSON over UART1).
 - Every write validated, applied, persisted and **acknowledged** on the config-state
-  channel (`.../config/state` once MQTT lands); rejections carry a reason.
+  channel; rejections carry a reason.
 - A **schema version** in NVS, so a stale blob is rejected rather than misread.
 - `factory reset` command.
 - **Defaults are the safe ones:** transmission off, logging on, `input.channel = NONE`,
   laser off.
 
 **Storage and transmission are independent switches.** Turning telemetry off
-does not stop recording to the card — otherwise a demo with WiFi disabled silently
-stops producing the evidence the soak test depends on.
+does not stop recording to the card — otherwise a demo with telemetry disabled
+silently stops producing the evidence the soak test depends on.
 
 ### SD card logging
 
-One append-only file in Phase 0; rolling segments in Phase 1.
+One append-only file.
 
 **Layout.** A single append-only `LOG.CSV`, opened at boot and appended to for the
 life of the run, with a **`BOOT` marker record** as its first line. When the card
-fills, `sd.full` is raised and logging stops — the control loop does not. Rotation
-buys nothing in Phase 0: a card outlasts any demo or soak run several times over,
-and *card full* is one of the four failure conditions that has to be demonstrated
-anyway. It is designed and deferred rather than skipped — see below.
+fills, `sd.full` is raised and logging stops — the control loop does not. A card
+outlasts any demo or soak run several times over, and *card full* is one of the
+four failure conditions that has to be demonstrated anyway.
 
 **Write path.** `ctrl` and the link tasks push records to `log_q`; `logger` drains,
 batches into a 4–8 KB buffer aligned to the card's block size, and writes whole
@@ -353,35 +272,15 @@ over raw NOR flash.
 **Timestamps** are owned by `AIM`. **Phase 0 has no wall clock at all** — records
 carry monotonic microseconds since boot, and `t_wall_iso` is written **empty**. An
 empty field is the honest encoding: a placeholder epoch such as `1970-01-01` looks
-like a valid time to every reader that will ever open the file. The column stays in
-the schema so Phase 1 changes no record format — the readers, the plots and the
-`VAULT` handover all keep working.
+like a valid time to every reader that will ever open the file.
 
 One thing replaces the clock, and it costs nothing:
 
 - **The `BOOT` marker record.** Monotonic time restarts at zero on reset, so without
   a marker a reader cannot tell a reboot from a backwards jump in `seq`. The marker
   carries the reset reason and `t_mono_us = 0`, and `EYE` — which has a real clock —
-  notes its arrival in its own log. One line per session converts an entire Phase 0
-  log to wall time offline, including alignment against the demo video.
-
-**Phase 1 adds rotation**, and it is the same design deferred rather than dropped:
-`N` pre-created fixed-size segments `LOG0000.CSV … LOG00NN.CSV` plus `INDEX.TXT`,
-**overwritten in place** (`f_lseek` + `f_write`) rather than deleted and recreated —
-which avoids FAT churn and the power-loss window that comes with it — with a
-sequence number in each segment header and a **`boot_id`** counter in NVS, so
-`(boot_id, seq)` orders segments across both a wrap and a reboot.
-
-**Phase 1 adds the clock: SNTP as the source, `EYE` set-time over NDJSON as the
-offline fallback.** WiFi is already up, so SNTP costs no BOM and no bus. A DS3231
-was considered and declined: it adds a part, a coin cell and a second device on the
-OLED's I²C bus, and the only thing it buys over SNTP is time across a power cycle
-with no network — which `boot_id` plus the `BOOT` marker already covers.
-
-When the clock arrives mid-run, **past records are not rewritten and monotonic time
-is never stepped**. `AIM` emits a `TIMESET` event record carrying `t_mono_us` and the
-acquired wall time, which anchors the whole session retroactively, and fills
-`t_wall_iso` from that point on.
+  notes its arrival in its own log. One line per session converts an entire log to
+  wall time offline, including alignment against the demo video.
 
 **Failure handling.** Four named, tested conditions — *no card*, *card removed while
 running*, *card full*, *write error*. Each logs once, raises an OLED status flag,
@@ -397,7 +296,6 @@ the active channels — not just internal state:
 sd.present      sd.mounted            sd.full            sd.free_bytes
 sd.write_errors sd.dropped_records    sd.queue_depth     sd.sync_count
 sd.write_bytes_per_s   sd.write_max_latency_us   sd.write_p95_latency_us
-(sd.segment: Phase 1)
 ```
 
 Two things this buys beyond visibility:
@@ -408,14 +306,12 @@ Two things this buys beyond visibility:
 - **Continuous critical-section timing.** These are live measurements of a real
   critical path, which is stronger evidence than a one-off figure in a document.
 
-**DMA.** With `PILOT` in Phase 1, the SD path is the only DMA candidate left in
-Phase 0. ESP-IDF's `sdspi` driver takes a DMA channel when the SPI bus is
-initialised with `spi_bus_initialize(..., SPI_DMA_CH_AUTO)`. **Confirmed on the
-version in use** — ESP-IDF 6.0.1 (`framework-espidf` 4.60001.0): the bus gets an
-auto-assigned channel and the `sdspi` device inherits it, so every block write is
-DMA-backed. `Sdcard::mount()` logs the fact at boot. Requirement 6.2 rests on
-this now that `PILOT` is Phase 1; `PILOT`'s `adc_continuous` is the Phase 1
-backstop.
+**DMA.** The SD path is the only DMA candidate in Phase 0. ESP-IDF's `sdspi`
+driver takes a DMA channel when the SPI bus is initialised with
+`spi_bus_initialize(..., SPI_DMA_CH_AUTO)`. **Confirmed on the version in use**
+— ESP-IDF 6.0.1 (`framework-espidf` 4.60001.0): the bus gets an auto-assigned
+channel and the `sdspi` device inherits it, so every block write is DMA-backed.
+`Sdcard::mount()` logs the fact at boot. Requirement 6.2 rests on this.
 
 ---
 
@@ -464,8 +360,6 @@ it off a 4-second trace is much cheaper than discovering it as a runaway.
 
 ## 7. Safety
 
-Split across phases: the **firmware** half is Phase 0, the **hardware** half Phase 1.
-
 A relay-driven laser has a power-on defect that lights the beam without being asked:
 the relay GPIO floats from power-on until `Relay::init()` runs and the active-low
 module reads it as ON; and `gpio_config()` enables the output before `off()` writes
@@ -475,14 +369,6 @@ a level, so the pin is briefly driven into the energised state.
 as an output, and an internal pull-up so the pre-`init()` window rests off. About
 five lines, and it removes the code-side path entirely.
 
-**Phase 1 closes the hardware half.** An external pull-up on the driver input is the
-only fix that covers the window from power-on through the bootloader, since nothing
-in firmware is running yet. Replacing the relay with a MOSFET low-side switch is
-worth doing in the same pass: a mechanical relay cannot be dimmed, so the MOSFET both
-cures the glitch and enables PWM brightness — which lets the beam run at the lowest
-level the camera can still see. That is safer *and* it fixes the detection
-blooming that a beam stuck at full brightness causes.
-
-The interlock, in both phases: the beam may be lit only when **all** of — state is `ARMED`,
+The interlock: the beam may be lit only when **all** of — state is `ARMED`,
 link fresh, WDT healthy, no E-stop latch, beam requested — hold. One
 `bool laserPermitted()` in the `safety` task, with the reason for any denial logged.

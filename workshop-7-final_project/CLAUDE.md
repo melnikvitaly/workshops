@@ -34,6 +34,7 @@ workshop-7-final_project/
 ```
 
 **Isolation rules:**
+- `TASKS.md` MUST NOT be referenced from other files.
 - `REVIEW.md` MUST NOT be referenced from other files.
 - `VERIFICATION/` MUST NOT be referenced by other parts of project.
 
@@ -52,6 +53,6 @@ workshop-7-final_project/
 
 ## Done
 
-- docs updated
-- coding.md tolerated
+- docs updated and correctly reflects how codebase works
+- coding.md was tolerated in changes
 - always check using `markdownlint-cli2` all generated md files

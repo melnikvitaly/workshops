@@ -11,6 +11,23 @@ Nodes: **EYE** (PC) · **AIM** (ESP32-S3) · **PILOT** (ESP32-C3) · **VAULT** (
 
 ---
 
+## Phases
+
+The project is built in three phases with a hard cut line. **Phase 0 is the
+graded project**; nothing from Phase 1 opens until Phase 0 demonstrates
+end-to-end.
+
+| Phase | Nodes | Contents |
+|-------|-------|----------|
+| **0 — graded** | EYE (PC), AIM (ESP32-S3) | Tracking loop on FreeRTOS, FSM, SD logging with health telemetry, **UART1 as the only link** — control *and* config plane, performance instrumentation, documentation, the `AIM` schematic, **`AIM` board layout and reliability work (last tasks)** |
+| **1 — after Phase 0 demos** | + PILOT (ESP32-C3), + VAULT (STM32) | **`PILOT` firmware, schematic and board layout (first)**, MQTT config plane and WiFi telemetry, log rotation, MOSFET laser driver, `VAULT` storage node, fault-injection console, BLE telemetry, CSRT |
+| **2 — cut without regret** | — | NRF24L01+, on-camera YOLO, target-velocity feed-forward, joystick OLED, PWM laser brightness |
+
+Firmware comes first, board layout and hardening last (the watchdog is the
+exception, landing early); `AIM` plays the `VAULT` role itself in Phase 0.
+
+---
+
 ## Phase 0 — the graded project
 
 Nodes: `EYE` + `AIM`. Ends on a fixed date (**still unset — decide this first**).

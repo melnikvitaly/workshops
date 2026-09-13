@@ -3,8 +3,8 @@
 
 // The link seam. Phase 0 has one implementation, UartTransport on UART1;
 // MqttTransport and EspNowTransport drop in behind this in Phase 1
-// (docs/architecture.md §3, TASKS.md task #3). Line-oriented: one frame per
-// line, terminator handled by the implementation.
+// (docs/architecture.md §3). Line-oriented: one frame per line, terminator
+// handled by the implementation.
 class ITransport
 {
 public:
