@@ -282,7 +282,7 @@ def main():
     ap.add_argument("--rotate", type=int, default=0, choices=[0, 90, 180, 270],
                     help="rotate the DISPLAY N degrees CCW (detection unaffected)")
 
-    # --- serial link to the ESP32 (docs/uart-protocol.md) ---
+    # --- serial link to the ESP32 ---
     ap.add_argument("--port", default=None, nargs="?", const="auto",
                     help="COM port of the ESP32-S3, e.g. COM5. Bare --port (or "
                          "--port auto) finds the board by USB VID/PID. Omitted "

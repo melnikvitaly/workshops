@@ -14,9 +14,8 @@ Uplink (ESP32 -> PC), interleaved with ordinary console logging:
     G pan ... tilt ... armed  gains report                -> parse_gains
     T ex:.. ey:.. st:.. arr:. telemetry sample; arr:1 = arrival -> parse_telemetry
 
-The full contract is docs/uart-protocol.md; the receiving end is
-src/inputs/ErrorVectorInput.hpp. The parts of the contract this module is
-responsible for:
+The receiving end is src/inputs/ErrorVectorInput.hpp. The parts of the
+contract this module is responsible for:
 
   * PC -> ESP32 only. We never wait for a reply.
   * The firmware console shares this UART, so log lines, boot banners and the
@@ -27,7 +26,7 @@ responsible for:
     300 ms link timeout and resets the PIDs.
   * Never send NaN/Inf: a non-finite value is downgraded to valid=0.
 
-Standalone, for the bring-up checklist in docs/uart-protocol.md (no camera):
+Standalone, for bring-up (no camera):
 
     py -3 serial_link.py --port COM5 --dx 0.2   # constant pan error
     py -3 serial_link.py --sweep                # slow pan/tilt sweep
@@ -35,7 +34,7 @@ Standalone, for the bring-up checklist in docs/uart-protocol.md (no camera):
     py -3 serial_link.py --list                 # what's plugged in
     py -3 serial_link.py --monitor              # listen only, send nothing
 
-And the tuning console of docs/pid-experiments.md:
+And the tuning console:
 
     py -3 serial_link.py --query                     # Q
     py -3 serial_link.py --gains b 40 4 0            # K b 40 4 0
@@ -234,7 +233,7 @@ class ErrorLink:
         self._write("F\n")
         self._drain()
 
-    # --- tuning console (docs/pid-experiments.md) ----------------------------
+    # --- tuning console --------------------------------------------------------
     # One-shot commands, never rate limited: unlike an E frame, none of them is
     # a measurement that a later one supersedes.
 
@@ -445,7 +444,7 @@ def _main():
                     help="only listen: print what the ESP32 says, send nothing")
     ap.add_argument("--echo", action="store_true", help="print firmware logs")
 
-    # --- tuning console, see docs/pid-experiments.md ---
+    # --- tuning console ---
     ap.add_argument("--query", action="store_true",
                     help="Q: print the current gains and arm state, then exit")
     ap.add_argument("--gains", nargs=4, metavar=("AXIS", "KP", "KI", "KD"),

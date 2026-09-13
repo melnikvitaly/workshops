@@ -1,6 +1,6 @@
 CONFIG_FREERTOS_HZ=1000
 
-# Static allocation discipline (docs/coding.md "Memory"): every task and queue is
+# Static allocation discipline: every task and queue is
 # created with xTaskCreateStatic / xQueueCreateStatic.
 CONFIG_FREERTOS_SUPPORT_STATIC_ALLOCATION=y
 

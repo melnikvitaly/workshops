@@ -19,7 +19,7 @@
 #include "Protocol.hpp"
 #include "Ndjson.hpp"
 
-// The link_uart task (docs/architecture.md §2, docs/protocol.md). Reads the EYE
+// The link_uart task. Reads the EYE
 // link, tells the two traffic classes apart by the first byte, produces cmd_q
 // items, runs the config-plane acknowledge path, and emits tlm/evt/G lines.
 //
@@ -99,7 +99,7 @@ private:
         }
 
         // fault.ack is an action, not stored config - it runs the same one path
-        // as the CONTROL button (docs/protocol.md §4).
+        // as the CONTROL button.
         if (!std::strcmp(key, "fault.ack"))
         {
             postAction(CmdKind::FaultAck, nowMs());
@@ -223,8 +223,8 @@ private:
 
     void applyGains(const protocol::Frame &f)
     {
-        // K persists through the one config path (docs/architecture.md §6);
-        // ctrl picks the new gains up on its next snapshot, no integrator reset.
+        // K persists through the one config path; ctrl picks the new gains up
+        // on its next snapshot, no integrator reset.
         if (f.axis != protocol::Axis::Tilt)
         {
             _ipc.config->set("pid.pan.kp", ConfigStore::Value::number(f.kp));
@@ -315,7 +315,7 @@ private:
         }
 
         // tlm.sys (framing counters) and tlm.sd (storage health) both ride a
-        // fixed 1 Hz, independent of telemetry.rate_hz (docs/protocol.md §3.4).
+        // fixed 1 Hz, independent of telemetry.rate_hz.
         if (_lastSysMs == 0 || now - _lastSysMs >= SYS_PERIOD_MS)
         {
             _lastSysMs = now;

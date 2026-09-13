@@ -25,9 +25,9 @@
 #include "tasks/Logger.hpp"
 #include "tasks/Ui.hpp"
 
-// AIM entry point (docs/architecture.md §2). Everything is statically allocated:
+// AIM entry point. Everything is statically allocated:
 // no heap request happens after this function returns, and a failed one before
-// then is caught by the hooks below (docs/coding.md "Memory").
+// then is caught by the hooks below.
 
 static const char *TAG = "AIM";
 

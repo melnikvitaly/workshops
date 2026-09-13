@@ -3,7 +3,7 @@
 #include "Point.hpp"
 
 // cmd_q item - one queue, tagged union, many producers (link_uart, ui) and one
-// consumer (ctrl). Producers never see each other (docs/architecture.md §2).
+// consumer (ctrl). Producers never see each other.
 // Fixed-width fields only: copied by value through a FreeRTOS queue.
 //
 // Live gains, telemetry on/off, channel selection and the `Q` reply are NOT

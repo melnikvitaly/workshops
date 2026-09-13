@@ -9,7 +9,7 @@
 #include <freertos/semphr.h>
 #include "Config.hpp"
 
-// The configuration plane (docs/architecture.md §5, docs/protocol.md §3.3).
+// The configuration plane.
 //
 // One versioned, flat key space. Precedence: compiled defaults -> NVS -> runtime
 // set(). Every write runs the one path: validate -> apply -> persist -> the
@@ -40,7 +40,7 @@ public:
         }
     };
 
-    // err is nullptr on success, otherwise one of the docs/protocol.md §3.3
+    // err is nullptr on success, otherwise one of the following
     // reasons: "range", "type", "unknown_key", "readonly", "nvs_write", "schema".
     struct Result
     {

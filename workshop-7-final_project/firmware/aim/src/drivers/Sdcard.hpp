@@ -9,7 +9,7 @@
 #include "Pinout.hpp"
 #include "Config.hpp"
 
-// micro-SD over SPI2 / FSPI (docs/interfaces.md §4). This class owns both the
+// micro-SD over SPI2 / FSPI. This class owns both the
 // SPI bus and the FAT mount - SPI2 carries nothing else in Phase 0.
 //
 // Nothing here calls ESP_ERROR_CHECK: a mount or write failure is one of the
@@ -53,7 +53,7 @@ public:
 
         esp_vfs_fat_mount_config_t mountCfg = {};
         mountCfg.format_if_mount_failed = false;
-        mountCfg.max_files              = 2; // docs/interfaces.md §4
+        mountCfg.max_files              = 2;
         mountCfg.allocation_unit_size   = 16 * 1024;
 
         const esp_err_t e =

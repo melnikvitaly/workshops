@@ -28,14 +28,14 @@
 #include "Pid.hpp"
 #include "ZoneTour.hpp"
 
-// The ctrl task (docs/architecture.md §2, §6). Owns the PIDs, the gimbal and the
+// The ctrl task. Owns the PIDs, the gimbal and the
 // laser gate; the single consumer of cmd_q; the sole owner of the FSM. Runs a
 // hard 20 ms step with vTaskDelayUntil.
 //
-// The control behaviour is the workshop-5 closed loop moved intact (REVIEW.md
-// R-21): per-axis PID on the camera error, deadzone hold, the 300 ms link
-// failsafe that drops the integral, the boot zone tour, and live K-gain retune
-// without an integrator reset.
+// The control behaviour is the workshop-5 closed loop moved intact: per-axis
+// PID on the camera error, deadzone hold, the 300 ms link failsafe that drops
+// the integral, the boot zone tour, and live K-gain retune without an
+// integrator reset.
 class CtrlTask
 {
 public:
@@ -159,7 +159,7 @@ private:
         if (ch != _lastChannel)
         {
             // The handover reset - identical whether the change came from an
-            // NDJSON cfg.set or the MODE button (docs/architecture.md §4).
+            // NDJSON cfg.set or the MODE button.
             _panPid.reset();
             _tiltPid.reset();
             _gimbal.setVelocity({0.0f, 0.0f});
@@ -205,7 +205,7 @@ private:
                 if (_targetVisible)
                 {
                     // Sign correction is the mounting, not the wire: it says how
-                    // the camera sits relative to the gimbal (docs/coding.md).
+                    // the camera sits relative to the gimbal.
                     _error = {config::PAN_INVERT ? -c.vec.x : c.vec.x,
                               config::TILT_INVERT ? -c.vec.y : c.vec.y};
                     _lastValidFrameMs = now;

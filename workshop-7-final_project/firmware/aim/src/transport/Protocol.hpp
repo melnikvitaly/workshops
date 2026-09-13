@@ -2,9 +2,9 @@
 #include <cstdlib>
 #include <cmath>
 
-// Control-path ASCII grammar over the EYE link. One frame per line
-// (docs/protocol.md §2). NDJSON config/telemetry lines start with '{' and are
-// handled by Ndjson.hpp instead.
+// Control-path ASCII grammar over the EYE link. One frame per line.
+// NDJSON config/telemetry lines start with '{' and are handled by Ndjson.hpp
+// instead.
 //
 // Downlink (EYE -> AIM):
 //     E <dx> <dy> <valid>          tracking error, streamed          (AUTO channel)
@@ -18,17 +18,17 @@
 // Uplink (AIM -> EYE):
 //     G pan ... tilt ... armed ...   gains report (reply to K or Q)
 //
-// A rejected line is discarded whole - no partial application (§2.2). `reject`
+// A rejected line is discarded whole - no partial application. `reject`
 // says why, so the caller can count it: `Range` -> `out_of_range` (a field
-// failed §2.3, NaN/inf included), anything else -> `unparsed`.
+// failed a bounds check, NaN/inf included), anything else -> `unparsed`.
 //
 // Deliberately free of hardware, FreeRTOS and config dependencies.
 namespace protocol
 {
-    // The protocol line cap is 256 bytes (docs/protocol.md §3.1).
+    // The protocol line cap is 256 bytes.
     constexpr int MAX_LINE = 256;
 
-    // §2.3 bounds.
+    // Field bounds.
     constexpr float ERR_LIMIT    = 1.0f;
     constexpr float GAIN_MIN     = 0.0f;
     constexpr float GAIN_MAX     = 1000.0f;
@@ -77,9 +77,9 @@ namespace protocol
             return p;
         }
 
-        // Read `count` numbers into dst. `Range` if a token is NaN/inf (§2.3
-        // rejects those explicitly, before any bounds test); `Malformed` if a
-        // token is missing or not a number.
+        // Read `count` numbers into dst. `Range` if a token is NaN/inf (rejected
+        // explicitly, before any bounds test); `Malformed` if a token is
+        // missing or not a number.
         inline Reject readFloats(const char *&p, float *dst, int count)
         {
             for (int i = 0; i < count; ++i)

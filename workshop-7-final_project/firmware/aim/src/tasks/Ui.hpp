@@ -19,7 +19,7 @@
 #include "StatusLed.hpp"
 #include "Ssd1306.hpp"
 
-// The ui task (docs/architecture.md §2, §4). Owns the OLED, the status LED and
+// The ui task. Owns the OLED, the status LED and
 // the two polled buttons. 50 Hz loop, OLED redrawn every 100 ms.
 //
 //   MODE  short press  -> next channel  NONE -> AUTO -> MANUAL -> NONE

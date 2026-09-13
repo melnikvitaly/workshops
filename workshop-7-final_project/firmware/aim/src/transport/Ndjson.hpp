@@ -7,7 +7,7 @@
 #include <cstdio>
 #include "Crc8.hpp"
 
-// Minimal NDJSON for the config plane (docs/protocol.md §3). Enough to carry
+// Minimal NDJSON for the config plane. Enough to carry
 // cfg.set / cfg.get / cfg.reset / estop in, and cfg.state / evt / tlm out, with
 // the mandatory CRC-8 suffix. The 256-byte cap discard-and-count path and a
 // hardened tokeniser are task #3; this assumes well-formed lines from EYE and
@@ -130,7 +130,7 @@ namespace ndjson
         std::snprintf(line + n, cap - n, "*%02X", crc);
     }
 
-    // Build a sealed cfg.state acknowledgement (docs/protocol.md §3.3). `vLit` is
+    // Build a sealed cfg.state acknowledgement. `vLit` is
     // a JSON value literal - "\"AUTO\"", "40", "true", "null". `key`/`err` may be
     // null. Used by both link_uart (src "uart") and ui (src "button").
     inline void cfgState(char *line, size_t cap, const char *key, const char *vLit,

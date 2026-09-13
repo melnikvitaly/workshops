@@ -16,7 +16,7 @@ public:
 
     void init()
     {
-        // Boot-safe order (docs/interfaces.md §7): drive the inactive level
+        // Boot-safe order: drive the inactive level
         // BEFORE gpio_config() makes the pin an output, and enable the internal
         // pull-up so the pre-init window rests off too. gpio_config() enables
         // the output first, which would otherwise briefly drive the reset-state

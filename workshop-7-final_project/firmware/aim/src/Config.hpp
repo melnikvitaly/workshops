@@ -34,8 +34,8 @@ namespace config
     constexpr ledc_channel_t TILT_PWM_CHANNEL = LEDC_CHANNEL_1;
     constexpr ledc_timer_t TILT_PWM_TIMER = LEDC_TIMER_1;
 
-    // The buzzer/Beeper from workshop-5 is dropped: interfaces.md §1 has no pin
-    // for it, and OLED + status LED are the documented feedback path.
+    // The buzzer/Beeper from workshop-5 is dropped: this board has no pin
+    // for it, and OLED + status LED are the feedback path.
 
     // --- Gimbal travel limits (degrees) --------------------------------------
     // Hard mechanical stops. The gimbal never commands outside these.
@@ -250,7 +250,7 @@ namespace config
     constexpr uint32_t PARK_IDLE_MS = 30000;
 
     // --- ui buttons (MODE, CONTROL) - polled at 50 Hz by the ui task ---------
-    constexpr uint32_t UI_DEBOUNCE_MS  = 30;   // docs/architecture.md §4
+    constexpr uint32_t UI_DEBOUNCE_MS  = 30;
     constexpr uint32_t UI_LONGPRESS_MS = 1000; // MODE long press -> NONE
 
     // --- Task stack sizes (words) ----------------------------------------------
@@ -276,7 +276,7 @@ namespace config
     constexpr int CMD_Q_LEN = 24;
     constexpr int LOG_Q_LEN = 64; // deep, drop-oldest with a counter
 
-    // --- SD logging (docs/architecture.md §5, docs/interfaces.md §4) ---------
+    // --- SD logging ----------------------------------------------------------
     // One append-only LOG.CSV. logger batches whole blocks and f_syncs on a
     // timer - never per record. A card stall can block a single write 100-250 ms,
     // which is why logger is the lowest-priority task and the only long blocker.
@@ -290,7 +290,7 @@ namespace config
     constexpr uint32_t SD_FREE_POLL_MS    = 2000;  // sd.free_bytes refresh
 
     // --- Config plane ------------------------------------------------------
-    // Exactly one input channel is processed at a time (docs/architecture.md §4).
+    // Exactly one input channel is processed at a time.
     enum class Channel : uint8_t { None = 0, Auto = 1, Manual = 2 };
 
     inline const char *channelName(Channel c)
@@ -340,8 +340,7 @@ namespace config
         uint8_t telemetry_ble_enabled;  // 0/1
     };
 
-    // Safe defaults (docs/architecture.md §5): transmission off, logging on,
-    // channel NONE, laser off.
+    // Safe defaults: transmission off, logging on, channel NONE, laser off.
     constexpr ConfigBlob CONFIG_DEFAULTS = {
         /* input_channel          */ (uint8_t)Channel::None,
         /* pid_pan_{kp,ki,kd}     */ PAN_KP, PAN_KI, PAN_KD,
@@ -355,7 +354,7 @@ namespace config
         /* telemetry_ble_enabled  */ 0,
     };
 
-    // Field bounds for validation. Gains per docs/protocol.md §2.3.
+    // Field bounds for validation.
     constexpr float GAIN_MIN = 0.0f;
     constexpr float GAIN_MAX = 1000.0f;
     constexpr uint8_t TELEMETRY_RATE_MIN = 1;

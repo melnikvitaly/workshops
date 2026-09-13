@@ -7,8 +7,7 @@
 #include "StateMachine.hpp"
 
 // Shared handles and cross-task state, created once in app_main and passed to
-// every task by pointer. The table of what crosses a task boundary and what
-// protects it is in docs/architecture.md §2.
+// every task by pointer.
 
 class ITransport;
 class ConfigStore;
@@ -33,12 +32,12 @@ struct Ipc
     std::atomic<EstopSource> estopSource{EstopSource::None};
     std::atomic<bool>        linkFresh{false};            // writer: ctrl
 
-    // --- receiver / drop counters (docs/protocol.md §5) --------------------
+    // --- receiver / drop counters -------------------------------------------
     // Monotonic since boot, never fatal. Exposed in tlm.sys.link and on the OLED.
     std::atomic<uint32_t> badCrc{0};       // NDJSON line with a wrong/missing *XX
     std::atomic<uint32_t> overlong{0};     // line exceeded 256 B, discarded to newline
     std::atomic<uint32_t> unparsed{0};     // unknown tag/type, malformed, wrong field count
-    std::atomic<uint32_t> outOfRange{0};   // a field failed the §2.3 / §3.3 range check
+    std::atomic<uint32_t> outOfRange{0};   // a field failed the range check
     std::atomic<uint32_t> dropInactive{0}; // a valid frame on a non-selected channel
     std::atomic<uint32_t> uartErr{0};      // driver framing error / overrun / break
     std::atomic<uint32_t> logDropped{0};   // log_q drop-oldest
@@ -51,10 +50,9 @@ struct Ipc
     };
     TelemSample telem{};
 
-    // SD health + write performance (docs/architecture.md §5, docs/protocol.md
-    // §3.4 tlm.sd). Single writer (logger), lossy readers (link_uart, ui) - same
-    // no-lock rule as TelemSample. Fixed-width: these cross a queue-free boundary
-    // into a wire message and onto the OLED.
+    // SD health + write performance. Single writer (logger), lossy readers
+    // (link_uart, ui) - same no-lock rule as TelemSample. Fixed-width: these
+    // cross a queue-free boundary into a wire message and onto the OLED.
     struct Sd
     {
         uint8_t  present  = 0; // a mount has succeeded and not since failed

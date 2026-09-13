@@ -17,7 +17,7 @@
 #include "ITransport.hpp"
 #include "Ndjson.hpp"
 
-// The logger task (docs/architecture.md §2, §5). Lowest priority and the only
+// The logger task. Lowest priority and the only
 // task allowed a long block - an SD card doing internal wear-levelling can stall
 // a single write 100-250 ms, which must never land on ctrl.
 //
@@ -229,7 +229,7 @@ private:
     }
 
     // BOOT marker: seq 0, t_mono_us 0, reset reason in the trailing column so a
-    // reader can tell a reboot from a backwards jump in seq (architecture.md §5).
+    // reader can tell a reboot from a backwards jump in seq.
     void writeBootMarker()
     {
         char row[64];
@@ -286,7 +286,7 @@ private:
     }
 
     // One ESP_LOGW + one sealed `evt e:"sd"` line per distinct condition, re-armed
-    // when the condition changes (docs/protocol.md §3.4).
+    // when the condition changes.
     void sdCondition(const char *cond, uint8_t present)
     {
         if (std::strcmp(_lastCond, cond) == 0)

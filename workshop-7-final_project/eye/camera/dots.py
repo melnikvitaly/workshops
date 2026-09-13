@@ -408,8 +408,8 @@ def error_vector(red, target, frame_shape):
 
         error = target - laser_dot
 
-    normalised so +-1.0 spans HALF the frame in that axis, which is exactly what
-    docs/uart-protocol.md specifies. Y keeps the image's native downward
+    normalised so +-1.0 spans HALF the frame in that axis, matching the
+    protocol's error range. Y keeps the image's native downward
     direction; the firmware flips it via TILT_INVERT if the servo needs it.
     Returns (0.0, 0.0, False) unless both dots were seen this frame.
     """

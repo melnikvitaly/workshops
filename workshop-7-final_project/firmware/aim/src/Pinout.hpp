@@ -3,11 +3,10 @@
 #include <driver/gpio.h>
 #include <driver/uart.h>
 
-// Authoritative pin map: docs/interfaces.md §1. That table is the source of
-// truth; this header is its implementation and the two must be kept in step.
+// Pin map for the board.
 //
 // Module: ESP32-S3-WROOM-1, quad-flash / no octal PSRAM (N4 / N8). GPIO33-37
-// are free only on non-octal parts - see docs/interfaces.md §1.2.
+// are free only on non-octal parts.
 namespace pinout
 {
     // --- Servos (LEDC) -----------------------------------------------------
@@ -16,12 +15,12 @@ namespace pinout
 
     // --- Laser gate ------------------------------------------------------------
     // MOSFET gate. Internal pull-up + level-before-config so the pre-init window
-    // rests off (docs/interfaces.md §7). External pull-up is the Phase 1 board fix.
+    // rests off. External pull-up is the Phase 1 board fix.
     constexpr gpio_num_t LASER_GATE = GPIO_NUM_6;
 
     // --- micro-SD on SPI2 / FSPI (IOMUX pins) --------------------------------
     // No card-detect line: the socket has no CD switch, so "removed while
-    // running" is caught on the next failed write (docs/interfaces.md §4.1).
+    // running" is caught on the next failed write.
     constexpr gpio_num_t SD_CS   = GPIO_NUM_10;
     constexpr gpio_num_t SD_MOSI = GPIO_NUM_11;
     constexpr gpio_num_t SD_SCK  = GPIO_NUM_12;

@@ -5,7 +5,7 @@
 #include <freertos/queue.h>
 #include "StateMachine.hpp"
 
-// log_q record - the CSV row of docs/architecture.md §5, plus a kind so the
+// log_q record - the CSV row logger writes to SD, plus a kind so the
 // logger can also carry boot markers and transition events. Phase 0 is
 // monotonic only: t_wall_iso is written empty, never a placeholder epoch.
 struct LogRecord
@@ -22,8 +22,8 @@ struct LogRecord
     char     note[24]; // reset reason / transition trigger / sd condition
 };
 
-// log_q back-pressure policy: drop-oldest with a counter, never block a producer
-// (docs/architecture.md §5, docs/coding.md). ctrl and link_uart use this.
+// log_q back-pressure policy: drop-oldest with a counter, never block a producer.
+// ctrl and link_uart use this.
 inline void logSend(QueueHandle_t q, const LogRecord *rec, std::atomic<uint32_t> *dropped)
 {
     if (xQueueSend(q, rec, 0) == pdTRUE)

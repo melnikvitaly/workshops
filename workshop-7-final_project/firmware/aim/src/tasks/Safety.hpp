@@ -9,7 +9,7 @@
 #include "Pinout.hpp"
 #include "StateMachine.hpp"
 
-// The safety task and the E-stop path (docs/architecture.md §2, §7).
+// The safety task and the E-stop path.
 //
 // E-stop reaches this task two ways, and both just notify it:
 //   - BTN_ESTOP GPIO4, a negedge ISR (the only button on an interrupt)
@@ -18,7 +18,7 @@
 // The task latches `estopLatched`. ctrl observes that atomic, drives the FSM to
 // FAULT and emits the evt. Nothing here writes the UART or the FSM.
 
-// The laser interlock (docs/interfaces.md §7). Pure atomic reads, so ctrl and ui
+// The laser interlock. Pure atomic reads, so ctrl and ui
 // can call it directly. The WDT-healthy term is added in task #6.
 //
 //   ZONE_TOUR - beam lit for the boot geometry check; there is no link yet

@@ -2,7 +2,7 @@
 #include <cstdint>
 #include <atomic>
 
-// The AIM control FSM (docs/architecture.md §2).
+// The AIM control FSM.
 //
 //   BOOT -> SELFTEST -> ZONE_TOUR -> DISARMED -> ARMED
 //
@@ -42,7 +42,7 @@ inline const char *stateName(State s)
     return "?";
 }
 
-// The state half of the laser interlock (docs/interfaces.md §7). safety adds the
+// The state half of the laser interlock. safety adds the
 // link-fresh, no-E-stop and WDT-healthy terms. The beam is forced off in BOOT,
 // SELFTEST, DISARMED, LINK_LOST, PARKED and FAULT.
 inline bool stateAllowsLaser(State s)
@@ -64,10 +64,9 @@ public:
     State state() const { return _state; }
     bool  laserAllowed() const { return stateAllowsLaser(_state); }
 
-    // No-op if already there. `trigger` is a short stable token
-    // (docs/protocol.md §3.4): "boot", "selftest.ok", "tour.done",
-    // "btn.control", "link.stale", "link.fresh", "estop", "fault.ack", "idle",
-    // "btn.mode", "cfg.channel".
+    // No-op if already there. `trigger` is a short stable token: "boot",
+    // "selftest.ok", "tour.done", "btn.control", "link.stale", "link.fresh",
+    // "estop", "fault.ack", "idle", "btn.mode", "cfg.channel".
     void set(State to, const char *trigger)
     {
         if (to == _state)

@@ -11,7 +11,7 @@
 #include "ITransport.hpp"
 #include "Pinout.hpp"
 
-// UART1 line I/O for the EYE link (docs/interfaces.md §2, docs/protocol.md §3.1).
+// UART1 line I/O for the EYE link.
 //
 // The receive buffer is 256 bytes - the protocol line cap. An over-long line is
 // discarded through to the next newline and counted as `overlong`; the buffer is
@@ -96,7 +96,7 @@ public:
 
 private:
     static constexpr int    READ_TIMEOUT_MS = 10;
-    static constexpr size_t LINE_CAP        = 256; // docs/protocol.md §3.1
+    static constexpr size_t LINE_CAP        = 256;
 
     // Count driver framing errors / overruns / breaks; recover the RX path on an
     // overflow so a burst of noise cannot wedge the link.

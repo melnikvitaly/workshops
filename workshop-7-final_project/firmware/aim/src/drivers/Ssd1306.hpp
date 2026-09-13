@@ -6,7 +6,7 @@
 #include "Pinout.hpp"
 #include "Font5x7.hpp"
 
-// SSD1306 128x64 OLED on I2C0 (docs/interfaces.md §3), IDF 6 i2c_master driver.
+// SSD1306 128x64 OLED on I2C0, IDF 6 i2c_master driver.
 //
 // One device on the bus, so a NAK is unambiguous: it means the display. Every
 // call returns an esp_err_t; the ui task logs the first failure once, disables

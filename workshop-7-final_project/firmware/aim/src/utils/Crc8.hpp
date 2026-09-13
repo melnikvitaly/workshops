@@ -3,7 +3,7 @@
 #include <cstddef>
 
 // CRC-8/ATM (a.k.a. CRC-8/SMBUS): poly 0x07, init 0x00, no reflection, no final
-// XOR. Guards NDJSON lines on the EYE link - see docs/protocol.md §3.2.
+// XOR. Guards NDJSON lines on the EYE link.
 //
 // Conformance vectors (asserted by the caller's unit check and by EYE):
 //   crc8("123456789")                          == 0xF4
