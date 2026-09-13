@@ -27,6 +27,8 @@
 #include "Laser.hpp"
 #include "Pid.hpp"
 #include "ZoneTour.hpp"
+#include "ManualChannel.hpp"
+#include "AutoChannel.hpp"
 
 // The ctrl task. Owns the PIDs, the gimbal and the
 // laser gate; the single consumer of cmd_q; the sole owner of the FSM. Runs a
@@ -58,7 +60,7 @@ public:
         _lastChannel = (config::Channel)_cfg.input_channel;
 
         const uint32_t now = nowMs();
-        _lastPidMs        = now;
+        _autoChannel.reset(now); // primes _lastPidMs so the first frame's dt is sane
         _lastActivityMs   = now;
         _lastValidFrameMs = now - config::TRACK_TIMEOUT_MS - 1; // start stale
     }
@@ -107,32 +109,17 @@ private:
         if (_ipc.estopLatched.load(std::memory_order_relaxed) && _sm.state() != State::Fault)
         {
             _gimbal.stop();
-            _panPid.reset();
-            _tiltPid.reset();
+            _autoChannel.resetPids();
             _sm.set(State::Fault, "estop");
             emitEstopEvt(now);
-        }
-
-        if (_sm.state() == State::ZoneTour)
-        {
-            _tour.update(config::UPDATE_PERIOD_S);
-            if (_tour.done())
-            {
-                resetLoop(now);
-                _sm.set(State::Disarmed, "tour.done");
-            }
-            updateLaser();
-            pushLog(now);
-            return;
         }
 
         const bool chNone = (config::Channel)_cfg.input_channel == config::Channel::None;
         const bool fresh  = !chNone && (now - _lastValidFrameMs <= config::TRACK_TIMEOUT_MS);
         _ipc.linkFresh.store(fresh, std::memory_order_relaxed);
 
-        handleFsm(now, fresh, chNone);
-        computeMotion(now);
-        _gimbal.update(config::UPDATE_PERIOD_S);
+        if (stepState(now, fresh, chNone))
+            _gimbal.update(config::UPDATE_PERIOD_S);
         updateLaser();
         pushLog(now);
     }
@@ -160,13 +147,7 @@ private:
         {
             // The handover reset - identical whether the change came from an
             // NDJSON cfg.set or the MODE button.
-            _panPid.reset();
-            _tiltPid.reset();
-            _gimbal.setVelocity({0.0f, 0.0f});
-            _manualVel  = {0.0f, 0.0f};
-            _frameReady = false;
-            _onTarget   = false;
-            _lastPidMs  = now;
+            resetLoop(now);
             _lastActivityMs = now;
             _lastChannel = ch;
 
@@ -181,13 +162,13 @@ private:
         if (force || _cfg.pid_pan_kp != _gPanKp || _cfg.pid_pan_ki != _gPanKi ||
             _cfg.pid_pan_kd != _gPanKd)
         {
-            _panPid.setGains(_cfg.pid_pan_kp, _cfg.pid_pan_ki, _cfg.pid_pan_kd);
+            _autoChannel.setPanGains(_cfg.pid_pan_kp, _cfg.pid_pan_ki, _cfg.pid_pan_kd);
             _gPanKp = _cfg.pid_pan_kp; _gPanKi = _cfg.pid_pan_ki; _gPanKd = _cfg.pid_pan_kd;
         }
         if (force || _cfg.pid_tilt_kp != _gTiltKp || _cfg.pid_tilt_ki != _gTiltKi ||
             _cfg.pid_tilt_kd != _gTiltKd)
         {
-            _tiltPid.setGains(_cfg.pid_tilt_kp, _cfg.pid_tilt_ki, _cfg.pid_tilt_kd);
+            _autoChannel.setTiltGains(_cfg.pid_tilt_kp, _cfg.pid_tilt_ki, _cfg.pid_tilt_kd);
             _gTiltKp = _cfg.pid_tilt_kp; _gTiltKi = _cfg.pid_tilt_ki; _gTiltKd = _cfg.pid_tilt_kd;
         }
     }
@@ -201,23 +182,19 @@ private:
             switch (c.kind)
             {
             case CmdKind::ErrorSample:
-                _targetVisible = c.flag;
-                if (_targetVisible)
-                {
-                    // Sign correction is the mounting, not the wire: it says how
-                    // the camera sits relative to the gimbal.
-                    _error = {config::PAN_INVERT ? -c.vec.x : c.vec.x,
-                              config::TILT_INVERT ? -c.vec.y : c.vec.y};
+                if (c.flag)
                     _lastValidFrameMs = now;
-                }
-                _frameMs        = c.t_ms;
-                _frameReady     = true;
+                // Sign correction is the mounting, not the wire: it says how the
+                // camera sits relative to the gimbal.
+                _autoChannel.onErrorSample(c.flag,
+                                           {config::PAN_INVERT ? -c.vec.x : c.vec.x,
+                                            config::TILT_INVERT ? -c.vec.y : c.vec.y},
+                                           c.t_ms);
                 _lastActivityMs = now;
                 break;
 
             case CmdKind::ManualVelocity:
-                _manualVel        = c.vec;
-                _manualMs         = now;
+                _manualChannel.set(c.vec, now);
                 _lastValidFrameMs = now;
                 _lastActivityMs   = now;
                 break;
@@ -280,16 +257,37 @@ private:
         _sm.set(State::Disarmed, "fault.ack");
     }
 
-    // --- FSM housekeeping (not tour, not fault) ------------------------------
-    void handleFsm(uint32_t now, bool fresh, bool chNone)
+    // --- FSM: one case per state, dispatched once a tick ---------------------
+    // Returns true if the gimbal's velocity integrator should run this tick.
+    // ZONE_TOUR is the one state that drives position directly (Gimbal::moveTo
+    // via ZoneTour::update) and must not have that integration layered on top.
+    bool stepState(uint32_t now, bool fresh, bool chNone)
     {
         switch (_sm.state())
         {
+        case State::Boot:
+        case State::SelfTest:
+            break; // only ever entered for one tick from run(), before the loop starts
+
+        case State::ZoneTour:
+            _tour.update(config::UPDATE_PERIOD_S);
+            if (_tour.done())
+            {
+                resetLoop(now);
+                _sm.set(State::Disarmed, "tour.done");
+            }
+            return false;
+
+        case State::Disarmed:
+            _gimbal.setVelocity({0.0f, 0.0f});
+            if (chNone && (now - _lastActivityMs > config::PARK_IDLE_MS))
+                _sm.set(State::Parked, "idle");
+            break;
+
         case State::Armed:
             if (!fresh && !chNone)
             {
-                _panPid.reset();
-                _tiltPid.reset();
+                _autoChannel.resetPids();
                 _gimbal.stop();
                 _sm.set(State::LinkLost, "link.stale");
             }
@@ -298,9 +296,14 @@ private:
                 _gimbal.stop();
                 _sm.set(State::Parked, "idle");
             }
+            else
+            {
+                computeMotion(now, fresh);
+            }
             break;
 
         case State::LinkLost:
+            _gimbal.setVelocity({0.0f, 0.0f});
             if (fresh)
             {
                 resetLoop(now);
@@ -308,34 +311,30 @@ private:
             }
             break;
 
-        case State::Disarmed:
-            if (chNone && (now - _lastActivityMs > config::PARK_IDLE_MS))
-                _sm.set(State::Parked, "idle");
+        case State::Parked:
+            _gimbal.setVelocity({0.0f, 0.0f});
             break;
 
-        default:
+        case State::Fault:
+            _gimbal.setVelocity({0.0f, 0.0f});
             break;
         }
+        return true;
     }
 
-    // --- motion --------------------------------------------------------------
-    void computeMotion(uint32_t now)
+    // --- motion (ARMED only - dispatched from stepState) ----------------------
+    // `fresh` is guaranteed true whenever the Auto branch runs: stepState's
+    // Armed case only reaches here when NOT(!fresh && !chNone), and the Auto
+    // channel implies chNone is false.
+    void computeMotion(uint32_t now, bool fresh)
     {
-        if (_sm.state() != State::Armed)
-        {
-            _gimbal.setVelocity({0.0f, 0.0f});
-            return;
-        }
-
         switch ((config::Channel)_cfg.input_channel)
         {
         case config::Channel::Auto:
-            autoStep(now);
+            _autoChannel.update(now, fresh);
             break;
         case config::Channel::Manual:
-            _gimbal.setVelocity((now - _manualMs > config::TRACK_TIMEOUT_MS)
-                                    ? Point{0.0f, 0.0f}
-                                    : _manualVel);
+            _manualChannel.update(now);
             break;
         case config::Channel::None:
         default:
@@ -344,67 +343,11 @@ private:
         }
     }
 
-    // Closed-loop step - the PIDs run per fresh frame, dt measured between runs,
-    // not once per tick (ported from ErrorVectorInput::update()).
-    void autoStep(uint32_t now)
-    {
-        if (now - _lastValidFrameMs > config::TRACK_TIMEOUT_MS)
-        {
-            _panPid.reset();
-            _tiltPid.reset();
-            _gimbal.setVelocity({0.0f, 0.0f});
-            _lastPidMs  = now;
-            _frameReady = false;
-            _onTarget   = false;
-            return;
-        }
-        if (!_targetVisible)
-        {
-            _gimbal.setVelocity({0.0f, 0.0f});
-            _lastPidMs = now;
-            return;
-        }
-        if (!_frameReady)
-            return; // nothing new - the gimbal holds the last commanded rate
-
-        float dt = (float)(_frameMs - _lastPidMs) / 1000.0f;
-        if (dt < 0.001f) dt = 0.001f;
-        if (dt > 0.5f)   dt = 0.5f;
-        _lastPidMs  = _frameMs;
-        _frameReady = false;
-
-        _gimbal.setVelocity({axisRate(_panPid, _error.x, dt),
-                             axisRate(_tiltPid, _error.y, dt)});
-        updateArrival();
-    }
-
-    static float axisRate(Pid &pid, float error, float dt)
-    {
-        const float mag = error < 0.0f ? -error : error;
-        if (mag < config::TRACK_DEADZONE)
-        {
-            pid.hold(error); // arrived: freeze, do not just zero the error
-            return 0.0f;
-        }
-        return pid.update(error, dt);
-    }
-
-    void updateArrival()
-    {
-        const float ax = _error.x < 0.0f ? -_error.x : _error.x;
-        const float ay = _error.y < 0.0f ? -_error.y : _error.y;
-        _onTarget = ax < config::TRACK_DEADZONE && ay < config::TRACK_DEADZONE;
-    }
-
     void resetLoop(uint32_t now)
     {
-        _panPid.reset();
-        _tiltPid.reset();
+        _autoChannel.reset(now);
+        _manualChannel.reset();
         _gimbal.setVelocity({0.0f, 0.0f});
-        _manualVel  = {0.0f, 0.0f};
-        _lastPidMs  = now;
-        _frameReady = false;
-        _onTarget   = false;
     }
 
     // --- laser ------------------------------------------------------------------
@@ -427,14 +370,15 @@ private:
         r.t_mono_us = (uint64_t)esp_timer_get_time();
         r.state     = _sm.state();
         r.channel   = _cfg.input_channel;
-        r.ex        = _error.x;
-        r.ey        = _error.y;
+        const Point error = _autoChannel.error();
+        r.ex        = error.x;
+        r.ey        = error.y;
         const Point v = _gimbal.velocity();
         r.vpan      = v.x;
         r.vtilt     = v.y;
         r.pan       = _gimbal.panAngle();
         r.tilt      = _gimbal.tiltAngle();
-        r.flags     = _onTarget ? 1u : 0u;
+        r.flags     = _autoChannel.onTarget() ? 1u : 0u;
         logSend(_ipc.logQ, &r, &_ipc.logDropped);
 
         _ipc.telem = {r.ex, r.ey, r.vpan, r.vtilt, r.pan, r.tilt};
@@ -514,10 +458,11 @@ private:
     Relay _laserRelay{pinout::LASER_GATE, config::RELAY_ACTIVE_HIGH};
     Laser _laser{_laserRelay, config::LASER_FIRE_BLANK_MS};
 
-    Pid _panPid{config::PAN_KP, config::PAN_KI, config::PAN_KD,
-                -config::PAN_MAX_SLEW, config::PAN_MAX_SLEW, config::PID_DERIV_ALPHA};
-    Pid _tiltPid{config::TILT_KP, config::TILT_KI, config::TILT_KD,
-                 -config::TILT_MAX_SLEW, config::TILT_MAX_SLEW, config::PID_DERIV_ALPHA};
+    AutoChannel _autoChannel{_gimbal,
+                             config::PAN_KP, config::PAN_KI, config::PAN_KD, config::PAN_MAX_SLEW,
+                             config::TILT_KP, config::TILT_KI, config::TILT_KD, config::TILT_MAX_SLEW,
+                             config::PID_DERIV_ALPHA};
+    ManualChannel _manualChannel{_gimbal};
 
     ZoneTour _tour{_gimbal, config::ZONE_TOUR_RATE_DEG_S, config::ZONE_TOUR_DWELL_MS,
                    config::PAN_ANGLE_AIMS_RIGHT, config::TILT_ANGLE_AIMS_DOWN};
@@ -531,15 +476,7 @@ private:
     float _gTiltKp = 0, _gTiltKi = 0, _gTiltKd = 0;
     float _zPanMin = 0, _zPanMax = 0, _zTiltMin = 0, _zTiltMax = 0;
 
-    Point    _error{0.0f, 0.0f};
-    Point    _manualVel{0.0f, 0.0f};
-    bool     _targetVisible = false;
-    bool     _frameReady    = false;
-    bool     _onTarget      = false;
-    uint32_t _frameMs         = 0;
-    uint32_t _manualMs        = 0;
     uint32_t _lastValidFrameMs = 0;
-    uint32_t _lastPidMs      = 0;
     uint32_t _lastActivityMs = 0;
     uint32_t _lastDenyMs     = 0;
     uint32_t _seq            = 0;
