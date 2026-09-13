@@ -12,6 +12,7 @@
 
 #include "Ipc.hpp"
 #include "CmdQueue.hpp"
+#include "LogQueue.hpp"
 #include "Config.hpp"
 #include "Pinout.hpp"
 #include "StateMachine.hpp"

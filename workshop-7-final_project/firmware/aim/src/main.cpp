@@ -14,6 +14,7 @@
 #include "Pinout.hpp"
 #include "ipc/Ipc.hpp"
 #include "ipc/CmdQueue.hpp"
+#include "ipc/LogQueue.hpp"
 #include "ConfigStore.hpp"
 #include "drivers/Sdcard.hpp"
 #include "transport/UartTransport.hpp"

@@ -18,6 +18,7 @@ Every path runs inside a task from the table in
 - **DON'T** write verbose or obvious comments. Comment *why*, never *what*.
 - **DO** use fixed-width types (`uint32_t`, `int16_t`) for anything that crosses
   a wire, a queue or a stored record.
+- **DOM'T** reference docs or tasks from codebase comments
 
 ## Tasks and timing
 

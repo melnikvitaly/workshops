@@ -10,7 +10,7 @@
 #include <esp_log.h>
 
 #include "Ipc.hpp"
-#include "CmdQueue.hpp"
+#include "LogQueue.hpp"
 #include "StateMachine.hpp"
 #include "Config.hpp"
 #include "Sdcard.hpp"
