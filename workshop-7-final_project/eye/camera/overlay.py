@@ -38,9 +38,21 @@ def _ui_scale(frame):
     return max(0.35, min(1.4, frame.shape[1] / 1280.0))
 
 
+def _age_text(age):
+    """'0.3s ago' near real time, '12s ago' once it's worth rounding off."""
+    if age is None:
+        return ""
+    return f"{age:.1f}s ago" if age < 10.0 else f"{age:.0f}s ago"
+
+
 def draw_overlay(frame, red, targets, target, dx, dy, valid, fps, link, telemetry=None,
-                 rejects=()):
+                 telemetry_age=None, rejects=()):
     """Annotate the frame with both detections and the error vector.
+
+    `telemetry` is a parsed `tlm` sample (serial_link.parse_tlm) or None if
+    none has arrived yet. `telemetry_age` is seconds since it was received -
+    shown as "Xs ago" rather than hiding the sample once it goes stale, so a
+    dead link reads as a growing age instead of the readout vanishing.
 
     `rejects` is [(Dot, reason)] from find_black_dots - the blobs that were the
     right size but were not round enough (or not dark enough) to be a dot.
@@ -92,10 +104,11 @@ def draw_overlay(frame, red, targets, target, dx, dy, valid, fps, link, telemetr
     ]
     if telemetry is not None:
         lines.append(
-            f"ESP T  ex:{telemetry['ex']:+.3f} ey:{telemetry['ey']:+.3f}  "
-            f"v:{telemetry['vpan']:+.1f}/{telemetry['vtilt']:+.1f} deg/s  "
+            f"ESP T  st:{telemetry['st']} ch:{telemetry['ch']}  "
+            f"ex:{telemetry['ex']:+.3f} ey:{telemetry['ey']:+.3f}  "
+            f"v:{telemetry['vp']:+.1f}/{telemetry['vt']:+.1f} deg/s  "
             f"pan:{telemetry['pan']:.1f} tilt:{telemetry['tilt']:.1f}  "
-            f"{telemetry['st']}  arrived:{1 if telemetry['arr'] else 0}")
+            f"{_age_text(telemetry_age)}")
     for i, text in enumerate(lines):
         org = (int(10 * s) + 2, int((30 + 26 * i) * s) + 8)
         cv2.putText(frame, text, org, cv2.FONT_HERSHEY_SIMPLEX, 0.65 * s,

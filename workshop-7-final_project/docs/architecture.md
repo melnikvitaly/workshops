@@ -124,7 +124,7 @@ PWM.
 
 | Link | Interface | Role | Why | On failure |
 |------|-----------|------|-----|------------|
-| `EYE` (PC) ⟷ `AIM` (ESP32-S3), control | **UART1**, 115200 8N1 | duplex | Lowest latency; dead time sets the gain ceiling | 300 ms without a valid frame → `LINK_LOST`, axes stop, PIDs reset |
+| `EYE` (PC) ⟷ `AIM` (ESP32-S3), control | **UART1**, 115200 8N1 | duplex | Lowest latency; dead time sets the gain ceiling | 300 ms without any frame on the selected channel → `LINK_LOST`, axes stop, PIDs reset (`valid`/`targetVisible` does not matter — a steady stream of `valid=0` frames still counts as fresh) |
 | `EYE` ⟷ `AIM`, config + telemetry | **UART1** NDJSON, same wire as the control path | duplex | One link, one failure mode, nothing to reconcile on reconnect | Same 300 ms staleness rule; config state re-sent on the next valid frame |
 | `AIM` ⟷ SD card | **SPI** master | write | Phase 0 storage | Four named conditions, §5 |
 | `AIM` ⟷ OLED | **I²C** 400 kHz | write | Only device on the bus | Log once, disable `ui`, **keep controlling** |
@@ -163,7 +163,7 @@ normally set by an NDJSON configuration line from `EYE` over UART1.
 | `input.channel` | Source | Accepted when |
 |---|---|---|
 | `AUTO` | Error vector from `EYE`'s (PC) vision pipeline | `ARMED`, source fresh |
-| `MANUAL` | Mouse-driven velocity from `EYE`'s manual script | `ARMED`, source fresh |
+| `MANUAL` | Keyboard-driven velocity from `EYE`'s manual control | `ARMED`, source fresh |
 | `NONE` | — | Motion commands ignored entirely |
 
 - Selection is **validated, applied, persisted to NVS and acknowledged** on the

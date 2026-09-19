@@ -222,6 +222,25 @@ failed write leaves the sender's view correct rather than merely negative.
 **Rejection reasons** (`err`): `range`, `type`, `unknown_key`, `readonly`,
 `nvs_write`, `schema`.
 
+**Action keys.** Two `cfg.set` keys are not stored config — they trigger the
+same action a physical button does, skip persistence, and always ack `ok:true`:
+
+| Key | Effect | Physical equivalent |
+|---|---|---|
+| `fault.ack` | Clears a latched `FAULT` (see §4) | `CONTROL` button while `FAULT` |
+| `control.press` | Arm/disarm toggle, or `fault.ack` if `FAULT` — dispatched exactly like the button (`Ui::controlPressed()`) | `CONTROL` button |
+
+`control.press` is a deliberate trade: arming used to require standing at the
+board (the `CONTROL` button was the only path to `ARMED`); this key lets `EYE`
+arm the gimbal remotely instead, for bench testing. Selecting `input.channel`
+does not by itself move the gimbal — the FSM must also be `ARMED` (see `st` in
+the `tlm` sample, §3.4).
+
+```text
+{"t":"cfg.set","k":"control.press","v":true,"id":3}*EA
+{"t":"cfg.state","k":"control.press","v":true,"id":3,"ok":true,"err":null,"src":"uart","ver":1}*AE
+```
+
 ### 3.4 Telemetry and events
 
 | `t` | Direction | Rate | Meaning |

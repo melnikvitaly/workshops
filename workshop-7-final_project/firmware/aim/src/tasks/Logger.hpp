@@ -309,7 +309,7 @@ private:
     void refreshTelemetry(uint64_t now)
     {
         _ipc.sd.queueDepth     = uxQueueMessagesWaiting(_ipc.logQ);
-        _ipc.sd.droppedRecords = _ipc.logDropped.load(std::memory_order_relaxed);
+        _ipc.sd.droppedRecords = _ipc.logDropped.load();
 
         if (_windowStartUs == 0)
             _windowStartUs = now;

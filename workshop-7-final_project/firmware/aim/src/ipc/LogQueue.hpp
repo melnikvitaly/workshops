@@ -30,6 +30,6 @@ inline void logSend(QueueHandle_t q, const LogRecord *rec, std::atomic<uint32_t>
         return;
     LogRecord scratch;
     if (xQueueReceive(q, &scratch, 0) == pdTRUE)
-        dropped->fetch_add(1, std::memory_order_relaxed);
+        dropped->fetch_add(1);
     xQueueSend(q, rec, 0);
 }

@@ -34,7 +34,9 @@ Usage:
 
 Keys: q = quit, f = fire, d = toggle the mask windows, the labelled rejections
 and the threshold sliders, p = print the current thresholds as a command line,
-arrows = move the simulated target, SPACE/n = next image (folder mode).
+m = toggle keyboard MANUAL drive (see manual_control.py), arrows = move the
+simulated target, or drive the gimbal while 'm' is engaged, SPACE/n = next
+image (folder mode).
 Mouse: left-click places the simulated target, right-click clears it.
 """
 
@@ -49,14 +51,14 @@ import cv2
 from controls import Controls
 from dots import error_vector, find_black_dots, find_red_dot, pick_target
 from fire_button import FireButton
+from manual_control import ManualControl
 from overlay import _ROTATE, _WIN, draw_overlay, hide_masks, show_masks
-from serial_link import ErrorLink, list_ports, parse_telemetry
+from serial_link import ErrorLink, list_ports, parse_tlm
 from simulated_target import SimulatedTargetManager
 from tuning import Thresholds
 
 _IMG_EXT = (".jpg", ".jpeg", ".png", ".bmp")
 _VID_EXT = (".mp4", ".avi", ".mov", ".mkv")
-_TELEMETRY_STALE_S = 2.0
 
 
 # --- frame sources ---------------------------------------------------------
@@ -149,13 +151,16 @@ def _wait_key(block, controls):
 
 def run(args):
     frames, folder_mode = open_source(args)
-    link = ErrorLink(args.port, args.baud, max_rate=args.rate, echo=args.echo)
+    link = ErrorLink(args.port, args.baud, max_rate=args.rate, echo=args.echo,
+                     tx_log_path=args.tx_log)
     debug = args.debug
     fps, last_t = 0.0, time.time()
 
     fire = FireButton()
+    manual = ManualControl(link, speed_deg_s=args.manual_speed)
     telemetry = None
     telemetry_at = 0.0
+    telemetry_requested_at = 0.0
     # The simulated target manager owns the view window's mouse: it lets the
     # FIRE button inspect each click first, then treats what is left over as a
     # request to place, move or clear a stand-in black dot.
@@ -174,7 +179,8 @@ def run(args):
             # A missing or broken Tk should cost the panel, not the tracking.
             print(f"controls window unavailable ({exc}); running without it.")
 
-    print("Press 'q' to quit, 'f' or the FIRE button to flash the laser."
+    print("Press 'q' to quit, 'f' or the FIRE button to flash the laser, "
+          "'m' to toggle keyboard MANUAL drive (arrow keys)."
           + ("  SPACE/n = next image." if folder_mode else ""))
     try:
         for frame in frames:
@@ -193,18 +199,32 @@ def run(args):
             dx, dy, valid = error_vector(red, target, frame.shape)
             if controls is not None:
                 controls.record_error(dx, dy)
+            # On by default, and kept that way: re-ask for telemetry (at most
+            # once a second) whenever no tlm sample has landed in the last 2s
+            # and nobody has asked for it to be off. A single T 1 right after
+            # open is not enough -- opening the port can itself reboot the
+            # board (same edge _handshake_ok works around for Q), and unlike Q
+            # there is no reply that confirms a T landed, so the first one is
+            # easily lost to a UART that is not listening yet. Keying off
+            # staleness rather than "never received" also recovers telemetry
+            # after a mid-session board reset, not just the initial boot race;
+            # link.telemetry_wanted is what stops this from fighting an
+            # operator who unticked the checkbox (or sent T 0 some other way).
+            if (not args.headless and link.port is not None and link.telemetry_wanted
+                    and time.monotonic() - telemetry_at > 2.0
+                    and time.monotonic() - telemetry_requested_at > 1.0):
+                link.telemetry(True)
+                telemetry_requested_at = time.monotonic()
             # Send every frame, valid or not: the firmware treats silence as a
             # dead link (300 ms) and resets its PIDs, while valid=0 only holds.
             on_wire = link.send(dx, dy, valid)
             # Drain every UART line so console traffic cannot fill the OS buffer.
             # Only explicit uplink protocol messages affect the UI.
             for esp_line in link.poll():
-                sample = parse_telemetry(esp_line)
+                sample = parse_tlm(esp_line)
                 if sample is not None:
                     telemetry = sample
                     telemetry_at = time.monotonic()
-                    if sample["arr"]:
-                        fire.blink()
                     continue
 
             # Display-only: how close counts as "on target" for the border
@@ -215,15 +235,14 @@ def run(args):
             now = time.time()
             fps = 0.9 * fps + 0.1 / max(now - last_t, 1e-6)
             last_t = now
-            # Do not leave the last sample on screen after the operator turns
-            # telemetry off or the board/link goes away.
-            live_telemetry = (telemetry if time.monotonic() - telemetry_at < _TELEMETRY_STALE_S
-                              else None)
+            # Never hidden once received; its growing age is what tells the
+            # operator the link died, rather than the readout vanishing.
+            telemetry_age = (time.monotonic() - telemetry_at) if telemetry is not None else None
 
             if not args.headless:
                 view = draw_overlay(frame, red, targets, target,
-                                    dx, dy, valid, fps, link, live_telemetry,
-                                    rejects if debug else ())
+                                    dx, dy, valid, fps, link, telemetry,
+                                    telemetry_age, rejects if debug else ())
                 if args.rotate:
                     view = cv2.rotate(view, _ROTATE[args.rotate])
                 cv2.imshow(_WIN, fire.draw(view, on_target))
@@ -232,12 +251,21 @@ def run(args):
                 raw_key = _wait_key(folder_mode, controls)
                 key = raw_key & 0xFF if raw_key != -1 else -1
                 try:
+                    # manual.handle_key() only consumes arrows while keyboard
+                    # drive is engaged, so sim's arrow-key target nudge still
+                    # works normally the rest of the time.
+                    if manual.handle_key(raw_key):
+                        continue
                     if sim.handle_key(raw_key):
                         continue
                 except Exception:
                     pass
                 if key == ord('q'):
                     break
+                if key == ord('m'):
+                    on = manual.toggle()
+                    print("keyboard MANUAL drive "
+                          + ("ON -- arrow keys pan/tilt" if on else "off"))
                 if key == ord('f'):
                     fire.trigger()
                     link.fire()
@@ -256,6 +284,10 @@ def run(args):
                     # Sliders are lost on exit; this is how a session's tuning
                     # becomes the next run's command line.
                     print(th.flags())
+                # MANUAL fails safe the same 300 ms way AUTO does, so this
+                # must run every iteration, key or not, same as link.send()
+                # above for the E frames.
+                manual.tick()
             else:
                 if args.verbose and on_wire:
                     print(f"E {dx:+.4f} {dy:+.4f} {1 if valid else 0}")
@@ -294,8 +326,17 @@ def main():
                     help="max frames/second put on the wire (15-30 is the "
                          "protocol's recommended range)")
     ap.add_argument("--echo", action="store_true",
-                    help="print every received ESP32 line; console text is "
-                         "never shown in the window")
+                    help="print every received ESP32 line, and every sent E "
+                         "frame too (everything else already prints "
+                         "regardless); console text is never shown in the "
+                         "window")
+    ap.add_argument("--tx-log", nargs="?", const="tx_log.txt", default=None,
+                    metavar="PATH",
+                    help="append every command line sent to PATH, timestamped "
+                         "(bare --tx-log = tx_log.txt) -- see tx_log.py")
+    ap.add_argument("--manual-speed", type=float, default=40.0,
+                    help="deg/s commanded by each arrow key while keyboard "
+                         "MANUAL drive ('m') is engaged")
 
     ap.add_argument("--ready-error", type=float, default=0.02,
                     help="|error| at or below which the FIRE border turns red "

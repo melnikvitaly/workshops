@@ -1,6 +1,7 @@
 #pragma once
 #include <cmath>
 #include <cstdint>
+#include "IInputChannel.hpp"
 #include "Gimbal.hpp"
 #include "Point.hpp"
 #include "Pid.hpp"
@@ -12,7 +13,7 @@
 //
 // The setpoint is implicitly zero (see Pid.hpp); this class only carries the
 // per-frame bookkeeping (visibility, dt, arrival) around that.
-class AutoChannel
+class AutoChannel : public IInputChannel
 {
 public:
     AutoChannel(Gimbal &gimbal,
@@ -41,17 +42,9 @@ public:
     void setPanGains(float kp, float ki, float kd)  { _panPid.setGains(kp, ki, kd); }
     void setTiltGains(float kp, float ki, float kd) { _tiltPid.setGains(kp, ki, kd); }
 
-    // Narrow reset: drop the PID state only. Used where the caller is about to
-    // leave ARMED in place this tick (e-stop, link-stale) and the full reset
-    // below would run again anyway on the way back in.
-    void resetPids()
-    {
-        _panPid.reset();
-        _tiltPid.reset();
-    }
-
-    // Full reset: channel switch, tour-done, arm, link-recovered, fault-ack.
-    void reset(uint32_t now)
+    // Full reset: channel switch, tour-done, arm, link-recovered, fault-ack,
+    // e-stop, link-stale.
+    void reset(uint32_t now) override
     {
         resetPids();
         _frameReady = false;
@@ -62,12 +55,12 @@ public:
     Point error() const    { return _error; }
     bool  onTarget() const { return _onTarget; }
 
-    // Drive the gimbal for this tick. `frameFresh` is the caller's link/frame
+    // Drive the gimbal for this tick. `fresh` is the caller's link/frame
     // freshness test (ctrl already computes it for the FSM) - false forces a
     // reset and holds the gimbal still, same as a lost link.
-    void update(uint32_t now, bool frameFresh)
+    void update(uint32_t now, bool fresh) override
     {
-        if (!frameFresh)
+        if (!fresh)
         {
             reset(now);
             _gimbal.setVelocity({0.0f, 0.0f});
@@ -94,6 +87,12 @@ public:
     }
 
 private:
+    void resetPids()
+    {
+        _panPid.reset();
+        _tiltPid.reset();
+    }
+
     static float axisRate(Pid &pid, float error, float dt)
     {
         const float mag = error < 0.0f ? -error : error;

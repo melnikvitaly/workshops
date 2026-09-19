@@ -22,6 +22,14 @@ struct Ipc
     SemaphoreHandle_t cfgMutex   = nullptr; // guards ConfigStore's blob
     TaskHandle_t      safetyTask = nullptr; // target of the E-stop notification
 
+    // Set once in app_main as each task is created. ui reads all five for the
+    // 1 Hz CPU% / stack high-water report (task #5) - nullptr until app_main
+    // finishes creating them.
+    TaskHandle_t ctrlTask   = nullptr;
+    TaskHandle_t linkTask   = nullptr;
+    TaskHandle_t loggerTask = nullptr;
+    TaskHandle_t uiTask     = nullptr;
+
     // --- shared services ---------------------------------------------------
     ITransport  *link   = nullptr; // writeLine() is TX-mutex guarded
     ConfigStore *config = nullptr;

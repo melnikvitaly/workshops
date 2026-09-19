@@ -3,24 +3,42 @@
 Downlink (PC -> ESP32):
 
     E <dx> <dy> <valid>\\n     tracking error, streamed   e.g. E -0.124 0.058 1
+    M <vpan> <vtilt>\\n        direct velocity, deg/s, streamed  (MANUAL channel)
     F\\n                       fire one shot
     K <p|t|b> <kp> <ki> <kd>  set PID gains live
     N <dpan> <dtilt>          nudge open loop, in degrees (a disturbance)
     T <0|1>                   telemetry stream off / on
     Q\\n                       report gains and arm state
+    {"t":"cfg.set",...}*XX    NDJSON config write, e.g. input.channel -> cfg_set/set_channel
+                               control.press is a remote CONTROL-button press -> press_control
 
-Uplink (ESP32 -> PC), interleaved with ordinary console logging:
+Uplink (ESP32 -> PC):
 
     G pan ... tilt ... armed  gains report                -> parse_gains
-    T ex:.. ey:.. st:.. arr:. telemetry sample; arr:1 = arrival -> parse_telemetry
+    {"t":"tlm",...}*XX        NDJSON control sample        -> parse_tlm
+    {"t":"cfg.state",...}*XX  ack for cfg.set/cfg.get      -> parse_cfg_state
 
-The receiving end is src/inputs/ErrorVectorInput.hpp. The parts of the
+Console logging (ESP_LOGI, boot banner, ROM bootloader messages, panics) is
+UART0 / USB-Serial-JTAG, not this port -- see `sdkconfig.esp32-s3-devkitc-1`
+(CONFIG_ESP_CONSOLE_UART_NUM=0) and firmware/aim/src/Pinout.hpp (LINK_UART =
+UART_NUM_1). This UART carries only the control-ASCII frames above and NDJSON
+config/telemetry/event lines (docs/protocol.md); nothing writes raw log text
+to it (the only write path is UartTransport::writeLine()).
+
+parse_telemetry() below parses an older per-frame ASCII `T ex:.. ...` uplink
+format that firmware/aim no longer sends -- current telemetry is the NDJSON
+`{"t":"tlm",...}` line in docs/protocol.md §3.4. Kept for reference only.
+
+The receiving end is firmware/aim/src/transport/Protocol.hpp (control ASCII)
+and firmware/aim/src/tasks/LinkUart.hpp (NDJSON + `G` reply). The parts of the
 contract this module is responsible for:
 
-  * PC -> ESP32 only. We never wait for a reply.
-  * The firmware console shares this UART, so log lines, boot banners and the
-    ROM bootloader message arrive on RX. We drain and ignore them (or print them
-    with echo=True) instead of letting them fill the OS buffer.
+  * PC -> ESP32 only for the control path. We never wait for a reply, except
+    in the explicit query/gains/nudge/telemetry commands below and the
+    handshake `autodetect_port()` uses to confirm the port.
+  * Still drain every line, even lines this module does not otherwise use --
+    leaving RX unread eventually fills the OS buffer, and echo=True is how a
+    human watches it.
   * Keep sending at a steady rate even when detection fails -- valid=0 holds the
     gimbal still but keeps the PID integral, whereas going silent trips the
     300 ms link timeout and resets the PIDs.
@@ -30,6 +48,7 @@ Standalone, for bring-up (no camera):
 
     py -3 serial_link.py --port COM5 --dx 0.2   # constant pan error
     py -3 serial_link.py --sweep                # slow pan/tilt sweep
+    py -3 serial_link.py --manual 20 0          # one M frame, MANUAL channel
     py -3 serial_link.py --fire                 # one shot, exit
     py -3 serial_link.py --list                 # what's plugged in
     py -3 serial_link.py --monitor              # listen only, send nothing
@@ -39,11 +58,16 @@ And the tuning console:
     py -3 serial_link.py --query                     # Q
     py -3 serial_link.py --gains b 40 4 0            # K b 40 4 0
     py -3 serial_link.py --telemetry 1 --nudge 8 0   # T 1 then N 8 0
+    py -3 serial_link.py --channel AUTO              # cfg.set input.channel AUTO
+    py -3 serial_link.py --control                   # cfg.set control.press (arm/disarm toggle)
     py -3 serial_link.py --console                   # type lines interactively
 """
 
+import json
 import math
 import time
+
+from tx_log import TxLog
 
 # USB-serial bridges found on ESP32 boards, in order of preference. The
 # DevKitC-1's UART connector is a CP2102, so that wins if several are attached;
@@ -80,8 +104,10 @@ def parse_telemetry(line):
 
         T ex:-0.124 ey:+0.058 vpan:-4.9 vtilt:+2.1 pan:57.4 tilt:88.2 st:TRACK arr:1
 
-    The leading `T` is mandatory: console logs can contain telemetry-like text,
-    but must never be mistaken for a protocol message.
+    This is the retired per-frame ASCII telemetry format. firmware/aim now
+    sends telemetry as the NDJSON `tlm` line (docs/protocol.md §3.4), which
+    this function does not parse -- it always returns None against current
+    firmware. Kept for reference / older firmware only.
     """
     tokens = line.split()
     if len(tokens) != 9 or tokens[0] != "T":
@@ -104,6 +130,82 @@ def parse_telemetry(line):
     except ValueError:
         return None
     return out
+
+
+def crc8(data):
+    """CRC-8/ATM (poly 0x07, init 0x00) over `data` -- docs/protocol.md §3.2.
+
+    Same algorithm as firmware/aim/src/utils/Crc8.hpp; both ends must agree,
+    so this is the reference Python implementation quoted in the protocol doc.
+    """
+    crc = 0x00
+    for byte in data:
+        crc ^= byte
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x07) & 0xFF if crc & 0x80 else (crc << 1) & 0xFF
+    return crc
+
+
+def parse_ndjson(line):
+    """The parsed object if `line` is a well-formed, checksum-valid NDJSON
+    line, else None.
+
+        {"t":"tlm","up":812345,...}*C8
+
+    Covers any message type (tlm, tlm.sd, tlm.sys, evt, cfg.state, ...) --
+    callers filter on the `t` field. A missing/wrong `*XX` or invalid JSON is
+    silently None: the firmware already counts these as bad_crc/unparsed,
+    this is just the PC side agreeing rather than raising.
+    """
+    if not line.startswith("{"):
+        return None
+    body, sep, tail = line.rpartition("*")
+    if not sep or len(tail) != 2:
+        return None
+    try:
+        want = int(tail, 16)
+    except ValueError:
+        return None
+    if crc8(body.encode("utf-8")) != want:
+        return None
+    try:
+        obj = json.loads(body)
+    except ValueError:
+        return None
+    return obj if isinstance(obj, dict) else None
+
+
+def parse_tlm(line):
+    """dict if `line` is a `tlm` control sample (docs/protocol.md §3.4), else
+    None.
+
+        {"t":"tlm","up":..,"st":"ARMED","ch":"AUTO","ex":..,"ey":..,
+         "vp":..,"vt":..,"pan":..,"tilt":..}*XX
+
+    Wire keys are kept as-is (ex/ey/vp/vt/pan/tilt) -- see architecture.md §5
+    for the un-abbreviated telemetry names. This is the current uplink
+    telemetry format; parse_telemetry() above is the retired one.
+    """
+    obj = parse_ndjson(line)
+    if obj is None or obj.get("t") != "tlm":
+        return None
+    return obj
+
+
+def parse_cfg_state(line):
+    """dict if `line` is a `cfg.state` acknowledgement, else None.
+
+        {"t":"cfg.state","k":"input.channel","v":"AUTO","id":17,"ok":true,
+         "err":null,"src":"uart","ver":1}*XX
+
+    docs/protocol.md §3.3 -- the reply to every cfg.set, accepted (`ok`:
+    true, `v` is the applied value) or rejected (`ok`: false, `v` is the
+    value that stayed in effect, `err` names why).
+    """
+    obj = parse_ndjson(line)
+    if obj is None or obj.get("t") != "cfg.state":
+        return None
+    return obj
 
 
 def _describe(p):
@@ -138,11 +240,85 @@ def list_ports(quiet=False):
     return candidates, ports
 
 
-def autodetect_port():
-    """The most likely ESP32 port. Raises SystemExit if there is no good guess.
+def _handshake_ok(port_device, baud, timeout=2.5, resend_interval=0.4):
+    """True if `port_device` answers the `Q` -> `G ...` exchange (§2.1, protocol.md).
 
-    Identification is by USB VID/PID, not by name: COM numbering is assigned by
-    Windows in plug order and tells you nothing about what is on the other end.
+    VID/PID (see `_KNOWN_BRIDGES`) only says "this is a USB-serial bridge of a
+    kind our boards use" -- it does not prove AIM firmware is on the other end,
+    or that the adapter is even wired to UART1 rather than someone's unrelated
+    project. `Q` is answered unconditionally by `LinkUart::emitGains()` in any
+    firmware state, so a `G` reply is the one cheap proof that actually matters.
+
+    `timeout` is generous on purpose. Setting dtr/rts False before open() (see
+    ErrorLink.__init__) stops us from *holding* the board in reset, but does not
+    stop a brief edge on those lines the moment Windows opens the handle -- on
+    an RC auto-reset circuit that edge alone is enough to reboot the ESP32-S3,
+    and a full boot (NVS load, display init in UiTask::init(), task startup)
+    can take over a second before LinkUart is alive to answer. `Q` is resent
+    every `resend_interval` while waiting, so a first attempt lost to that
+    reboot -- or to the RX buffer not existing yet -- isn't fatal to the probe.
+    """
+    try:
+        import serial
+    except ImportError:
+        return False
+    ser = serial.Serial()
+    ser.port = port_device
+    ser.baudrate = baud
+    ser.timeout = 0.05
+    ser.write_timeout = 0.2
+    # Same reasoning as ErrorLink.__init__: deasserted before open() so probing
+    # a port never *holds* the board in reset via the RTS/DTR auto-reset circuit.
+    ser.dtr = False
+    ser.rts = False
+    try:
+        ser.open()
+    except Exception:
+        return False
+    try:
+        try:
+            ser.reset_input_buffer()
+        except Exception:
+            pass
+        buf = b""
+        now = time.time()
+        deadline = now + timeout
+        next_send = now
+        while time.time() < deadline:
+            if time.time() >= next_send:
+                try:
+                    ser.write(b"Q\n")
+                except Exception:
+                    pass
+                next_send = time.time() + resend_interval
+            chunk = ser.read(256)
+            if not chunk:
+                continue
+            buf += chunk
+            while b"\n" in buf:
+                raw, buf = buf.split(b"\n", 1)
+                text = raw.decode("utf-8", "replace").replace("\x00", "").strip()
+                if text and parse_gains(text) is not None:
+                    return True
+        return False
+    except Exception:
+        return False
+    finally:
+        try:
+            ser.close()
+        except Exception:
+            pass
+
+
+def autodetect_port(baud=115200, handshake_timeout=2.5):
+    """The AIM board's port, confirmed live. Raises SystemExit if none answers.
+
+    Candidates are found by USB VID/PID (COM numbering is assigned by Windows
+    in plug order and says nothing about what's attached), then tried in rank
+    order with the `Q`/`G` handshake (`_handshake_ok`) -- the port that talks
+    back as AIM firmware wins, not just the first thing that looks like an
+    ESP32 USB-serial bridge. `handshake_timeout` defaults high enough to ride
+    out a possible reboot-on-open plus a full boot; see `_handshake_ok`.
     """
     candidates, ports = list_ports(quiet=True)
     if not candidates:
@@ -151,27 +327,47 @@ def autodetect_port():
             ("Ports seen:\n  " + "\n  ".join(_describe(p) for p in ports)
              if ports else "No serial ports at all - is the board plugged in?") +
             "\nPass the port explicitly with --port COMx.")
-    _, port, name = candidates[0]
-    if len(candidates) > 1:
-        others = ", ".join(c[1].device for c in candidates[1:])
-        print(f"Serial: {len(candidates)} candidates ({port.device}, {others}); "
-              f"taking {port.device}. Use --port COMx to override.")
-    print(f"Serial: auto-detected {port.device} ({name})")
-    return port.device
+    tried = []
+    for _, port, name in candidates:
+        print(f"Serial: probing {port.device} ({name}) for the Q/G handshake "
+              f"(up to {handshake_timeout:g}s, covers a reboot) ...")
+        if _handshake_ok(port.device, baud, handshake_timeout):
+            print(f"Serial: auto-detected {port.device} ({name}) -- confirmed by handshake")
+            return port.device
+        tried.append(f"{port.device} ({name})")
+    raise SystemExit(
+        "--port auto: found USB-serial adapter(s) " + ", ".join(tried) +
+        " but none answered the Q/G handshake.\n"
+        "Is AIM firmware flashed and running, and is this adapter wired to "
+        "UART1 (GPIO17/18), not the USB-CDC console?\n"
+        "Pass the port explicitly with --port COMx, or use --list to see what's plugged in.")
 
 
 class ErrorLink:
     """Sends error frames to the ESP32.
 
-    port=None is inert (dry run); port="auto" picks the board by USB VID/PID.
+    port=None is inert (dry run); port="auto" finds the board by USB VID/PID
+    and confirms it with the `Q`/`G` handshake (see `autodetect_port`).
     """
 
-    def __init__(self, port=None, baud=115200, max_rate=30.0, echo=False):
+    def __init__(self, port=None, baud=115200, max_rate=30.0, echo=False,
+                 tx_log_path=None):
         self.echo = echo
         self.min_interval = 1.0 / max_rate if max_rate > 0 else 0.0
         self.sent = 0
         self.fired = 0
+        # Every line _write() sends passes through here -- see tx_log.py for
+        # why this is one call site instead of one print per sender.
+        self._tx_log = TxLog(tx_log_path, echo=echo)
+        # Last on/off requested through telemetry() -- not the firmware's
+        # actual state, which we have no way to read back. A caller that
+        # retries T 1 to survive a lost request (e.g. detect_dots.py, see its
+        # run()) checks this first, so it never re-enables telemetry an
+        # operator explicitly turned off with T 0.
+        self.telemetry_wanted = True
+        self._cfg_id = 0     # id counter for cfg.set/cfg.get, matched in cfg.state
         self._last = 0.0
+        self._last_manual = 0.0
         self._rx = b""
         self._pending = []   # complete lines received, not yet handed to poll()
         self._ser = None
@@ -180,7 +376,7 @@ class ErrorLink:
             print("Serial: disabled (no --port) -- detection only")
             return
         if str(port).lower() == "auto":
-            port = autodetect_port()
+            port = autodetect_port(baud)
         self.port = port
         try:
             import serial  # pyserial
@@ -221,6 +417,34 @@ class ErrorLink:
         self._drain()
         return True
 
+    def manual(self, vpan_deg_s, vtilt_deg_s):
+        """Send one `M <vpan> <vtilt>` frame -- direct velocity, deg/s, the
+        MANUAL channel. Returns True if it went out, False if rate-limited.
+
+        Rate-limited the same way send() rate-limits E frames, and for the
+        same reason: MANUAL fails safe within config::TRACK_TIMEOUT_MS
+        (300 ms) of the last M frame, exactly like AUTO does on E frames. A
+        caller driving this from a key held down must keep calling it every
+        loop iteration -- zero velocity included -- rather than only when the
+        commanded rate changes; see manual_control.py.
+        """
+        now = time.time()
+        if now - self._last_manual < self.min_interval:
+            return False
+        self._last_manual = now
+
+        if not (math.isfinite(vpan_deg_s) and math.isfinite(vtilt_deg_s)):
+            vpan_deg_s, vtilt_deg_s = 0.0, 0.0
+        if self._write(f"M {vpan_deg_s:.3f} {vtilt_deg_s:.3f}\n"):
+            self.sent += 1
+        self._drain()
+        return True
+
+    def manual_now(self, vpan_deg_s, vtilt_deg_s):
+        """manual() ignoring the rate limit -- for an immediate stop."""
+        self._last_manual = 0.0
+        return self.manual(vpan_deg_s, vtilt_deg_s)
+
     def fire(self):
         """Pull the trigger: one laser flash. Never rate-limited or dropped.
 
@@ -229,7 +453,6 @@ class ErrorLink:
         nothing that can be dropped should be able to fire the laser.
         """
         self.fired += 1
-        print(f"FIRE -> {self.port or '(no port)'}")
         self._write("F\n")
         self._drain()
 
@@ -269,21 +492,80 @@ class ErrorLink:
     def telemetry(self, on):
         """`T <0|1>` - start/stop the plottable per-frame stream.
 
-        It shares this UART with the frames we are sending, so leave it off
-        except while tuning.
+        It shares this UART with the frames we are sending, but the overlay
+        renders it live (see overlay.draw_overlay), so detect_dots.py leaves
+        it on by default rather than only while tuning.
         """
+        self.telemetry_wanted = bool(on)
         self.send_raw(f"T {1 if on else 0}\n")
 
     def query(self):
         """`Q` - ask for the current gains; the firmware replies with `G ...`."""
         self.send_raw("Q\n")
 
+    def send_ndjson(self, obj):
+        """Seal `obj` with its CRC-8 and send it as one NDJSON line.
+
+            {"t":"cfg.set","k":"input.channel","v":"AUTO","id":17}*4C
+
+        docs/protocol.md §3.1/§3.2. `obj` must be JSON-serialisable and small
+        enough to stay under the 256-byte line cap once sealed.
+        """
+        body = json.dumps(obj, separators=(",", ":"))
+        self.send_raw(f"{body}*{crc8(body.encode('utf-8')):02X}\n")
+
+    def cfg_set(self, key, value):
+        """`cfg.set` - set one config key live (docs/protocol.md §3.3).
+
+        Fire-and-forget from here: every cfg.set gets a matching `cfg.state`
+        reply (see parse_cfg_state), accepted or rejected, which is how a
+        typo'd key or an out-of-range value becomes visible rather than a
+        silent no-op. Returns the `id` sent, so a caller can match it up.
+        """
+        self._cfg_id += 1
+        self.send_ndjson({"t": "cfg.set", "k": key, "v": value, "id": self._cfg_id})
+        return self._cfg_id
+
+    def set_channel(self, channel):
+        """cfg.set `input.channel` - NONE / AUTO / MANUAL.
+
+        This is what makes this script's own `E` frames (the AUTO channel)
+        actually move the gimbal: the firmware boots with input.channel =
+        NONE, and every frame on a non-selected channel is parsed, counted as
+        drop_inact, and thrown away before it reaches the controller (§2.1).
+        MANUAL is the keyboard-driven `M <vpan> <vtilt>` channel (see
+        manual_control.py / the `manual()` method), not this script's own.
+        """
+        c = str(channel).strip().upper()
+        if c not in ("NONE", "AUTO", "MANUAL"):
+            raise ValueError(f"channel must be NONE/AUTO/MANUAL (got {channel!r})")
+        return self.cfg_set("input.channel", c)
+
+    def press_control(self):
+        """cfg.set `control.press` - the remote equivalent of pressing the
+        board's physical CONTROL button.
+
+        Same toggle the button gives: arms from DISARMED/PARKED, disarms from
+        ARMED/LINK_LOST, acknowledges a latched FAULT, no-ops during
+        BOOT/SELFTEST/ZONE_TOUR. AUTO-channel `E` frames only move the gimbal
+        once `st:` (the telemetry readout) reads ARMED -- selecting the
+        channel alone is not enough.
+
+        This is the one command that is not gated by input.channel: it works
+        regardless of which channel is selected, same as the physical button.
+        Watch `st:` after sending it to see which of the above happened.
+        """
+        return self.cfg_set("control.press", True)
+
     def send_raw(self, line):
-        print(f"-> {line.strip()}")
         self._write(line)
         self._drain()
 
     def _write(self, line):
+        # Log the attempt regardless of whether it actually reaches the wire
+        # -- see tx_log.py. This is the one call site every sender above
+        # goes through, so it is also the one place logging needs to happen.
+        self._tx_log.record(line)
         if self._ser is None:
             return False
         try:
@@ -296,10 +578,11 @@ class ErrorLink:
     def poll(self):
         """Whatever the firmware has said since the last call, as text lines.
 
-        The link is PC -> ESP32 only, but the firmware console shares this UART,
-        so ESP_LOGI output, boot banners, and panics also arrive here. Reading
-        them costs nothing and leaving them unread eventually fills the OS
-        buffer, so this runs every frame whether anyone looks or not.
+        Only protocol lines are expected on this UART (console logs are UART0
+        / USB-Serial-JTAG, not this port -- see the module docstring), but
+        reading unconditionally costs nothing and leaving RX unread eventually
+        fills the OS buffer, so this runs every frame whether anyone looks or
+        not.
         """
         self._drain()
         lines, self._pending = self._pending, []
@@ -337,11 +620,16 @@ class ErrorLink:
         if self._ser is not None:
             try:
                 if park:
-                    self.send_now(0.0, 0.0, False)  # gimbal stops, PIDs kept
+                    # Zero both channels: whichever one is actually selected
+                    # is what stops the gimbal, and there is no way to read
+                    # input.channel back from here to send only the right one.
+                    self.send_now(0.0, 0.0, False)   # AUTO
+                    self.manual_now(0.0, 0.0)        # MANUAL
                 self._ser.close()
             except Exception:
                 pass
             self._ser = None
+        self._tx_log.close()
 
     def send_now(self, dx, dy, valid):
         """send() ignoring the rate limit."""
@@ -357,7 +645,17 @@ def _describe_reply(line):
         return (f"gains: pan kp={p[0]:g} ki={p[1]:g} kd={p[2]:g} | "
                 f"tilt kp={t[0]:g} ki={t[1]:g} kd={t[2]:g} | "
                 f"{'ARMED' if gains['armed'] else 'DISARMED'}")
-    tel = parse_telemetry(line)
+    tlm = parse_tlm(line)
+    if tlm is not None:
+        return (f"tlm: ex:{tlm['ex']:+.3f} ey:{tlm['ey']:+.3f} "
+                f"v:{tlm['vp']:+.1f}/{tlm['vt']:+.1f} deg/s "
+                f"pan:{tlm['pan']:.1f} tilt:{tlm['tilt']:.1f} "
+                f"[{tlm['st']}/{tlm['ch']}]")
+    cfg = parse_cfg_state(line)
+    if cfg is not None:
+        status = "OK" if cfg.get("ok") else f"REJECTED ({cfg.get('err')})"
+        return f"cfg: {cfg.get('k')}={cfg.get('v')!r} {status} [id {cfg.get('id')}]"
+    tel = parse_telemetry(line)   # retired ASCII format, older firmware only
     if tel is not None:
         return (f"ex:{tel['ex']:+.3f} ey:{tel.get('ey', 0.0):+.3f} "
                 f"pan:{tel.get('pan', 0.0):.1f} tilt:{tel.get('tilt', 0.0):.1f} "
@@ -393,7 +691,8 @@ def _console(link):
           "  N 8 0             nudge 8 degrees of pan, open loop\n"
           "  T 1 / T 0         telemetry on / off\n"
           "  F                 fire\n"
-          "  E 0.2 0 1         one error frame\n"
+          "  E 0.2 0 1         one error frame (AUTO channel)\n"
+          "  M 20 0            one velocity frame, deg/s (MANUAL channel)\n"
           "Ctrl-C or 'exit' to leave.")
 
     stop = threading.Event()
@@ -443,6 +742,12 @@ def _main():
     ap.add_argument("--monitor", action="store_true",
                     help="only listen: print what the ESP32 says, send nothing")
     ap.add_argument("--echo", action="store_true", help="print firmware logs")
+    ap.add_argument("--tx-log", nargs="?", const="tx_log.txt", default=None,
+                    metavar="PATH",
+                    help="append every line sent to PATH (bare --tx-log = "
+                         "tx_log.txt), timestamped -- see tx_log.py. "
+                         "Everything prints to the console regardless except "
+                         "streamed E frames, which need --echo")
 
     # --- tuning console ---
     ap.add_argument("--query", action="store_true",
@@ -452,8 +757,22 @@ def _main():
     ap.add_argument("--nudge", nargs=2, type=float, metavar=("DPAN", "DTILT"),
                     help="N: displace the gimbal open loop, in degrees - a "
                          "repeatable disturbance for the loop to reject")
+    ap.add_argument("--manual", nargs=2, type=float, metavar=("VPAN", "VTILT"),
+                    help="M: one direct velocity command, deg/s - only moves "
+                         "the gimbal once input.channel=MANUAL and ARMED "
+                         "(--channel MANUAL --control); see manual_control.py "
+                         "for the keyboard-driven version")
     ap.add_argument("--telemetry", type=int, choices=[0, 1], metavar="0|1",
                     help="T: start/stop the plottable per-frame stream")
+    ap.add_argument("--channel", choices=["NONE", "AUTO", "MANUAL"],
+                    help="cfg.set input.channel: AUTO is what makes this "
+                         "script's own E frames (or detect_dots.py's) take "
+                         "effect -- the firmware boots with it at NONE")
+    ap.add_argument("--control", action="store_true",
+                    help="cfg.set control.press: remote CONTROL-button press "
+                         "-- arm/disarm toggle, or fault.ack if latched. "
+                         "Selecting AUTO alone does not move the gimbal; it "
+                         "also has to be ARMED (see st: in the telemetry)")
     ap.add_argument("--console", action="store_true",
                     help="interactive: type protocol lines (Q, K b 40 4 0, N 8 0, "
                          "T 1, F, E ...) and watch the replies")
@@ -466,9 +785,14 @@ def _main():
     # Any of these is a one-shot exchange: send, give the firmware a moment to
     # answer, print whatever came back. They compose, so `--gains ... --nudge ...`
     # runs a whole experiment in one line.
-    if args.query or args.gains or args.nudge or args.telemetry is not None:
-        link = ErrorLink(args.port, args.baud, echo=False)
+    if (args.query or args.gains or args.nudge or args.manual
+            or args.telemetry is not None or args.channel or args.control):
+        link = ErrorLink(args.port, args.baud, echo=False, tx_log_path=args.tx_log)
         try:
+            if args.channel:
+                link.set_channel(args.channel)
+            if args.control:
+                link.press_control()
             if args.gains:
                 axis, kp, ki, kd = args.gains
                 try:
@@ -479,6 +803,8 @@ def _main():
                 link.telemetry(args.telemetry)
             if args.nudge:
                 link.nudge(*args.nudge)
+            if args.manual:
+                link.manual(*args.manual)
             if args.query:
                 link.query()
             _print_replies(link, 0.4)
@@ -487,13 +813,13 @@ def _main():
         return
 
     if args.console:
-        _console(ErrorLink(args.port, args.baud, echo=True))
+        _console(ErrorLink(args.port, args.baud, echo=True, tx_log_path=args.tx_log))
         return
 
     if args.monitor:
         # Pure listener - the gimbal never moves, so this is the safe way to
         # check the wiring and see the firmware's banner and telemetry.
-        link = ErrorLink(args.port, args.baud, echo=True)
+        link = ErrorLink(args.port, args.baud, echo=True, tx_log_path=args.tx_log)
         print("Monitoring. Nothing is sent. Ctrl-C to stop.")
         try:
             while True:
@@ -505,7 +831,8 @@ def _main():
             link.close(park=False)
         return
 
-    link = ErrorLink(args.port, args.baud, max_rate=args.rate * 2, echo=args.echo)
+    link = ErrorLink(args.port, args.baud, max_rate=args.rate * 2, echo=args.echo,
+                     tx_log_path=args.tx_log)
     if args.fire:
         link.fire()
         time.sleep(0.1)          # let the byte leave before closing the port

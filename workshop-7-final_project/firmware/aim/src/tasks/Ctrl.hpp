@@ -26,9 +26,13 @@
 #include "Gimbal.hpp"
 #include "Laser.hpp"
 #include "Pid.hpp"
+#include "Gains.hpp"
+#include "Zone.hpp"
 #include "ZoneTour.hpp"
+#include "IInputChannel.hpp"
 #include "ManualChannel.hpp"
 #include "AutoChannel.hpp"
+#include "NoneChannel.hpp"
 
 // The ctrl task. Owns the PIDs, the gimbal and the
 // laser gate; the single consumer of cmd_q; the sole owner of the FSM. Runs a
@@ -52,17 +56,16 @@ public:
         _laser.init();       // boot-safe: gate driven inactive before it is an output
 
         _ipc.config->snapshot(_cfg);
-        _gimbal.setWorkingZone(_cfg.zone_pan_min, _cfg.zone_pan_max,
-                               _cfg.zone_tilt_min, _cfg.zone_tilt_max);
-        _zPanMin = _cfg.zone_pan_min; _zPanMax = _cfg.zone_pan_max;
-        _zTiltMin = _cfg.zone_tilt_min; _zTiltMax = _cfg.zone_tilt_max;
+        _zone = _cfg.zone;
+        _gimbal.setWorkingZone(_zone);
         applyGains(true);
-        _lastChannel = (config::Channel)_cfg.input_channel;
+        _lastChannel   = (config::Channel)_cfg.input_channel;
+        _activeChannel = selectChannel(_lastChannel);
 
         const uint32_t now = nowMs();
         _autoChannel.reset(now); // primes _lastPidMs so the first frame's dt is sane
-        _lastActivityMs   = now;
-        _lastValidFrameMs = now - config::TRACK_TIMEOUT_MS - 1; // start stale
+        _lastActivityMs = now;
+        _lastFrameMs    = now - config::TRACK_TIMEOUT_MS - 1; // start stale
     }
 
     void run()
@@ -106,17 +109,23 @@ private:
         drainCmds(now);
 
         // E-stop: safety latched the atomic; ctrl turns it into the transition.
-        if (_ipc.estopLatched.load(std::memory_order_relaxed) && _sm.state() != State::Fault)
+        if (_ipc.estopLatched.load() && _sm.state() != State::Fault)
         {
             _gimbal.stop();
-            _autoChannel.resetPids();
+            _activeChannel->reset(now);
             _sm.set(State::Fault, "estop");
             emitEstopEvt(now);
         }
 
         const bool chNone = (config::Channel)_cfg.input_channel == config::Channel::None;
-        const bool fresh  = !chNone && (now - _lastValidFrameMs <= config::TRACK_TIMEOUT_MS);
-        _ipc.linkFresh.store(fresh, std::memory_order_relaxed);
+        // "Fresh" is link liveness -- a frame arrived recently -- not target
+        // visibility. valid=0 (dot lost this frame) must not read as silence:
+        // the PC keeps sending at a steady rate specifically so a missed
+        // detection holds the loop rather than tripping the link failsafe
+        // (see serial_link.py's module docstring). Target visibility is a
+        // separate concern, already handled inside AutoChannel::onErrorSample.
+        const bool fresh = !chNone && (now - _lastFrameMs <= config::TRACK_TIMEOUT_MS);
+        _ipc.linkFresh.store(fresh);
 
         if (stepState(now, fresh, chNone))
             _gimbal.update(config::UPDATE_PERIOD_S);
@@ -133,13 +142,10 @@ private:
     {
         applyGains(false);
 
-        if (_cfg.zone_pan_min != _zPanMin || _cfg.zone_pan_max != _zPanMax ||
-            _cfg.zone_tilt_min != _zTiltMin || _cfg.zone_tilt_max != _zTiltMax)
+        if (_cfg.zone != _zone)
         {
-            _gimbal.setWorkingZone(_cfg.zone_pan_min, _cfg.zone_pan_max,
-                                   _cfg.zone_tilt_min, _cfg.zone_tilt_max);
-            _zPanMin = _cfg.zone_pan_min; _zPanMax = _cfg.zone_pan_max;
-            _zTiltMin = _cfg.zone_tilt_min; _zTiltMax = _cfg.zone_tilt_max;
+            _gimbal.setWorkingZone(_cfg.zone);
+            _zone = _cfg.zone;
         }
 
         const config::Channel ch = (config::Channel)_cfg.input_channel;
@@ -148,6 +154,7 @@ private:
             // The handover reset - identical whether the change came from an
             // NDJSON cfg.set or the MODE button.
             resetLoop(now);
+            _activeChannel  = selectChannel(ch);
             _lastActivityMs = now;
             _lastChannel = ch;
 
@@ -157,105 +164,41 @@ private:
         }
     }
 
+    IInputChannel *selectChannel(config::Channel ch)
+    {
+        switch (ch)
+        {
+        case config::Channel::Auto:   return &_autoChannel;
+        case config::Channel::Manual: return &_manualChannel;
+        case config::Channel::None:
+        default:                      return &_noneChannel;
+        }
+    }
+
     void applyGains(bool force)
     {
-        if (force || _cfg.pid_pan_kp != _gPanKp || _cfg.pid_pan_ki != _gPanKi ||
-            _cfg.pid_pan_kd != _gPanKd)
+        if (force || _cfg.pan_gains != _panGains)
         {
-            _autoChannel.setPanGains(_cfg.pid_pan_kp, _cfg.pid_pan_ki, _cfg.pid_pan_kd);
-            _gPanKp = _cfg.pid_pan_kp; _gPanKi = _cfg.pid_pan_ki; _gPanKd = _cfg.pid_pan_kd;
+            _autoChannel.setPanGains(_cfg.pan_gains.kp, _cfg.pan_gains.ki, _cfg.pan_gains.kd);
+            _panGains = _cfg.pan_gains;
         }
-        if (force || _cfg.pid_tilt_kp != _gTiltKp || _cfg.pid_tilt_ki != _gTiltKi ||
-            _cfg.pid_tilt_kd != _gTiltKd)
+        if (force || _cfg.tilt_gains != _tiltGains)
         {
-            _autoChannel.setTiltGains(_cfg.pid_tilt_kp, _cfg.pid_tilt_ki, _cfg.pid_tilt_kd);
-            _gTiltKp = _cfg.pid_tilt_kp; _gTiltKi = _cfg.pid_tilt_ki; _gTiltKd = _cfg.pid_tilt_kd;
+            _autoChannel.setTiltGains(_cfg.tilt_gains.kp, _cfg.tilt_gains.ki, _cfg.tilt_gains.kd);
+            _tiltGains = _cfg.tilt_gains;
         }
     }
 
     // --- cmd_q ------------------------------------------------------------------
-    void drainCmds(uint32_t now)
-    {
-        CmdItem c;
-        while (xQueueReceive(_ipc.cmdQ, &c, 0) == pdTRUE)
-        {
-            switch (c.kind)
-            {
-            case CmdKind::ErrorSample:
-                if (c.flag)
-                    _lastValidFrameMs = now;
-                // Sign correction is the mounting, not the wire: it says how the
-                // camera sits relative to the gimbal.
-                _autoChannel.onErrorSample(c.flag,
-                                           {config::PAN_INVERT ? -c.vec.x : c.vec.x,
-                                            config::TILT_INVERT ? -c.vec.y : c.vec.y},
-                                           c.t_ms);
-                _lastActivityMs = now;
-                break;
+    // Handlers are the explicit specializations defined out of line, in a single
+    // #pragma region, after the class. drainCmds() is defined out of line too, so
+    // that by the time its body is parsed every specialization it calls has
+    // already been declared - an explicit specialization must be visible before
+    // any use that would otherwise implicitly instantiate the (undefined) primary.
+    template <CmdKind K>
+    void handleCmd(uint32_t now, const CmdItem &c);
 
-            case CmdKind::ManualVelocity:
-                _manualChannel.set(c.vec, now);
-                _lastValidFrameMs = now;
-                _lastActivityMs   = now;
-                break;
-
-            case CmdKind::Nudge:
-                _gimbal.nudge(c.vec);
-                break;
-
-            case CmdKind::FireLaser:
-                if (laserPermitted(_ipc))
-                {
-                    _laser.fire();
-                    ++_fireCount;
-                }
-                else
-                {
-                    emitLaserDenied(now);
-                }
-                break;
-
-            case CmdKind::Arm:
-                _lastActivityMs = now;
-                handleArm(now);
-                break;
-
-            case CmdKind::FaultAck:
-                _lastActivityMs = now;
-                handleFaultAck(now);
-                break;
-            }
-        }
-    }
-
-    void handleArm(uint32_t now)
-    {
-        switch (_sm.state())
-        {
-        case State::Disarmed:
-        case State::Parked:
-            resetLoop(now);
-            _sm.set(State::Armed, "btn.control");
-            break;
-        case State::Armed:
-        case State::LinkLost:
-            _gimbal.stop();
-            _sm.set(State::Disarmed, "btn.control");
-            break;
-        default:
-            break; // BOOT / SELFTEST / ZONE_TOUR / FAULT ignore arm
-        }
-    }
-
-    void handleFaultAck(uint32_t now)
-    {
-        if (_sm.state() != State::Fault)
-            return;
-        _ipc.estopLatched.store(false, std::memory_order_relaxed);
-        _ipc.estopSource.store(EstopSource::None, std::memory_order_relaxed);
-        resetLoop(now);
-        _sm.set(State::Disarmed, "fault.ack");
-    }
+    void drainCmds(uint32_t now);
 
     // --- FSM: one case per state, dispatched once a tick ---------------------
     // Returns true if the gimbal's velocity integrator should run this tick.
@@ -287,7 +230,7 @@ private:
         case State::Armed:
             if (!fresh && !chNone)
             {
-                _autoChannel.resetPids();
+                _activeChannel->reset(now);
                 _gimbal.stop();
                 _sm.set(State::LinkLost, "link.stale");
             }
@@ -298,7 +241,10 @@ private:
             }
             else
             {
-                computeMotion(now, fresh);
+                // fresh is guaranteed true here: the branch above already
+                // catches !fresh && !chNone, so Auto (which implies !chNone)
+                // only reaches this dispatch while fresh.
+                _activeChannel->update(now, fresh);
             }
             break;
 
@@ -322,31 +268,10 @@ private:
         return true;
     }
 
-    // --- motion (ARMED only - dispatched from stepState) ----------------------
-    // `fresh` is guaranteed true whenever the Auto branch runs: stepState's
-    // Armed case only reaches here when NOT(!fresh && !chNone), and the Auto
-    // channel implies chNone is false.
-    void computeMotion(uint32_t now, bool fresh)
-    {
-        switch ((config::Channel)_cfg.input_channel)
-        {
-        case config::Channel::Auto:
-            _autoChannel.update(now, fresh);
-            break;
-        case config::Channel::Manual:
-            _manualChannel.update(now);
-            break;
-        case config::Channel::None:
-        default:
-            _gimbal.setVelocity({0.0f, 0.0f});
-            break;
-        }
-    }
-
     void resetLoop(uint32_t now)
     {
         _autoChannel.reset(now);
-        _manualChannel.reset();
+        _manualChannel.reset(now);
         _gimbal.setVelocity({0.0f, 0.0f});
     }
 
@@ -409,7 +334,7 @@ private:
     void emitEstopEvt(uint32_t now)
     {
         (void)now;
-        const char *src = (_ipc.estopSource.load(std::memory_order_relaxed) == EstopSource::Uart)
+        const char *src = (_ipc.estopSource.load() == EstopSource::Uart)
                               ? "uart"
                               : "button";
         char line[128];
@@ -427,9 +352,9 @@ private:
             return;
         _lastDenyMs = now;
 
-        const char *why = _ipc.estopLatched.load(std::memory_order_relaxed) ? "estop"
-                          : !_ipc.linkFresh.load(std::memory_order_relaxed)  ? "link_stale"
-                                                                            : "state";
+        const char *why = _ipc.estopLatched.load() ? "estop"
+                          : !_ipc.linkFresh.load() ? "link_stale"
+                                                    : "state";
         char line[112];
         std::snprintf(line, sizeof(line),
                       "{\"t\":\"evt\",\"e\":\"laser_denied\",\"up\":%llu,\"why\":\"%s\"}",
@@ -451,8 +376,7 @@ private:
     Servo _tiltServo{_tiltPwm, config::SERVO_MIN_US, config::SERVO_MAX_US,
                      config::SERVO_MIN_ANGLE, config::SERVO_MAX_ANGLE};
     Gimbal _gimbal{_panServo, _tiltServo, config::InitialViewPort,
-                   config::GIMBAL_PAN_MIN, config::GIMBAL_PAN_MAX,
-                   config::GIMBAL_TILT_MIN, config::GIMBAL_TILT_MAX,
+                   config::GIMBAL_MECH_ZONE,
                    config::SERVO_PAN_MAX_RATE, config::SERVO_TILT_MAX_RATE};
 
     Relay _laserRelay{pinout::LASER_GATE, config::RELAY_ACTIVE_HIGH};
@@ -463,6 +387,11 @@ private:
                              config::TILT_KP, config::TILT_KI, config::TILT_KD, config::TILT_MAX_SLEW,
                              config::PID_DERIV_ALPHA};
     ManualChannel _manualChannel{_gimbal};
+    NoneChannel   _noneChannel{_gimbal};
+
+    // The active IInputChannel* is kept in lockstep with _lastChannel by
+    // selectChannel() - init() and applyConfigChanges() are the only writers.
+    IInputChannel *_activeChannel = &_noneChannel;
 
     ZoneTour _tour{_gimbal, config::ZONE_TOUR_RATE_DEG_S, config::ZONE_TOUR_DWELL_MS,
                    config::PAN_ANGLE_AIMS_RIGHT, config::TILT_ANGLE_AIMS_DOWN};
@@ -472,13 +401,119 @@ private:
     config::ConfigBlob _cfg{config::CONFIG_DEFAULTS};
     config::Channel    _lastChannel = config::Channel::None;
 
-    float _gPanKp = 0, _gPanKi = 0, _gPanKd = 0;
-    float _gTiltKp = 0, _gTiltKi = 0, _gTiltKd = 0;
-    float _zPanMin = 0, _zPanMax = 0, _zTiltMin = 0, _zTiltMax = 0;
+    Gains _panGains{0, 0, 0};
+    Gains _tiltGains{0, 0, 0};
+    Zone _zone{0, 0, 0, 0};
 
-    uint32_t _lastValidFrameMs = 0;
+    uint32_t _lastFrameMs = 0;    // last E/M frame of any validity -- link liveness
     uint32_t _lastActivityMs = 0;
     uint32_t _lastDenyMs     = 0;
     uint32_t _seq            = 0;
     uint32_t _fireCount      = 0;
 };
+
+// --- cmd_q handlers, one per CmdKind, single level of abstraction each -------
+#pragma region CmdHandlers
+
+template <>
+inline void CtrlTask::handleCmd<CmdKind::ErrorSample>(uint32_t now, const CmdItem &c)
+{
+    // Any E frame proves the link is alive, valid=0 included -- see the
+    // comment on _lastFrameMs's use in step(). Only a genuinely valid sample
+    // updates the tracked error; onErrorSample() keeps that distinction.
+    _lastFrameMs = now;
+    // Sign correction is the mounting, not the wire: it says how the
+    // camera sits relative to the gimbal.
+    _autoChannel.onErrorSample(c.flag,
+                               {config::PAN_INVERT ? -c.vec.x : c.vec.x,
+                                config::TILT_INVERT ? -c.vec.y : c.vec.y},
+                               c.t_ms);
+    _lastActivityMs = now;
+}
+
+template <>
+inline void CtrlTask::handleCmd<CmdKind::ManualVelocity>(uint32_t now, const CmdItem &c)
+{
+    _manualChannel.set(c.vec, now);
+    _lastFrameMs    = now;
+    _lastActivityMs = now;
+}
+
+template <>
+inline void CtrlTask::handleCmd<CmdKind::Nudge>(uint32_t /*now*/, const CmdItem &c)
+{
+    _gimbal.nudge(c.vec);
+}
+
+template <>
+inline void CtrlTask::handleCmd<CmdKind::FireLaser>(uint32_t now, const CmdItem & /*c*/)
+{
+    if (laserPermitted(_ipc))
+    {
+        _laser.fire();
+        ++_fireCount;
+    }
+    else
+    {
+        emitLaserDenied(now);
+    }
+}
+
+template <>
+inline void CtrlTask::handleCmd<CmdKind::Arm>(uint32_t now, const CmdItem & /*c*/)
+{
+    _lastActivityMs = now;
+    switch (_sm.state())
+    {
+    case State::Disarmed:
+    case State::Parked:
+        resetLoop(now);
+        _sm.set(State::Armed, "btn.control");
+        break;
+    case State::Armed:
+    case State::LinkLost:
+        _gimbal.stop();
+        _sm.set(State::Disarmed, "btn.control");
+        break;
+    default:
+        break; // BOOT / SELFTEST / ZONE_TOUR / FAULT ignore arm
+    }
+}
+
+template <>
+inline void CtrlTask::handleCmd<CmdKind::FaultAck>(uint32_t now, const CmdItem & /*c*/)
+{
+    _lastActivityMs = now;
+    if (_sm.state() != State::Fault)
+        return;
+    _ipc.estopLatched.store(false);
+    _ipc.estopSource.store(EstopSource::None);
+    resetLoop(now);
+    _sm.set(State::Disarmed, "fault.ack");
+}
+
+#pragma endregion
+
+inline void CtrlTask::drainCmds(uint32_t now)
+{    
+#define AIM_CMD_CASE(K) \
+    case CmdKind::K:    \
+        handleCmd<CmdKind::K>(now, c); \
+        break
+
+    CmdItem c;
+    while (xQueueReceive(_ipc.cmdQ, &c, 0) == pdTRUE)
+    {
+        switch (c.kind)
+        {
+        AIM_CMD_CASE(ErrorSample);
+        AIM_CMD_CASE(ManualVelocity);
+        AIM_CMD_CASE(Nudge);
+        AIM_CMD_CASE(FireLaser);
+        AIM_CMD_CASE(Arm);
+        AIM_CMD_CASE(FaultAck);
+        }
+    }
+
+#undef AIM_CMD_CASE
+}

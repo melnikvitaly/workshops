@@ -108,7 +108,7 @@ private:
         CmdItem c{};
         c.t_ms = pdTICKS_TO_MS(xTaskGetTickCount());
         c.i    = 0;
-        c.kind = (_ipc.state.load(std::memory_order_relaxed) == State::Fault)
+        c.kind = (_ipc.state.load() == State::Fault)
                      ? CmdKind::FaultAck
                      : CmdKind::Arm;
         xQueueSend(_ipc.cmdQ, &c, pdMS_TO_TICKS(5));
@@ -141,7 +141,7 @@ private:
             return;
         }
 
-        const config::Rgb c = stateColour(_ipc.state.load(std::memory_order_relaxed));
+        const config::Rgb c = stateColour(_ipc.state.load());
         _led.rgb(c.r, c.g, c.b);
     }
 
@@ -178,7 +178,7 @@ private:
         config::ConfigBlob c;
         _ipc.config->snapshot(c);
 
-        const char *st = stateName(_ipc.state.load(std::memory_order_relaxed));
+        const char *st = stateName(_ipc.state.load());
         const char *ch = config::channelName((config::Channel)c.input_channel);
         const uint32_t up = (uint32_t)(esp_timer_get_time() / 1000000);
 

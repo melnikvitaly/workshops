@@ -2,6 +2,8 @@
 #include <cstdint>
 #include <driver/ledc.h>
 #include <utils/ViewPort.hpp>
+#include <utils/Gains.hpp>
+#include <utils/Zone.hpp>
 
 // Application-level tuning. Hardware wiring lives in Pinout.hpp; the reusable
 // classes keep their own internal defaults, and this is the single place where
@@ -46,6 +48,10 @@ namespace config
                                              // the arm actually has travel here.
     constexpr float GIMBAL_TILT_MIN = 46.0f;
     constexpr float GIMBAL_TILT_MAX = 125.0f;
+
+    // The hard mechanical stops above, bundled for passing to Gimbal.
+    constexpr Zone GIMBAL_MECH_ZONE = {GIMBAL_PAN_MIN, GIMBAL_PAN_MAX,
+                                        GIMBAL_TILT_MIN, GIMBAL_TILT_MAX};
 
     // Working zone: the sub-window inside the travel limits that the laser is
     // actually allowed to roam while tracking. Its centre is the park pose at
@@ -327,11 +333,9 @@ namespace config
     {
         uint8_t input_channel; // Channel
 
-        float pid_pan_kp, pid_pan_ki, pid_pan_kd;
-        float pid_tilt_kp, pid_tilt_ki, pid_tilt_kd;
+        Gains pan_gains, tilt_gains;
 
-        float zone_pan_min, zone_pan_max;
-        float zone_tilt_min, zone_tilt_max;
+        Zone zone;
 
         uint8_t laser_brightness;      // 0..100, Phase 1 PWM - stored only in Phase 0
         uint8_t telemetry_rate_hz;     // 1..50
@@ -343,10 +347,9 @@ namespace config
     // Safe defaults: transmission off, logging on, channel NONE, laser off.
     constexpr ConfigBlob CONFIG_DEFAULTS = {
         /* input_channel          */ (uint8_t)Channel::None,
-        /* pid_pan_{kp,ki,kd}     */ PAN_KP, PAN_KI, PAN_KD,
-        /* pid_tilt_{kp,ki,kd}    */ TILT_KP, TILT_KI, TILT_KD,
-        /* zone_pan_{min,max}     */ WORK_PAN_MIN, WORK_PAN_MAX,
-        /* zone_tilt_{min,max}    */ WORK_TILT_MIN, WORK_TILT_MAX,
+        /* pan_gains              */ {PAN_KP, PAN_KI, PAN_KD},
+        /* tilt_gains             */ {TILT_KP, TILT_KI, TILT_KD},
+        /* zone                   */ {WORK_PAN_MIN, WORK_PAN_MAX, WORK_TILT_MIN, WORK_TILT_MAX},
         /* laser_brightness       */ 0,
         /* telemetry_rate_hz      */ 10,
         /* log_sd_enabled         */ 1,

@@ -225,21 +225,21 @@ private:
             return "range";
         }
 
-        if (!std::strcmp(key, "pid.pan.kp"))  return checkGain(v, _blob.pid_pan_kp);
-        if (!std::strcmp(key, "pid.pan.ki"))  return checkGain(v, _blob.pid_pan_ki);
-        if (!std::strcmp(key, "pid.pan.kd"))  return checkGain(v, _blob.pid_pan_kd);
-        if (!std::strcmp(key, "pid.tilt.kp")) return checkGain(v, _blob.pid_tilt_kp);
-        if (!std::strcmp(key, "pid.tilt.ki")) return checkGain(v, _blob.pid_tilt_ki);
-        if (!std::strcmp(key, "pid.tilt.kd")) return checkGain(v, _blob.pid_tilt_kd);
+        if (!std::strcmp(key, "pid.pan.kp"))  return checkGain(v, _blob.pan_gains.kp);
+        if (!std::strcmp(key, "pid.pan.ki"))  return checkGain(v, _blob.pan_gains.ki);
+        if (!std::strcmp(key, "pid.pan.kd"))  return checkGain(v, _blob.pan_gains.kd);
+        if (!std::strcmp(key, "pid.tilt.kp")) return checkGain(v, _blob.tilt_gains.kp);
+        if (!std::strcmp(key, "pid.tilt.ki")) return checkGain(v, _blob.tilt_gains.ki);
+        if (!std::strcmp(key, "pid.tilt.kd")) return checkGain(v, _blob.tilt_gains.kd);
 
         if (!std::strcmp(key, "zone.pan.min"))
-            return checkZone(v, config::GIMBAL_PAN_MIN, config::GIMBAL_PAN_MAX, _blob.zone_pan_max, true, _blob.zone_pan_min);
+            return checkZone(v, config::GIMBAL_PAN_MIN, config::GIMBAL_PAN_MAX, _blob.zone.panMax, true, _blob.zone.panMin);
         if (!std::strcmp(key, "zone.pan.max"))
-            return checkZone(v, config::GIMBAL_PAN_MIN, config::GIMBAL_PAN_MAX, _blob.zone_pan_min, false, _blob.zone_pan_max);
+            return checkZone(v, config::GIMBAL_PAN_MIN, config::GIMBAL_PAN_MAX, _blob.zone.panMin, false, _blob.zone.panMax);
         if (!std::strcmp(key, "zone.tilt.min"))
-            return checkZone(v, config::GIMBAL_TILT_MIN, config::GIMBAL_TILT_MAX, _blob.zone_tilt_max, true, _blob.zone_tilt_min);
+            return checkZone(v, config::GIMBAL_TILT_MIN, config::GIMBAL_TILT_MAX, _blob.zone.tiltMax, true, _blob.zone.tiltMin);
         if (!std::strcmp(key, "zone.tilt.max"))
-            return checkZone(v, config::GIMBAL_TILT_MIN, config::GIMBAL_TILT_MAX, _blob.zone_tilt_min, false, _blob.zone_tilt_max);
+            return checkZone(v, config::GIMBAL_TILT_MIN, config::GIMBAL_TILT_MAX, _blob.zone.tiltMin, false, _blob.zone.tiltMax);
 
         if (!std::strcmp(key, "laser.brightness"))
         {
@@ -275,16 +275,16 @@ private:
             std::snprintf(out, cap, "\"%s\"", config::channelName((config::Channel)_blob.input_channel));
             return;
         }
-        if (!std::strcmp(key, "pid.pan.kp"))  { fmtNum(out, cap, _blob.pid_pan_kp);  return; }
-        if (!std::strcmp(key, "pid.pan.ki"))  { fmtNum(out, cap, _blob.pid_pan_ki);  return; }
-        if (!std::strcmp(key, "pid.pan.kd"))  { fmtNum(out, cap, _blob.pid_pan_kd);  return; }
-        if (!std::strcmp(key, "pid.tilt.kp")) { fmtNum(out, cap, _blob.pid_tilt_kp); return; }
-        if (!std::strcmp(key, "pid.tilt.ki")) { fmtNum(out, cap, _blob.pid_tilt_ki); return; }
-        if (!std::strcmp(key, "pid.tilt.kd")) { fmtNum(out, cap, _blob.pid_tilt_kd); return; }
-        if (!std::strcmp(key, "zone.pan.min"))  { fmtNum(out, cap, _blob.zone_pan_min);  return; }
-        if (!std::strcmp(key, "zone.pan.max"))  { fmtNum(out, cap, _blob.zone_pan_max);  return; }
-        if (!std::strcmp(key, "zone.tilt.min")) { fmtNum(out, cap, _blob.zone_tilt_min); return; }
-        if (!std::strcmp(key, "zone.tilt.max")) { fmtNum(out, cap, _blob.zone_tilt_max); return; }
+        if (!std::strcmp(key, "pid.pan.kp"))  { fmtNum(out, cap, _blob.pan_gains.kp);  return; }
+        if (!std::strcmp(key, "pid.pan.ki"))  { fmtNum(out, cap, _blob.pan_gains.ki);  return; }
+        if (!std::strcmp(key, "pid.pan.kd"))  { fmtNum(out, cap, _blob.pan_gains.kd);  return; }
+        if (!std::strcmp(key, "pid.tilt.kp")) { fmtNum(out, cap, _blob.tilt_gains.kp); return; }
+        if (!std::strcmp(key, "pid.tilt.ki")) { fmtNum(out, cap, _blob.tilt_gains.ki); return; }
+        if (!std::strcmp(key, "pid.tilt.kd")) { fmtNum(out, cap, _blob.tilt_gains.kd); return; }
+        if (!std::strcmp(key, "zone.pan.min"))  { fmtNum(out, cap, _blob.zone.panMin);  return; }
+        if (!std::strcmp(key, "zone.pan.max"))  { fmtNum(out, cap, _blob.zone.panMax);  return; }
+        if (!std::strcmp(key, "zone.tilt.min")) { fmtNum(out, cap, _blob.zone.tiltMin); return; }
+        if (!std::strcmp(key, "zone.tilt.max")) { fmtNum(out, cap, _blob.zone.tiltMax); return; }
         if (!std::strcmp(key, "laser.brightness"))  { std::snprintf(out, cap, "%u", _blob.laser_brightness);  return; }
         if (!std::strcmp(key, "telemetry.rate_hz")) { std::snprintf(out, cap, "%u", _blob.telemetry_rate_hz); return; }
         if (!std::strcmp(key, "log.sd.enabled"))        { fmtBool(out, cap, _blob.log_sd_enabled);        return; }

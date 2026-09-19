@@ -21,8 +21,10 @@ unnecessary here because a PC can run the color filter directly.
 | `dots.py`             | the detection itself: red dot, black dots, target choice, error vector             |
 | `serial_link.py`      | the COM link and the wire format; also a standalone sender for bring-up            |
 | `overlay.py`          | what is drawn on each frame: detections, error arrow, status text, mask windows    |
-| `fire_button.py`      | the on-screen FIRE button and its border states (converging / on target / arrived) |
+| `fire_button.py`      | the on-screen FIRE button and its border states (converging / on target)           |
 | `controls.py`         | the controls window (Tk): gain presets, manual gains, nudge, telemetry, query      |
+| `manual_control.py`   | keyboard-driven `MANUAL` channel: arrow keys → `M <vpan> <vtilt>` frames           |
+| `tx_log.py`           | the one place every line sent to the ESP32 is logged (console and/or file)         |
 | `tuning.py`           | the `--debug` threshold sliders, and printing them back out as a command line      |
 | `simulated_target.py` | click or arrow-key a stand-in target dot when no black dot is printed              |
 
@@ -73,32 +75,93 @@ Every frame is rendered with its detections drawn on it:
 - top-left readout — what was found, the exact frame being sent, fps, counters.
 
 Keys: `q` quit · `f` fire · `d` toggle the binary masks and the threshold
-sliders · `p` print the current thresholds as a command line · arrows move the
-simulated target · `SPACE`/`n` next image (folder mode).
+sliders · `p` print the current thresholds as a command line · `m` toggle
+keyboard `MANUAL` drive · arrows move the simulated target, or drive the
+gimbal while `m` is engaged · `SPACE`/`n` next image (folder mode).
 
 Mouse (view window): left-click places or moves a **simulated target** where no
 black dot is printed, right-click clears it. The arrow keys nudge it 24 px at a
 time, in the direction it moves on screen even under `--rotate`; with no dot yet
-the first arrow puts one at the frame centre.
+the first arrow puts one at the frame centre. While keyboard `MANUAL` drive is
+engaged, the arrow keys drive the gimbal instead (see below) and no longer
+touch the simulated target.
+
+### Driving the gimbal from the keyboard
+
+Press `m` to toggle **keyboard `MANUAL` drive** (`manual_control.py`). Turning
+it on also sets `input.channel = MANUAL` on the board — the same effect as
+picking `MANUAL` + **Set** in the controls window — then the arrow keys send
+`M <vpan> <vtilt>` frames (`docs/protocol.md`) for as long as they are held,
+at `--manual-speed` deg/s per axis (default 40). Turning it off sends one
+immediate zero-velocity frame and stops sending; the gimbal still needs
+`ARMED` (`--control`, or the controls window's **Arm / Disarm**) to actually
+move, same as `AUTO`.
+
+MANUAL fails safe the same way AUTO does — 300 ms without a fresh `M` frame
+parks the gimbal — so `manual_control.py` keeps a keep-alive frame going
+(every 150 ms) the whole time a key is down, even if the commanded velocity
+has not changed, and sends immediately the moment it does change. "Held" is
+read straight from the OS key state (Windows only), not guessed from
+OpenCV's key-repeat, so release is immediate and exact — see the module
+docstring.
+
+Driving one frame at a time, without the keyboard, from the command line or
+the interactive console:
+
+```bash
+py -3 serial_link.py --channel MANUAL --control --manual 20 0   # one M frame
+py -3 serial_link.py --console                                  # then type: M 20 0
+```
 
 ### Telemetry from the ESP32
 
-The link is PC → ESP32 only, but the firmware console shares that UART, so its
-`ESP_LOGI` output also arrives on the same port. The script drains it every
-frame (unread bytes would otherwise fill the OS buffer), but ignores it. Turn
-on telemetry from the controls panel or with `T 1`; the UI renders only this
-dedicated protocol message:
+Console logging is on a separate UART (see `serial_link.py`'s module
+docstring), so this port carries only control ASCII and NDJSON lines.
+Telemetry is **on by default** — the firmware itself boots with it off, but
+`detect_dots.py` keeps asking with `T 1` until a sample arrives, which also
+recovers it after a board reset without touching anything — so there is no
+separate step to see it. Untick the checkbox in the controls panel, or send
+`T 0`, to turn it back off; the UI renders the latest `tlm` sample
+(`docs/protocol.md` §3.4), tagged with how long ago it arrived:
 
 ```text
-ESP T  ex:-0.094 ey:-0.195  v:-3.3/+6.8 deg/s  pan:57.4 tilt:88.2  TRACK
+ESP T  st:ARMED ch:AUTO  ex:-0.031 ey:+0.012  v:-4.2/+1.1 deg/s  pan:92.4 tilt:78.1  0.3s ago
 ```
 
-That is the firmware's own view of the error you just sent — the quickest way to
-catch a sign or scaling mistake. Add `--echo` to print every received line to
-the console as well, or listen without sending anything at all:
+That is the firmware's own view of the error you just sent, plus its state,
+channel and angles — the quickest way to catch a sign or scaling mistake. The
+sample is never hidden once received: the age keeps counting up if telemetry
+stops arriving, so a dead link reads as a growing "Xs ago" instead of the
+readout vanishing. Add `--echo` to print every received line to the console as
+well, or listen without sending anything at all:
 
 ```bash
 py -3 serial_link.py --monitor      # print-only; the gimbal never moves
+```
+
+### Logging sent commands
+
+Every line written to the ESP32 — `E`/`M` frames, `F`, `K`, `N`, `T`, `Q`, and
+NDJSON `cfg.set` — passes through one place, `tx_log.py`, instead of each
+sender printing (or not printing) it on its own. Two independent outputs:
+
+- **Console** — everything prints as `-> ...` (`F`, `K`, `N`, `T`, `Q`,
+  `cfg.set`, and keyboard `MANUAL` drive's `M` frames), except `E`. `E` is
+  the one tag sent continuously regardless of any key or click — up to
+  `--rate`, commonly 20–30 Hz, for as long as `AUTO` runs — so printing every
+  one by default would drown everything else; add `--echo` to also print
+  those, and received lines too. `M` gets no such throttling: it only goes
+  out while a direction key is actually held, so it stays visible the same
+  way `F` or `N` is.
+- **File** — `--tx-log [PATH]` (bare `--tx-log` = `tx_log.txt`) appends
+  *every* line, streamed frames included, one per row with the elapsed time
+  since the log opened. Nothing is filtered out of the file regardless of
+  `--echo`, so it is the one to reach for when reviewing what was actually
+  sent during a run:
+
+```bash
+py -3 detect_dots.py --port --tx-log session.log
+py -3 serial_link.py --console --tx-log            # tx_log.txt in the cwd
 ```
 
 **FIRE button** (bottom-left, or the `f` key) sends `F\n` — one shot, the same
@@ -109,27 +172,67 @@ UART can never trigger a shot.
 Its **border reports the state of the loop**, so you can watch one thing instead
 of reading numbers:
 
-| Border               | Meaning                                               |
-|----------------------|-------------------------------------------------------|
-| green                | still converging — the error is too big to shoot on   |
-| red                  | `\|error\| ≤ --ready-error` (default 0.02): on target |
-| blinking white/amber | the ESP32 just reported **arrival**                   |
-
-Arrival is the firmware's own signal, not ours: when both axes settle inside its
-deadzone, it sets `arr:1` on one telemetry frame, which the script parses and
-flashes the border four times for. Red says *the camera* thinks you are on
-target; a blink says *the gimbal* agrees and has stopped. The telemetry
-annotation always shows `arrived:0` or `arrived:1`; the latter marks that arrival
-sample.
+| Border | Meaning                                               |
+|--------|--------------------------------------------------------|
+| green  | still converging — the error is too big to shoot on   |
+| red    | `\|error\| ≤ --ready-error` (default 0.02): on target |
 
 `--ready-error` only changes the colour — the firmware decides arrival on its
-own, much tighter deadzone (`TRACK_DEADZONE`, 0.004).
+own, much tighter deadzone (`TRACK_DEADZONE`, 0.004), which is not carried on
+the `tlm` sample; the `st`/`ch` fields in the telemetry readout are the
+firmware's own state and channel instead.
+
+### Making the PC the active channel
+
+Sending `E` frames is not enough by itself. The firmware picks exactly one
+input channel at a time (`input.channel`: `NONE` / `AUTO` / `MANUAL`) and
+boots at `NONE`, so `E` frames are parsed, counted as `drop_inact`, and thrown
+away until something sets it to `AUTO` — that is this script's channel, not
+`MANUAL` (the keyboard-driven `M <vpan> <vtilt>` channel, see
+[Driving the gimbal from the keyboard](#driving-the-gimbal-from-the-keyboard)).
+
+Unlike telemetry, this is never sent automatically — forcing the channel over
+can take control away from whatever else is driving the gimbal (another PC
+session, the pilot remote), so it always waits for an explicit action:
+
+```bash
+py -3 serial_link.py --channel AUTO     # cfg.set input.channel AUTO, then exit
+```
+
+or the **Channel** dropdown + **Set** button in the controls window (below).
+Either way it is a `cfg.set` NDJSON message, acknowledged by a `cfg.state`
+reply (`docs/protocol.md` §3.3) printed as `cfg: input.channel='AUTO' OK
+[id N]` with `--echo`/`--console`/`--monitor`; confirm it actually took by
+watching `ch:` in the telemetry readout on the view.
+
+### Arming
+
+Selecting `AUTO` is still not enough — the gimbal only moves while the
+firmware's own state machine is `ARMED` (check `st:` in the telemetry
+readout). Arming used to be physical-button-only; `control.press` is a
+`cfg.set` action key that does exactly what the board's `CONTROL` button does,
+so `EYE` can arm remotely too:
+
+```bash
+py -3 serial_link.py --control     # cfg.set control.press: arm/disarm toggle
+```
+
+or the **Arm / Disarm (CONTROL)** button in the controls window. It is a
+**toggle**, same as the physical button — it arms from `DISARMED`/`PARKED`,
+disarms from `ARMED`/`LINK_LOST`, acknowledges a latched `FAULT` instead of
+either, and no-ops during boot/self-test/zone-tour. There is no separate
+"arm" vs. "disarm" command, so watch `st:` after pressing it to see which one
+just happened. This trades away the safety property physical-button-only
+arming gave (nobody can arm the gimbal without standing at the board) for
+bench-testing convenience — see `docs/protocol.md` §3.3 before wiring it into
+anything unattended.
 
 ### The controls window
 
 A second window, `gimbal controls`, carries everything on the command side of
-the protocol: **Query gains**, a **Telemetry** toggle, an axis + KP/KI/KD row
-with **Set**, an open-loop **Nudge**, and the grid of gain presets. Nudge moves
+the protocol: **Query gains**, a **Telemetry** toggle, a **Channel** selector,
+**Arm / Disarm (CONTROL)**, an axis + KP/KI/KD row with **Set**, an open-loop
+**Nudge**, and the grid of gain presets. Nudge moves
 the physical gimbal by the entered number of degrees, simulating a sudden bump,
 vibration, wind gust, or mechanical slip; it is a repeatable disturbance for
 checking how the loop recovers, not an aiming offset. Clicking a

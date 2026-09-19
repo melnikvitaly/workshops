@@ -65,14 +65,14 @@ private:
         size_t      jsonLen = 0;
         if (!ndjson::checkLine(line, &json, &jsonLen))
         {
-            _ipc.badCrc.fetch_add(1, std::memory_order_relaxed);
+            _ipc.badCrc.fetch_add(1);
             return;
         }
 
         char t[16];
         if (!ndjson::getStr(json, jsonLen, "t", t, sizeof(t)))
         {
-            _ipc.unparsed.fetch_add(1, std::memory_order_relaxed);
+            _ipc.unparsed.fetch_add(1);
             return;
         }
         const long id = ndjson::getInt(json, jsonLen, "id", 0);
@@ -86,7 +86,7 @@ private:
         else if (!std::strcmp(t, "estop"))
             doEstop();
         else
-            _ipc.unparsed.fetch_add(1, std::memory_order_relaxed);
+            _ipc.unparsed.fetch_add(1);
     }
 
     void doCfgSet(const char *json, size_t jsonLen, long id)
@@ -94,7 +94,7 @@ private:
         char key[32];
         if (!ndjson::getStr(json, jsonLen, "k", key, sizeof(key)))
         {
-            _ipc.unparsed.fetch_add(1, std::memory_order_relaxed);
+            _ipc.unparsed.fetch_add(1);
             return;
         }
 
@@ -104,6 +104,24 @@ private:
         {
             postAction(CmdKind::FaultAck, nowMs());
             emitCfgState("fault.ack", "true", id, true, nullptr, "uart");
+            return;
+        }
+
+        // control.press is an action too: the remote equivalent of a physical
+        // CONTROL button press, dispatched exactly as Ui::controlPressed()
+        // does -- FaultAck while latched, otherwise the Arm toggle (arm from
+        // DISARMED/PARKED, disarm from ARMED/LINK_LOST, no-op during
+        // BOOT/SELFTEST/ZONE_TOUR). This is a deliberate trade: it drops the
+        // "must be physically at the board" property the button gave arming,
+        // in exchange for being able to arm from the EYE side during bench
+        // testing.
+        if (!std::strcmp(key, "control.press"))
+        {
+            const bool     faulted = _ipc.state.load() == State::Fault;
+            const CmdKind  kind    = faulted ? CmdKind::FaultAck : CmdKind::Arm;
+            postAction(kind, nowMs());
+            ESP_LOGI(TAG, "cfg.set control.press -> %s", faulted ? "fault.ack" : "arm");
+            emitCfgState("control.press", "true", id, true, nullptr, "uart");
             return;
         }
 
@@ -127,13 +145,19 @@ private:
             val = ConfigStore::Value::boolean(vf.flag);
             break;
         default:
+            ESP_LOGW(TAG, "cfg.set %s rejected: type", key);
             emitCfgState(key, currentOrNull(key), id, false, "type", "uart");
             return;
         }
 
         const ConfigStore::Result r = _ipc.config->set(key, val);
         if (!r.ok && (!std::strcmp(r.err, "range") || !std::strcmp(r.err, "type")))
-            _ipc.outOfRange.fetch_add(1, std::memory_order_relaxed);
+            _ipc.outOfRange.fetch_add(1);
+
+        if (r.ok)
+            ESP_LOGI(TAG, "cfg.set %s -> %s", key, currentOrNull(key));
+        else
+            ESP_LOGW(TAG, "cfg.set %s rejected: %s", key, r.err ? r.err : "?");
 
         emitCfgState(key, currentOrNull(key), id, r.ok, r.err, "uart");
     }
@@ -157,7 +181,7 @@ private:
 
     void doEstop()
     {
-        _ipc.estopSource.store(EstopSource::Uart, std::memory_order_relaxed);
+        _ipc.estopSource.store(EstopSource::Uart);
         xTaskNotifyGive(_ipc.safetyTask); // ctrl emits the evt when it sees the latch
     }
 
@@ -173,7 +197,7 @@ private:
         case protocol::FrameType::Error:
             if (ch != config::Channel::Auto)
             {
-                _ipc.dropInactive.fetch_add(1, std::memory_order_relaxed);
+                _ipc.dropInactive.fetch_add(1);
                 return;
             }
             postErr(now, {f.dx, f.dy}, f.targetVisible);
@@ -182,7 +206,7 @@ private:
         case protocol::FrameType::ManualVel:
             if (ch != config::Channel::Manual)
             {
-                _ipc.dropInactive.fetch_add(1, std::memory_order_relaxed);
+                _ipc.dropInactive.fetch_add(1);
                 return;
             }
             postVec(CmdKind::ManualVelocity, now, {f.dx, f.dy});
@@ -214,9 +238,9 @@ private:
         case protocol::FrameType::Invalid:
         default:
             if (f.reject == protocol::Reject::Range)
-                _ipc.outOfRange.fetch_add(1, std::memory_order_relaxed);
+                _ipc.outOfRange.fetch_add(1);
             else
-                _ipc.unparsed.fetch_add(1, std::memory_order_relaxed);
+                _ipc.unparsed.fetch_add(1);
             break;
         }
     }
@@ -292,9 +316,9 @@ private:
         char line[128];
         std::snprintf(line, sizeof(line),
                       "G pan %.2f %.2f %.2f tilt %.2f %.2f %.2f armed %d",
-                      (double)c.pid_pan_kp, (double)c.pid_pan_ki, (double)c.pid_pan_kd,
-                      (double)c.pid_tilt_kp, (double)c.pid_tilt_ki, (double)c.pid_tilt_kd,
-                      _ipc.state.load(std::memory_order_relaxed) == State::Armed ? 1 : 0);
+                      (double)c.pan_gains.kp, (double)c.pan_gains.ki, (double)c.pan_gains.kd,
+                      (double)c.tilt_gains.kp, (double)c.tilt_gains.ki, (double)c.tilt_gains.kd,
+                      _ipc.state.load() == State::Armed ? 1 : 0);
         _ipc.link->writeLine(line);
     }
 
@@ -336,7 +360,7 @@ private:
                       "{\"t\":\"tlm\",\"up\":%llu,\"st\":\"%s\",\"ch\":\"%s\",\"ex\":%.3f,"
                       "\"ey\":%.3f,\"vp\":%.2f,\"vt\":%.2f,\"pan\":%.1f,\"tilt\":%.1f}",
                       (unsigned long long)esp_timer_get_time(),
-                      stateName(_ipc.state.load(std::memory_order_relaxed)),
+                      stateName(_ipc.state.load()),
                       config::channelName((config::Channel)c.input_channel),
                       (double)s.ex, (double)s.ey, (double)s.vpan, (double)s.vtilt,
                       (double)s.pan, (double)s.tilt);
@@ -352,12 +376,12 @@ private:
                       "\"unparsed\":%lu,\"oor\":%lu,\"drop_inact\":%lu,\"uart_err\":%lu},"
                       "\"heap\":%lu,\"wdt\":0}",
                       (unsigned long long)esp_timer_get_time(),
-                      (unsigned long)_ipc.badCrc.load(std::memory_order_relaxed),
-                      (unsigned long)_ipc.overlong.load(std::memory_order_relaxed),
-                      (unsigned long)_ipc.unparsed.load(std::memory_order_relaxed),
-                      (unsigned long)_ipc.outOfRange.load(std::memory_order_relaxed),
-                      (unsigned long)_ipc.dropInactive.load(std::memory_order_relaxed),
-                      (unsigned long)_ipc.uartErr.load(std::memory_order_relaxed),
+                      (unsigned long)_ipc.badCrc.load(),
+                      (unsigned long)_ipc.overlong.load(),
+                      (unsigned long)_ipc.unparsed.load(),
+                      (unsigned long)_ipc.outOfRange.load(),
+                      (unsigned long)_ipc.dropInactive.load(),
+                      (unsigned long)_ipc.uartErr.load(),
                       (unsigned long)esp_get_free_heap_size());
         ndjson::seal(line, sizeof(line));
         _ipc.link->writeLine(line);

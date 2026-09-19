@@ -3,6 +3,7 @@
 #include "Servo.hpp"
 #include "Point.hpp"
 #include "ViewPort.hpp"
+#include "Zone.hpp"
 
 // Drives the two-axis gimbal.
 //
@@ -31,27 +32,16 @@ class Gimbal
     ViewPort _viewPortAngles; // working window (degrees); its centre is the park pose
 
     // Hard mechanical stops, kept so the working zone can be re-derived at runtime.
-    float _mechPanLo, _mechPanHi;
-    float _mechTiltLo, _mechTiltHi;
+    Zone _mechZone;
 
     // Effective travel: mechanical limits narrowed to the working window.
-    float _panLo, _panHi;
-    float _tiltLo, _tiltHi;
+    Zone _travel;
 
     // Hard ceiling on rotation speed (deg/s), applied to every commanded
     // velocity. Protection, not tuning - see Config.hpp.
     float _panMaxRate, _tiltMaxRate;
 
     Point _velocity{0.0f, 0.0f}; // deg/s, already rate-limited
-
-    static float clampAngle(float deg, float lo, float hi)
-    {
-        if (deg < lo)
-            return lo;
-        if (deg > hi)
-            return hi;
-        return deg;
-    }
 
     // Symmetric clamp with a NaN guard: a non-finite rate would poison the
     // integrated angle permanently, and the servo would never recover.
@@ -66,23 +56,15 @@ class Gimbal
         return degPerSec;
     }
 
-    static float maxf(float a, float b) { return a > b ? a : b; }
-    static float minf(float a, float b) { return a < b ? a : b; }
-
 public:
     Gimbal(Servo &pan, Servo &tilt,
            ViewPort viewPort,
-           float panMin = DEFAULT_MIN_DEG, float panMax = DEFAULT_MAX_DEG,
-           float tiltMin = DEFAULT_MIN_DEG, float tiltMax = DEFAULT_MAX_DEG,
+           Zone mechZone = {DEFAULT_MIN_DEG, DEFAULT_MAX_DEG, DEFAULT_MIN_DEG, DEFAULT_MAX_DEG},
            float panMaxRate = DEFAULT_MAX_RATE, float tiltMaxRate = DEFAULT_MAX_RATE)
         : _pan(pan), _tilt(tilt),
           _viewPortAngles(viewPort),
-          _mechPanLo(panMin), _mechPanHi(panMax),
-          _mechTiltLo(tiltMin), _mechTiltHi(tiltMax),
-          _panLo(maxf(panMin, viewPort.center.x - viewPort.halfWidth())),
-          _panHi(minf(panMax, viewPort.center.x + viewPort.halfWidth())),
-          _tiltLo(maxf(tiltMin, viewPort.center.y - viewPort.halfHeight())),
-          _tiltHi(minf(tiltMax, viewPort.center.y + viewPort.halfHeight())),
+          _mechZone(mechZone),
+          _travel(Zone::intersect(mechZone, viewPort.toZone())),
           _panMaxRate(panMaxRate), _tiltMaxRate(tiltMaxRate)
     {
     }
@@ -99,13 +81,10 @@ public:
     // Re-derive the effective travel from a new working zone (degrees),
     // intersected with the hard mechanical limits. Used by the config plane
     // when `zone.*` changes at runtime; the caller has already range-checked.
-    void setWorkingZone(float panMin, float panMax, float tiltMin, float tiltMax)
+    void setWorkingZone(Zone zone)
     {
-        _viewPortAngles = ViewPort::fromBounds(panMin, panMax, tiltMin, tiltMax);
-        _panLo  = maxf(_mechPanLo, _viewPortAngles.center.x - _viewPortAngles.halfWidth());
-        _panHi  = minf(_mechPanHi, _viewPortAngles.center.x + _viewPortAngles.halfWidth());
-        _tiltLo = maxf(_mechTiltLo, _viewPortAngles.center.y - _viewPortAngles.halfHeight());
-        _tiltHi = minf(_mechTiltHi, _viewPortAngles.center.y + _viewPortAngles.halfHeight());
+        _viewPortAngles = ViewPort::fromZone(zone);
+        _travel = Zone::intersect(_mechZone, _viewPortAngles.toZone());
         moveTo(_pan.angle(), _tilt.angle()); // re-clamp the current pose
     }
 
@@ -141,8 +120,9 @@ public:
     // effective travel.
     void moveTo(float panDeg, float tiltDeg)
     {
-        _pan.write(clampAngle(panDeg, _panLo, _panHi));
-        _tilt.write(clampAngle(tiltDeg, _tiltLo, _tiltHi));
+        const Point clamped = _travel.clamp({panDeg, tiltDeg});
+        _pan.write(clamped.x);
+        _tilt.write(clamped.y);
     }
 
     // Displace both axes by a relative amount, ignoring the rate limit.
@@ -167,8 +147,7 @@ public:
     // reduce the error any further in that direction.
     bool atLimit() const
     {
-        return _pan.angle() <= _panLo || _pan.angle() >= _panHi ||
-               _tilt.angle() <= _tiltLo || _tilt.angle() >= _tiltHi;
+        return _travel.atLimit({_pan.angle(), _tilt.angle()});
     }
 
     float panAngle() const { return _pan.angle(); }

@@ -26,15 +26,15 @@
 //   anything else, or E-stop latched - forced off
 inline bool laserPermitted(const Ipc &ipc)
 {
-    if (ipc.estopLatched.load(std::memory_order_relaxed))
+    if (ipc.estopLatched.load())
         return false;
 
-    switch (ipc.state.load(std::memory_order_relaxed))
+    switch (ipc.state.load())
     {
     case State::ZoneTour:
         return true;
     case State::Armed:
-        return ipc.linkFresh.load(std::memory_order_relaxed);
+        return ipc.linkFresh.load();
     default:
         return false;
     }
@@ -43,7 +43,7 @@ inline bool laserPermitted(const Ipc &ipc)
 inline void IRAM_ATTR estopIsr(void *arg)
 {
     Ipc *ipc = static_cast<Ipc *>(arg);
-    ipc->estopSource.store(EstopSource::Button, std::memory_order_relaxed);
+    ipc->estopSource.store(EstopSource::Button);
     BaseType_t higherWoken = pdFALSE;
     vTaskNotifyGiveFromISR(ipc->safetyTask, &higherWoken);
     portYIELD_FROM_ISR(higherWoken);
@@ -82,9 +82,9 @@ public:
         {
             // Blocks forever until the ISR or link_uart gives the notification.
             ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-            _ipc.estopLatched.store(true, std::memory_order_relaxed);
+            _ipc.estopLatched.store(true);
             ESP_LOGW(TAG, "E-STOP latched (src=%d)",
-                     (int)_ipc.estopSource.load(std::memory_order_relaxed));
+                     (int)_ipc.estopSource.load());
         }
     }
 

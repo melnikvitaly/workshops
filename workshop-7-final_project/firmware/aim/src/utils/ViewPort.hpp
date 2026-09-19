@@ -1,5 +1,6 @@
 #pragma once
 #include "Point.hpp"
+#include "Zone.hpp"
 
 // The gimbal's working area, expressed as a rectangle in *servo-angle* space
 // (degrees): a centre angle per axis plus the full pan/tilt extents it spans.
@@ -23,8 +24,22 @@ struct ViewPort
                  panMax - panMin,            tiltMax - tiltMin };
     }
 
+    // Build from a Zone (min/max bounds), e.g. the working zone read from config.
+    static constexpr ViewPort fromZone(Zone z)
+    {
+        return fromBounds(z.panMin, z.panMax, z.tiltMin, z.tiltMax);
+    }
+
     float halfWidth()  const { return 0.5f * width; }
     float halfHeight() const { return 0.5f * height; }
+
+    // The same rectangle, expressed as per-axis min/max bounds instead of
+    // centre + extents.
+    Zone toZone() const
+    {
+        return {center.x - halfWidth(), center.x + halfWidth(),
+                center.y - halfHeight(), center.y + halfHeight()};
+    }
 
     // Map a unit point (each axis in [-1, 1], origin at the centre) into
     // absolute servo angles: clamp to [-1, 1], scale by the per-axis reach and

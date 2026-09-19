@@ -86,10 +86,20 @@ class Controls:
         # Off to the side, so it does not open on top of the camera view.
         self.root.geometry("+40+40")
 
-        # Matches config::LOG_TELEMETRY on the firmware side, so the checkbox
-        # describes the board's actual state at startup rather than contradicting
-        # it. Unticking it sends 'T 0' as usual.
+        # Telemetry defaults ON: detect_dots.run() keeps re-sending 'T 1'
+        # until a tlm sample lands (the firmware itself boots with it off, and
+        # a single request can be lost to a reboot -- see the comment at its
+        # call site), so the checkbox describes the board's actual state at
+        # startup rather than contradicting it. Unticking it sends 'T 0' as
+        # usual, which also clears link.telemetry_wanted so the retry loop
+        # leaves it off instead of turning it back on.
         self.telemetry_on = tk.BooleanVar(value=True)
+        # Not sent automatically: unlike telemetry, forcing the channel over
+        # is a real behavioural change (it can take control away from
+        # whatever else is driving the gimbal), so it waits for the operator
+        # to press Set. AUTO is only the default shown here, since it is what
+        # this script's own E frames need -- the firmware itself boots at NONE.
+        self.channel = tk.StringVar(value="AUTO")
         self.axis = tk.StringVar(value="both")
         self.gains = {k: tk.StringVar(value=v)
                       for k, v in (("KP", "40"), ("KI", "4"), ("KD", "6"))}
@@ -117,6 +127,12 @@ class Controls:
         ttk.Button(row, text="Query gains", command=self._query).pack(side="left")
         ttk.Checkbutton(row, text="Telemetry", variable=self.telemetry_on,
                         command=self._telemetry).pack(side="left", padx=(8, 0))
+        ttk.Label(row, text="Channel").pack(side="left", padx=(16, 4))
+        ttk.Combobox(row, textvariable=self.channel, width=8, state="readonly",
+                     values=["NONE", "AUTO", "MANUAL"]).pack(side="left")
+        ttk.Button(row, text="Set", command=self._set_channel).pack(side="left", padx=(4, 0))
+        ttk.Button(row, text="Arm / Disarm (CONTROL)", command=self._press_control).pack(
+            side="left", padx=(16, 0))
 
     def _build_gains(self, parent):
         box = ttk.LabelFrame(parent, text="PID gains", padding=6)
@@ -175,6 +191,22 @@ class Controls:
             self._say("Q sent - the reply is the 'esp32 |' line on the view")
         except Exception as exc:
             self._say(f"query failed: {exc}", ok=False)
+
+    def _set_channel(self):
+        try:
+            cid = self.link.set_channel(self.channel.get())
+            self._say(f"channel -> {self.channel.get()} (cfg.set id {cid}); "
+                      "confirmed by the overlay's 'ch:' field once a tlm sample lands")
+        except Exception as exc:
+            self._say(f"channel failed: {exc}", ok=False)
+
+    def _press_control(self):
+        try:
+            cid = self.link.press_control()
+            self._say(f"CONTROL pressed (cfg.set id {cid}); check 'st:' in the "
+                      "overlay -- toggles ARMED/DISARMED, or acks a FAULT")
+        except Exception as exc:
+            self._say(f"CONTROL press failed: {exc}", ok=False)
 
     def _telemetry(self):
         on = self.telemetry_on.get()

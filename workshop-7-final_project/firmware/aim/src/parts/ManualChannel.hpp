@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include "IInputChannel.hpp"
 #include "Gimbal.hpp"
 #include "Point.hpp"
 #include "Config.hpp"
@@ -8,7 +9,7 @@
 // gimbal with it until it goes stale (no ManualVelocity command for
 // config::TRACK_TIMEOUT_MS) - the same failsafe shape as the auto channel's
 // link timeout, just fed by joystick/UI commands instead of camera frames.
-class ManualChannel
+class ManualChannel : public IInputChannel
 {
 public:
     explicit ManualChannel(Gimbal &gimbal) : _gimbal(gimbal) {}
@@ -21,12 +22,12 @@ public:
     }
 
     // Back to neutral: channel switch, arm/disarm, tour-done, fault-ack.
-    void reset() { _vel = {0.0f, 0.0f}; }
+    void reset(uint32_t /*now*/) override { _vel = {0.0f, 0.0f}; }
 
-    // Drive the gimbal for this tick. Call only while this channel is active.
-    void update(uint32_t nowMs)
+    // Drive the gimbal for this tick. `fresh` is the auto channel's concern.
+    void update(uint32_t now, bool /*fresh*/) override
     {
-        _gimbal.setVelocity((nowMs - _lastMs > config::TRACK_TIMEOUT_MS)
+        _gimbal.setVelocity((now - _lastMs > config::TRACK_TIMEOUT_MS)
                                  ? Point{0.0f, 0.0f}
                                  : _vel);
     }

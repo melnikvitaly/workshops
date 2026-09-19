@@ -72,7 +72,7 @@ public:
             const size_t n = _len;
             _len = 0;
             if (_overflow && _overlongCtr)
-                _overlongCtr->fetch_add(1, std::memory_order_relaxed);
+                _overlongCtr->fetch_add(1);
             _overflow = false;
 
             if (usable && cap > 0)
@@ -131,7 +131,7 @@ private:
     void bumpUartErr()
     {
         if (_uartErrCtr)
-            _uartErrCtr->fetch_add(1, std::memory_order_relaxed);
+            _uartErrCtr->fetch_add(1);
     }
 
     char   _line[LINE_CAP];

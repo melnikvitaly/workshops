@@ -104,7 +104,7 @@ Nodes: `EYE` + `AIM`. Ends on a fixed date (**still unset — decide this first*
 - [ ] `esp_task_wdt` with `ctrl` and `safety` **subscribed**, ~1 s timeout ⟦5.1⟧
 - [ ] Log `esp_reset_reason()` at boot
 - [ ] Persist a WDT-reset counter in NVS
-- [ ] Laser comes up **off** after any watchdog reset
+- [ ] Laser comes up **off**/**DISARMED** after any watchdog reset
 
 ### 7. Documentation ⟦8.1 8.2 8.3 8.4 8.5 1.4 3.4⟧
 

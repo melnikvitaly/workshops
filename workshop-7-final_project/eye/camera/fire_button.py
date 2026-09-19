@@ -20,7 +20,10 @@ class FireButton:
 
         green   -- still converging, the error is too big to shoot on
         red     -- the error is small: on target
-        blinking-- the ESP32 just reported ARRIVAL (its own axes settled)
+
+    blink() flashes it white/amber instead, for a caller that has its own
+    "arrived" signal to report; nothing currently calls it -- the `tlm`
+    telemetry sample (docs/protocol.md §3.4) carries no such field.
     """
 
     BLINKS = 4

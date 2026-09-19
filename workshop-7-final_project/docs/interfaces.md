@@ -41,8 +41,8 @@ to GPIO21 / 38 and update this table.
 **Reserved, do not use:** 3 / 45 / 46 (strapping), 19 / 20 (USB D−/D+),
 39–42 (JTAG), 43 / 44 (UART0 console), 26–32 (SPI flash).
 
-**No `SD_CD`:** GPIO14 was reserved for card-detect; the socket on hand has
-no such switch, so it's free.
+**No `SD_CD`:** GPIO14 was reserved for card-detect; the full-size SD socket
+is wired without its card-detect / write-protect switches, so it's free.
 
 ---
 
@@ -54,7 +54,7 @@ no such switch, so it's free.
 | **Speed** | 115200 8N1, no flow control |
 | **Buffers** | RX 1024 B, TX 512 B, driver event queue depth 16 |
 | **Carries** | Control ASCII and NDJSON — see [`protocol.md`](./protocol.md) |
-| **On failure** | 300 ms without a valid frame → `LINK_LOST`: axes stop, PIDs reset, laser off |
+| **On failure** | 300 ms without any frame on the selected channel (`valid`/`targetVisible` does not matter — silence is what counts) → `LINK_LOST`: axes stop, PIDs reset, laser off |
 
 ---
 
@@ -70,7 +70,34 @@ no such switch, so it's free.
 
 ---
 
-## 4. SPI2 — micro-SD
+## 4. SPI2 — SD card
+
+A **full-size SD card** is wired directly to the ESP32-S3 in **SPI mode**.
+No adapter module, no level shifter: the card runs at 3V3.
+
+### 4.1 Card pinout
+
+Numbers are the pins of the full-size SD card, counted from the notched
+corner.
+
+| Card pin | SD name | SPI-mode name | ESP32-S3 | Notes |
+|---|---|---|---|---|
+| 1 | `DAT3` | `CS` | GPIO10 (`SD_CS`) | 10 kΩ pull-up to 3V3 |
+| 2 | `CMD` | `MOSI` | GPIO11 (`SD_MOSI`) | 10 kΩ pull-up to 3V3 |
+| 3 | `VSS1` | `GND` | GND | |
+| 4 | `VDD` | `3V3` | 3V3 | 100 nF + 10 µF close to the pin |
+| 5 | `CLK` | `SCK` | GPIO12 (`SD_SCK`) | |
+| 6 | `VSS2` | `GND` | GND | |
+| 7 | `DAT0` | `MISO` | GPIO13 (`SD_MISO`) | 10 kΩ pull-up to 3V3 |
+| 8 | `DAT1` | — | not connected | 10 kΩ pull-up to 3V3 |
+| 9 | `DAT2` | — | not connected | 10 kΩ pull-up to 3V3 |
+
+- Pull-ups keep the lines defined when the card is missing or idle.
+- Pins 8 and 9 are unused in SPI mode. Pull them up so the card never
+  sees a floating line.
+- Card-detect and write-protect switches of the socket are not wired.
+
+### 4.2 Driver setup
 
 | | |
 |---|---|

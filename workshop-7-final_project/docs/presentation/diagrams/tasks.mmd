@@ -1,0 +1,9 @@
+flowchart LR
+    link["link_uart<br/>core 0"] -->|cmd_q| ctrl["ctrl<br/>core 1, 20 ms"]
+    ui["ui<br/>core 0"] -->|cmd_q| ctrl
+    ctrl -->|log_q| logger["logger<br/>low priority"]
+    link -->|log_q| logger
+    logger --> SD([SD card])
+    ctrl --> servos([Servo PWM])
+    estop([E-stop ISR]) -->|notify| safety["safety<br/>realtime"]
+    safety -->|laserPermitted| laser([Laser])

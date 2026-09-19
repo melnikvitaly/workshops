@@ -55,32 +55,29 @@ class StateMachine
 public:
     using TransitionFn = void (*)(void *ctx, State from, State to, const char *trigger);
 
-    StateMachine(std::atomic<State> &published, TransitionFn fn, void *ctx)
-        : _published(published), _fn(fn), _ctx(ctx)
+    StateMachine(std::atomic<State> &state, TransitionFn fn, void *ctx)
+        : _state(state), _fn(fn), _ctx(ctx)
     {
-        _published.store(_state, std::memory_order_relaxed);
+        _state.store(State::Boot);
     }
 
-    State state() const { return _state; }
-    bool  laserAllowed() const { return stateAllowsLaser(_state); }
+    State state() const { return _state.load(); }
 
     // No-op if already there. `trigger` is a short stable token: "boot",
     // "selftest.ok", "tour.done", "btn.control", "link.stale", "link.fresh",
     // "estop", "fault.ack", "idle", "btn.mode", "cfg.channel".
     void set(State to, const char *trigger)
     {
-        if (to == _state)
+        const State from = _state.load();
+        if (to == from)
             return;
-        const State from = _state;
-        _state = to;
-        _published.store(to, std::memory_order_relaxed);
+        _state.store(to);
         if (_fn)
             _fn(_ctx, from, to, trigger);
     }
 
 private:
-    std::atomic<State> &_published;
+    std::atomic<State> &_state;
     TransitionFn        _fn;
     void               *_ctx;
-    State               _state = State::Boot;
 };
