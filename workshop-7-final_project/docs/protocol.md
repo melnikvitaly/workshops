@@ -108,13 +108,20 @@ Applied before any value reaches the controller. A field that fails increments
 
 | Field | Accepted |
 |---|---|
-| `dx`, `dy` | finite, `[-1.0, 1.0]` |
+| `dx`, `dy` | finite. Values outside `[-1.0, 1.0]` are **clamped**, not rejected (see below) |
 | `vpan`, `vtilt` | finite, `[-1000.0, 1000.0]` deg/s — the per-axis rate ceiling clamps further downstream |
 | `valid` | `0` or `1` |
 | `kp`, `ki`, `kd` | finite, `[0.0, 1000.0]` — negative gains invert the loop |
 | `dpan`, `dtilt` | finite, `[-30.0, 30.0]` degrees |
 | `pan`, `tilt` (`P` frame) | finite, `[0.0, 180.0]` degrees — `Gimbal::moveTo()` clamps further to the working zone |
 | `axis` | `p`, `t`, `b` |
+
+`E` is the one exception to "reject on range". `±1.0` spans **half** the frame,
+so a target and a dot on opposite sides can be up to `2.0` apart. Rejecting
+such a frame would starve the link-liveness check: the gimbal would coast on
+the last rate, then `LINK_LOST` would trip after 300 ms. So `dx`/`dy` are
+clamped to `±1.0` and the frame is still delivered. `NaN`/`inf` are still
+rejected. `EYE` clamps too (`error_vector()` in `dots.py`).
 
 **`NaN` and `inf` are rejected explicitly**, before the bounds test — a `NaN`
 reaching the PID poisons the integrator permanently, and every comparison against

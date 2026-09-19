@@ -135,7 +135,7 @@ Good candidates:
 
 | # | Problem | Solution | TODO |
 | --- | --- | --- | --- |
-| 1 | Auto aim "blows up": dot runs away. It is a PID control problem, **not solved yet**. Seems caused by a large error vector. It also triggers `LINK_LOST`, reason unknown | Only a workaround: small working zone (60° pan, 30° tilt) keeps the dot in the scene. Boot zone tour shows axis direction. See [`Config.hpp`](../../firmware/aim/src/Config.hpp) | Real fix: PID tuning. Find why `LINK_LOST` happens. Add graph |
+| 1 | Auto aim "blows up": dot runs away and `LINK_LOST` follows. Likely cause: the error can reach `±2` (`±1` is half a frame), but the firmware rejected anything above `±1`. Rejected frames did not refresh link liveness, and the gimbal kept its last rate | Error is now clamped to `±1` in [`dots.py`](../../eye/camera/dots.py) and in [`Protocol.hpp`](../../firmware/aim/src/transport/Protocol.hpp). Small working zone (60° pan, 30° tilt) stays as a safety bound. See [`Config.hpp`](../../firmware/aim/src/Config.hpp) | Verify on the rig (`oor` counter, no `LINK_LOST`). PID tuning if it still oscillates |
 | 2 | Wrong MIN/MAX angles on the assembled gimbal | Measured on the rig. Direction flags set (more pan = left, more tilt = down). `static_assert` keeps zone inside travel | Add the measured limits |
 | 3 | Laser blinks at startup | TODO: from `PROBLEMS_FACED.md` | Cause and fix |
 | 4 | Data stops reaching ESP32 when the PC window is resized | TODO: from `PROBLEMS_FACED.md` | Cause and fix |

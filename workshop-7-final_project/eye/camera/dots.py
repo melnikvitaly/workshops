@@ -411,10 +411,13 @@ def error_vector(red, target, frame_shape):
     normalised so +-1.0 spans HALF the frame in that axis, matching the
     protocol's error range. Y keeps the image's native downward
     direction; the firmware flips it via TILT_INVERT if the servo needs it.
+    Each axis is clamped to +-1.0: the dots can be a whole frame apart (raw
+    error up to 2), and the firmware only accepts +-1.
     Returns (0.0, 0.0, False) unless both dots were seen this frame.
     """
     if red is None or target is None:
         return 0.0, 0.0, False
     h, w = frame_shape[:2]
-    return ((target.x - red.x) / (w / 2.0),
-            (target.y - red.y) / (h / 2.0), True)
+    dx = (target.x - red.x) / (w / 2.0)
+    dy = (target.y - red.y) / (h / 2.0)
+    return max(-1.0, min(1.0, dx)), max(-1.0, min(1.0, dy)), True

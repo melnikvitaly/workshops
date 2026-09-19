@@ -117,6 +117,11 @@ namespace protocol
 
         inline bool inRange(float v, float lo, float hi) { return v >= lo && v <= hi; }
 
+        inline float clampErr(float v)
+        {
+            return v > ERR_LIMIT ? ERR_LIMIT : (v < -ERR_LIMIT ? -ERR_LIMIT : v);
+        }
+
         inline Frame malformed() { Frame f; f.reject = Reject::Malformed; return f; }
         inline Frame outOfRange() { Frame f; f.reject = Reject::Range; return f; }
     } // namespace detail
@@ -146,13 +151,14 @@ namespace protocol
             long valid = 0;
             if (!readLong(p, valid) || !atEnd(p))
                 return malformed();
-            if (!inRange(v[0], -ERR_LIMIT, ERR_LIMIT) ||
-                !inRange(v[1], -ERR_LIMIT, ERR_LIMIT) ||
-                (valid != 0 && valid != 1))
+            if (valid != 0 && valid != 1)
                 return outOfRange();
+            // Clamp, do not reject: target and dot can be a whole frame apart
+            // (|error| up to 2). A dropped frame would starve the link
+            // liveness check and trip LINK_LOST while the gimbal coasts.
             f.type          = FrameType::Error;
-            f.dx            = v[0];
-            f.dy            = v[1];
+            f.dx            = clampErr(v[0]);
+            f.dy            = clampErr(v[1]);
             f.targetVisible = (valid == 1);
             return f;
         }
