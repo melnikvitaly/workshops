@@ -1,6 +1,7 @@
 """Tk-native plotting window for tracking error traces."""
 
 from collections import deque
+from types import SimpleNamespace
 
 import tkinter as tk
 
@@ -29,7 +30,16 @@ class ErrorGraphWindow:
 
         self.canvas = FigureCanvasTkAgg(fig, master=self.frame)
         self.canvas.draw()
-        self.canvas.get_tk_widget().pack(fill="both", expand=True)
+        widget = self.canvas.get_tk_widget()
+        widget.pack(fill="both", expand=True)
+        # Matplotlib binds Python callbacks to resize/mouse/key events. Those
+        # fire from inside cv2.waitKey (which pumps this window's Win32
+        # messages with the GIL released) and crash the process. Drop them and
+        # follow the widget size from pump() instead; the plot is not
+        # interactive anyway.
+        for seq in widget.bind():
+            widget.unbind(seq)
+        self._size = (widget.winfo_reqwidth(), widget.winfo_reqheight())
         self._draw()
 
     def _on_close(self):
@@ -71,6 +81,11 @@ class ErrorGraphWindow:
         if self._alive:
             try:
                 self.frame.update()
+                widget = self.canvas.get_tk_widget()
+                size = (widget.winfo_width(), widget.winfo_height())
+                if size != self._size and min(size) > 1:
+                    self._size = size
+                    self.canvas.resize(SimpleNamespace(width=size[0], height=size[1]))
             except tk.TclError:
                 self._alive = False
 

@@ -12,6 +12,7 @@
 //     F                            fire one shot (blank the beam)
 //     K <axis> <kp> <ki> <kd>      set PID gains live; axis = p | t | b
 //     N <dpan> <dtilt>             nudge open-loop, in degrees
+//     P <pan> <tilt>               absolute position, in degrees
 //     T <0|1>                      telemetry stream off / on
 //     Q                            query gains and state
 //
@@ -34,6 +35,10 @@ namespace protocol
     constexpr float GAIN_MAX     = 1000.0f;
     constexpr float NUDGE_LIMIT  = 30.0f;
     constexpr float MANUAL_LIMIT = 1000.0f;
+    // Wide enough for any servo; Gimbal::moveTo() clamps further to the
+    // current working zone, which is the bound that actually matters.
+    constexpr float POSITION_MIN_DEG = 0.0f;
+    constexpr float POSITION_MAX_DEG = 180.0f;
 
     enum class FrameType
     {
@@ -43,6 +48,7 @@ namespace protocol
         Fire,      // 'F'
         SetGains,  // 'K'
         Nudge,     // 'N'
+        Position,  // 'P'
         Telemetry, // 'T'
         Query,     // 'Q'
     };
@@ -56,8 +62,8 @@ namespace protocol
         FrameType type   = FrameType::Invalid;
         Reject    reject = Reject::Malformed; // meaningful only when type == Invalid
 
-        float dx = 0.0f; // Error: error x. ManualVel: vpan. Nudge: dpan.
-        float dy = 0.0f; // Error: error y. ManualVel: vtilt. Nudge: dtilt.
+        float dx = 0.0f; // Error: error x. ManualVel: vpan. Nudge: dpan. Position: pan.
+        float dy = 0.0f; // Error: error y. ManualVel: vtilt. Nudge: dtilt. Position: tilt.
 
         bool targetVisible = false; // Error only
         bool on            = false; // Telemetry only
@@ -214,6 +220,23 @@ namespace protocol
                 !inRange(v[1], -NUDGE_LIMIT, NUDGE_LIMIT))
                 return outOfRange();
             f.type = FrameType::Nudge;
+            f.dx = v[0]; f.dy = v[1];
+            return f;
+        }
+
+        case 'P':
+        case 'p':
+        {
+            float v[2];
+            const Reject r = readFloats(p, v, 2);
+            if (r == Reject::Malformed || !atEnd(p))
+                return malformed();
+            if (r == Reject::Range)
+                return outOfRange();
+            if (!inRange(v[0], POSITION_MIN_DEG, POSITION_MAX_DEG) ||
+                !inRange(v[1], POSITION_MIN_DEG, POSITION_MAX_DEG))
+                return outOfRange();
+            f.type = FrameType::Position;
             f.dx = v[0]; f.dy = v[1];
             return f;
         }

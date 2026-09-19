@@ -21,9 +21,9 @@ Laser Gimbal with Camera Tracking on ESP32-S3 (FreeRTOS, PID, OpenCV)
 
 ## 2. Hook
 
-> The laser dot is sure to be off target.
-> The camera only sees it **50–250 ms later**.
-> How do you steer something you see late?
+> We move a laser with servos and watch it with a camera.
+> The camera image is **50–250 ms late**.
+> With late feedback, the gimbal easily overshoots. How do we fix that?
 
 ---
 
@@ -31,11 +31,11 @@ Laser Gimbal with Camera Tracking on ESP32-S3 (FreeRTOS, PID, OpenCV)
 
 | Item | Value |
 | --- | --- |
-| Task | Put a laser dot on a target, using only a camera as feedback |
-| Why hard | Camera → vision → link delay is 50–250 ms. This delay sets the gain limit |
-| Why hard | Servos have deadband, backlash and gravity droop |
-| Safety | A laser must never turn on by mistake |
-| Limits | One UART link, ESP32-S3, PC does the vision |
+| Task | Put a laser dot on a target, using a camera as feedback |
+| Delay | Camera → vision → link takes 50–250 ms. This limits the gain |
+| Servos | Deadband, backlash, gravity droop |
+| Safety | The laser must not turn on by mistake |
+| Scope | Learning project: one UART link, PC does the vision |
 
 ---
 
@@ -55,12 +55,23 @@ Laser Gimbal with Camera Tracking on ESP32-S3 (FreeRTOS, PID, OpenCV)
 
 ## 5. Why velocity, not position
 
-- Servo **velocity** → angle → dot position = an integrator, `P(s) = k/s`.
-- A PID on an integrator is simple to tune.
-- Camera feedback fixes droop, deadband and backlash.
-- Delay, not mechanics, limits the gain.
+PID does not say "go to angle 30°". It says "move this fast".
 
-TODO: one slide picture — error vs time, before/after gain tuning.
+```text
+error → PID → speed → add up every 20 ms → angle → servo
+```
+
+| | Position PID | Speed command (ours) |
+| --- | --- | --- |
+| Error is 0 | Gimbal goes back to centre | Gimbal stays |
+| Error is 40 px | Which angle? Unknown | Move that way |
+| Safety | Angle can jump | Speed has a hard limit |
+
+- Adding up speed over time is an **integrator**: `P(s) = k/s`.
+- `1/s` means "add up over time". 10°/s for 2 s = 20°.
+- Result: simple P-only tuning is often enough.
+
+TODO: graph — error vs time for different gains.
 
 ---
 
@@ -102,8 +113,8 @@ Source: [`architecture.md`](../architecture.md#2-task-architecture--aim)
 | 1 | Only one input channel at a time: `AUTO` / `MANUAL` / `NONE` | No hidden mixing. Switch resets PIDs, so no jump |
 | 2 | Two rate limits: hard limit in `Gimbal`, PID clamp below it | Anti-windup can see the real limit (`static_assert`) |
 | 3 | Log queue drops oldest, never blocks | Telemetry may be lost. Control may not |
-| 4 | NDJSON + CRC-8, 256-byte line limit, `NaN` rejected | A `NaN` in the PID would break the integrator forever |
-| 5 | Boot zone tour: laser draws the zone clockwise | Wrong direction = wrong axis flag = runaway |
+| 4 | NDJSON + CRC-8, 256-byte line limit, `NaN` rejected | A `NaN` in the PID would break the integrator |
+| 5 | Boot zone tour: laser draws the zone clockwise | Wrong direction = wrong axis flag, seen in 4 s |
 
 Code: [`Gimbal.hpp`](../../firmware/aim/src/parts/Gimbal.hpp),
 [`Ctrl.hpp`](../../firmware/aim/src/tasks/Ctrl.hpp)
@@ -120,17 +131,44 @@ Good candidates:
 
 ---
 
-## 10. Problems we solved
+## 10. Problems we faced on the rig
 
-| Problem | Fix |
-| --- | --- |
-| Log text on UART mixed with data; a line starting with `F` could fire | Data moved to UART1. UART0 is console only. Fire command hardened |
-| Relay laser lit at power-on | Set pin level before making it an output, plus pull-up |
-| TODO: biggest bug that cost most time | TODO |
+| Problem | Solution | TODO |
+| --- | --- | --- |
+| Auto aim "blows up": dot runs away. It is a PID control problem, **not solved yet** | Only a workaround: small working zone (60° pan, 30° tilt) keeps the dot in the scene. Boot zone tour shows axis direction. See [`Config.hpp`](../../firmware/aim/src/Config.hpp) | Real fix: PID tuning. Add graph |
+| Wrong MIN/MAX angles on the assembled gimbal | Measured on the rig. Direction flags set (more pan = left, more tilt = down). `static_assert` keeps zone inside travel | Add the measured limits |
+| Laser blinks at startup | TODO: from `PROBLEMS_FACED.md` | Cause and fix |
+| Data stops reaching ESP32 when the PC window is resized | TODO: from `PROBLEMS_FACED.md` | Cause and fix |
+| ESP32 resets when PC disconnects UART0 | TODO: from `PROBLEMS_FACED.md` | Cause and fix |
 
 ---
 
-## 11. Results
+## 11. Other problems from design
+
+| Problem | What we did |
+| --- | --- |
+| Logs and data shared UART0; a line starting with `F` could fire | Data moved to UART1. UART0 is console only. Fire command hardened |
+| Relay laser lit at power-on (pin floats) | Set level before output, add pull-up |
+| SD card stalls a write for 100–250 ms | Separate low-priority `logger` task, queue drops oldest |
+| Camera delay limits gain | Low gains, velocity control, tuning with repeatable nudge |
+| Servo deadband and backlash | Camera feedback corrects them |
+
+---
+
+## 12. Open issues
+
+| Issue | State |
+| --- | --- |
+| Relay power-on defect | Firmware side fixed. Hardware side: TODO |
+| No wall clock; `t_wall_iso` is empty | Time is aligned offline with the `BOOT` record |
+| No deep sleep; idle is `PARKED` | ESP32-S3 cannot hold servos with PWM in sleep |
+| Only one link (UART) | Wireless is a later phase |
+| Detector: threshold + shape only | TODO: what fails (light, reflections)? |
+| TODO: other known issues | TODO |
+
+---
+
+## 13. Results
 
 TODO: video (QR code).
 
@@ -149,7 +187,7 @@ TODO: graph from SD log — error vs time, "before / after" tuning.
 
 ---
 
-## 12. What next
+## 14. What next
 
 | Item | Value |
 | --- | --- |

@@ -125,6 +125,17 @@ private:
             return;
         }
 
+        // control.zone_tour re-enters ZONE_TOUR on demand, so the working
+        // zone set via zone.* can be watched without a reboot. No-ops
+        // outside DISARMED/PARKED, same trade as control.press: always acks
+        // ok:true, and st: in telemetry is how the caller sees what happened.
+        if (!std::strcmp(key, "control.zone_tour"))
+        {
+            postAction(CmdKind::ZoneTourStart, nowMs());
+            emitCfgState("control.zone_tour", "true", id, true, nullptr, "uart");
+            return;
+        }
+
         const ndjson::Field vf = ndjson::find(json, jsonLen, "v");
         ConfigStore::Value  val;
         switch (vf.kind)
@@ -218,6 +229,10 @@ private:
 
         case protocol::FrameType::Nudge:
             postVec(CmdKind::Nudge, now, {f.dx, f.dy});
+            break;
+
+        case protocol::FrameType::Position:
+            postVec(CmdKind::MoveTo, now, {f.dx, f.dy});
             break;
 
         case protocol::FrameType::SetGains:

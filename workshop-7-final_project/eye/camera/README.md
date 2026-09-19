@@ -232,7 +232,7 @@ anything unattended.
 A second window, `gimbal controls`, carries everything on the command side of
 the protocol: **Query gains**, a **Telemetry** toggle, a **Channel** selector,
 **Arm / Disarm (CONTROL)**, an axis + KP/KI/KD row with **Set**, an open-loop
-**Nudge**, and the grid of gain presets. Nudge moves
+**Nudge**, a **Working zone** box, and the grid of gain presets. Nudge moves
 the physical gimbal by the entered number of degrees, simulating a sudden bump,
 vibration, wind gust, or mechanical slip; it is a repeatable disturbance for
 checking how the loop recovers, not an aiming offset. Clicking a
@@ -240,6 +240,31 @@ preset also loads its numbers into the KP/KI/KD fields, so it can be adjusted by
 hand from wherever it landed. Results — and any refusal from the link — appear
 on the status line at the bottom; `Q`'s reply comes back on the `esp32 |` line
 over on the view.
+
+### Working zone and zone tour
+
+The **Working zone** box sets the four `zone.pan.min/max`,
+`zone.tilt.min/max` bounds — the area the gimbal is allowed to move in,
+narrower than (and clamped to) the mechanical limits. **Set zone** applies
+the fields live, no reboot needed; the fields themselves start at the
+firmware's compiled defaults and are only a starting point to edit, not a
+mirror of the board's current value, unless you have just clicked Set Max
+Zone or Set zone yourself. **Set Max Zone** reads the gimbal's hard
+mechanical travel live from the board (`zone.limit.{pan,tilt}.{min,max}`, a
+read-only `cfg.get` — see `docs/protocol.md` §3.3) and applies it in one
+click; it briefly waits for the board's reply, so it needs a connected,
+responding board. **Start Zone Tour** re-enters the `ZONE_TOUR` state — the
+same walk around the zone's perimeter, laser lit, that runs once at boot —
+so a new zone can be watched without power-cycling the board. It only
+starts while the gimbal is `DISARMED`/`PARKED` (check `st:` in the
+telemetry readout); requesting it from any other state is silently
+ignored. **Center** reads the *current* working zone live (not the entry
+fields) and drives straight to its midpoint with a `P <pan> <tilt>`
+absolute-position frame — `Gimbal::moveTo()`, bypassing the PID and the
+selected channel entirely, the same primitive `N` (nudge) uses but for an
+absolute angle instead of an offset. The equivalent from `serial_link.py` is
+`--zone PAN_MIN PAN_MAX TILT_MIN TILT_MAX`, `--zone-tour`, `--move-to PAN
+TILT`, and `--center`.
 
 It is a Tk window rather than a painted OpenCV one, which is why it has real
 text fields. Tk ships with Python, so this costs no extra dependency; if it is
@@ -358,6 +383,11 @@ red pixels score at all, thresholded relative to the frame's own peak.
 the receiving end. In short: `E <dx> <dy> <valid>\n` at 15–30 Hz, 115200 8N1,
 `±1.0` spans half the frame, `valid = 0` when either dot is missing (keep
 sending — silence for 300 ms trips the failsafe and resets the PIDs).
+
+Windows blocks the main loop while a window is dragged or resized. To keep the
+link up, a keepalive thread in `serial_link.py` sends a hold frame
+(`E 0 0 0`, or `M 0 0` if MANUAL was last) once the loop is quiet for 120 ms.
+The gimbal holds still and does not chase the old target.
 
 Bring-up, before connecting the camera:
 

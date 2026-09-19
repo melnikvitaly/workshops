@@ -72,6 +72,57 @@ _AXES = {"pan": "p", "tilt": "t", "both": "b"}
 _OK = "#1a7f37"
 _ERR = "#b42318"
 
+_GAP = 8  # px between controls in a wrapping row
+
+
+class _Flow(ttk.Frame):
+    """A row of widgets that wraps onto more lines when the window is narrow.
+
+    Add children with `add()`; they are laid out left to right and start a new
+    line when the next one would not fit. Call `reflow()` from `Controls.pump`.
+
+    No `<Configure>` binding on purpose: cv2.waitKey pumps this window's Win32
+    messages with the GIL released, so a Python callback fired by a resize
+    event kills the process. Polling the width from `pump()` avoids that.
+    """
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self._items = []
+        self._layout = None
+
+    def add(self, widget):
+        self._items.append(widget)
+        self._layout = None
+        return widget
+
+    def reflow(self):
+        width = self.winfo_width()
+        x, row, col = 0, 0, 0
+        places = []
+        for w in self._items:
+            need = w.winfo_reqwidth() + _GAP
+            if col and x + need > width:
+                row, col, x = row + 1, 0, 0
+            places.append((row, col))
+            col += 1
+            x += need
+        if places == self._layout:
+            return
+        self._layout = places
+        for w, (r, c) in zip(self._items, places):
+            w.grid(row=r, column=c, sticky="w", padx=(0, _GAP), pady=2)
+
+
+
+
+def _pair(parent, text, var, width=7):
+    """A caption followed by an entry, kept together when a row wraps."""
+    f = ttk.Frame(parent)
+    ttk.Label(f, text=text).pack(side="left")
+    ttk.Entry(f, textvariable=var, width=width).pack(side="left", padx=(2, 0))
+    return f
+
 
 class Controls:
     """The second window. Build it, then call `pump()` once per frame."""
@@ -104,58 +155,109 @@ class Controls:
         self.gains = {k: tk.StringVar(value=v)
                       for k, v in (("KP", "40"), ("KI", "4"), ("KD", "6"))}
         self.nudge = {k: tk.StringVar(value="5") for k in ("dpan", "dtilt")}
+        # Starting point only, not read back from the board -- there is no
+        # cfg.get sender. Values are firmware's compiled defaults
+        # (Config.hpp's WORK_PAN_MIN/MAX, WORK_TILT_MIN/MAX).
+        self.zone = {k: tk.StringVar(value=str(v)) for k, v in (
+            ("pan_min", 45), ("pan_max", 105),
+            ("tilt_min", 85), ("tilt_max", 115))}
 
+        self._wrapped = []  # labels whose wraplength follows the window width
         outer = ttk.Frame(self.root, padding=8)
         outer.pack(fill="both", expand=True)
         self._build_link_row(outer)
         self._build_gains(outer)
         self._build_nudge(outer)
+        self._build_zone(outer)
         self._build_presets(outer)
 
         self.status = ttk.Label(outer, text="ready", foreground=_OK,
-                                wraplength=430, justify="left")
+                                justify="left")
         self.status.pack(fill="x", pady=(8, 0))
+        self._wrapped.append(self.status)
 
         self.error_graph = ErrorGraphWindow(outer)
         self.error_graph.frame.pack(fill="both", expand=True)
 
+        self._flows = []
+        stack = [outer]
+        while stack:
+            w = stack.pop()
+            if isinstance(w, _Flow):
+                self._flows.append(w)
+            stack.extend(w.winfo_children())
+
+    def _relayout(self):
+        """Wrap rows and text to the current width. Polled, not event-driven."""
+        for flow in self._flows:
+            flow.reflow()
+        wrap = max(self.root.winfo_width() - 40, 100)
+        for label in self._wrapped:
+            if str(label.cget("wraplength")) != str(wrap):
+                label.config(wraplength=wrap)
+
     # --- construction ------------------------------------------------------
 
     def _build_link_row(self, parent):
-        row = ttk.Frame(parent)
+        row = _Flow(parent)
         row.pack(fill="x")
-        ttk.Button(row, text="Query gains", command=self._query).pack(side="left")
-        ttk.Checkbutton(row, text="Telemetry", variable=self.telemetry_on,
-                        command=self._telemetry).pack(side="left", padx=(8, 0))
-        ttk.Label(row, text="Channel").pack(side="left", padx=(16, 4))
-        ttk.Combobox(row, textvariable=self.channel, width=8, state="readonly",
+        row.add(ttk.Button(row, text="Query gains", command=self._query))
+        row.add(ttk.Checkbutton(row, text="Telemetry", variable=self.telemetry_on,
+                                command=self._telemetry))
+        chan = row.add(ttk.Frame(row))
+        ttk.Label(chan, text="Channel").pack(side="left", padx=(0, 4))
+        ttk.Combobox(chan, textvariable=self.channel, width=8, state="readonly",
                      values=["NONE", "AUTO", "MANUAL"]).pack(side="left")
-        ttk.Button(row, text="Set", command=self._set_channel).pack(side="left", padx=(4, 0))
-        ttk.Button(row, text="Arm / Disarm (CONTROL)", command=self._press_control).pack(
-            side="left", padx=(16, 0))
+        ttk.Button(chan, text="Set", command=self._set_channel).pack(
+            side="left", padx=(4, 0))
+        row.add(ttk.Button(row, text="Arm / Disarm (CONTROL)",
+                           command=self._press_control))
 
     def _build_gains(self, parent):
         box = ttk.LabelFrame(parent, text="PID gains", padding=6)
         box.pack(fill="x", pady=(8, 0))
-        ttk.Combobox(box, textvariable=self.axis, width=6, state="readonly",
-                     values=list(_AXES)).grid(row=0, column=0, padx=(0, 8))
-        for i, (name, var) in enumerate(self.gains.items()):
-            ttk.Label(box, text=name).grid(row=0, column=1 + 2 * i)
-            ttk.Entry(box, textvariable=var, width=7).grid(
-                row=0, column=2 + 2 * i, padx=(2, 8))
-        ttk.Button(box, text="Set", command=self._set_gains).grid(row=0, column=7)
+        flow = _Flow(box)
+        flow.pack(fill="x")
+        flow.add(ttk.Combobox(flow, textvariable=self.axis, width=6, state="readonly",
+                              values=list(_AXES)))
+        for name, var in self.gains.items():
+            flow.add(_pair(flow, name, var))
+        flow.add(ttk.Button(flow, text="Set", command=self._set_gains))
 
     def _build_nudge(self, parent):
         box = ttk.LabelFrame(parent, text="Nudge physical gimbal (open loop, degrees)", padding=6)
         box.pack(fill="x", pady=(8, 0))
-        for i, (name, var) in enumerate(self.nudge.items()):
-            ttk.Label(box, text=name).grid(row=0, column=2 * i)
-            ttk.Entry(box, textvariable=var, width=7).grid(
-                row=0, column=1 + 2 * i, padx=(2, 8))
-        ttk.Button(box, text="Nudge", command=self._do_nudge).grid(row=0, column=4)
-        ttk.Label(box, text=("Applies a known physical kick -- like a bump, vibration, "
-                             "wind gust, or servo slip -- so the loop can correct it.")).grid(
-                                 row=1, column=0, columnspan=5, sticky="w", pady=(4, 0))
+        flow = _Flow(box)
+        flow.pack(fill="x")
+        for name, var in self.nudge.items():
+            flow.add(_pair(flow, name, var))
+        flow.add(ttk.Button(flow, text="Nudge", command=self._do_nudge))
+        note = ttk.Label(box, text=("Applies a known physical kick -- like a bump, vibration, "
+                                    "wind gust, or servo slip -- so the loop can correct it."),
+                         justify="left")
+        note.pack(fill="x", pady=(4, 0))
+        self._wrapped.append(note)
+
+    def _build_zone(self, parent):
+        box = ttk.LabelFrame(parent, text="Working zone (deg)", padding=6)
+        box.pack(fill="x", pady=(8, 0))
+        flow = _Flow(box)
+        flow.pack(fill="x")
+        labels = (("pan_min", "pan min"), ("pan_max", "pan max"),
+                  ("tilt_min", "tilt min"), ("tilt_max", "tilt max"))
+        for key, label in labels:
+            flow.add(_pair(flow, label, self.zone[key]))
+        flow.add(ttk.Button(flow, text="Set zone", command=self._set_zone))
+        flow.add(ttk.Button(flow, text="Set Max Zone", command=self._set_max_zone))
+        flow.add(ttk.Button(flow, text="Start Zone Tour", command=self._zone_tour))
+        flow.add(ttk.Button(flow, text="Center", command=self._center))
+        note = ttk.Label(box, text=("Sets the area the gimbal is allowed to move in, live -- "
+                                    "Set Max Zone opens it to the mechanical limits, Start Zone "
+                                    "Tour walks the laser around its new edges to confirm it "
+                                    "(only while DISARMED/PARKED), and Center drives straight to "
+                                    "the current zone's midpoint."), justify="left")
+        note.pack(fill="x", pady=(4, 0))
+        self._wrapped.append(note)
 
     def _build_presets(self, parent):
         box = ttk.LabelFrame(parent, text="Presets", padding=6)
@@ -235,6 +337,54 @@ class Controls:
         except Exception as exc:
             self._say(f"nudge failed: {exc}", ok=False)
 
+    def _set_zone(self):
+        try:
+            pan_min, pan_max, tilt_min, tilt_max = self._floats(self.zone)
+            ids = self.link.set_zone(pan_min, pan_max, tilt_min, tilt_max)
+            self._say(f"zone -> pan [{pan_min:g}, {pan_max:g}] "
+                      f"tilt [{tilt_min:g}, {tilt_max:g}] (cfg.set ids {ids}); "
+                      "check the 'esp32 |' cfg.state replies for rejections")
+        except Exception as exc:
+            self._say(f"set zone failed: {exc}", ok=False)
+
+    def _set_max_zone(self):
+        # Reads the firmware's own zone.limit.* keys rather than assuming a
+        # copy of Config.hpp's constants on the PC side -- see
+        # ErrorLink.read_zone_limits(). This blocks briefly (up to its
+        # timeout) waiting for the four cfg.state replies.
+        try:
+            limits = self.link.read_zone_limits()
+            missing = [k for k in ("pan_min", "pan_max", "tilt_min", "tilt_max")
+                      if k not in limits]
+            if missing:
+                raise RuntimeError(f"no reply for {', '.join(missing)} "
+                                   "-- is the board connected?")
+        except Exception as exc:
+            self._say(f"read max zone failed: {exc}", ok=False)
+            return
+        for key, value in limits.items():
+            self.zone[key].set(f"{value:g}")
+        self._set_zone()
+
+    def _zone_tour(self):
+        try:
+            cid = self.link.zone_tour()
+            self._say(f"zone tour requested (cfg.set id {cid}); watch 'st:' for "
+                      "ZONE_TOUR -- no-ops unless the gimbal is DISARMED/PARKED")
+        except Exception as exc:
+            self._say(f"zone tour failed: {exc}", ok=False)
+
+    def _center(self):
+        # Reads the current working zone live (see ErrorLink.center()) rather
+        # than trusting these entry fields, which may not have been applied
+        # yet -- blocks briefly waiting for the reply, same as Set Max Zone.
+        try:
+            pan, tilt = self.link.center()
+            self._say(f"centering at pan={pan:g} tilt={tilt:g} "
+                      "(P frame -- bypasses the PID and selected channel)")
+        except Exception as exc:
+            self._say(f"center failed: {exc}", ok=False)
+
     def _apply_selected_preset(self):
         preset_name = self.preset_var.get()
         preset = next(p for p in PRESETS if p["name"] == preset_name)
@@ -268,6 +418,7 @@ class Controls:
             return False
         try:
             self.root.update()
+            self._relayout()
             if self.error_graph is not None:
                 self.error_graph.pump()
         except tk.TclError:

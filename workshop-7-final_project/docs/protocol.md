@@ -54,6 +54,7 @@ spaces or tabs. Floats may use any format `strtof` accepts (`-0.124`, `.5`,
 | `EYE` → `AIM` | `F` | Fire one shot |
 | `EYE` → `AIM` | `K <axis> <kp> <ki> <kd>` | Set PID gains live; `axis` = `p` \| `t` \| `b` |
 | `EYE` → `AIM` | `N <dpan> <dtilt>` | Open-loop nudge, in degrees |
+| `EYE` → `AIM` | `P <pan> <tilt>` | Absolute position, in degrees |
 | `EYE` → `AIM` | `T <0\|1>` | Telemetry stream off / on |
 | `EYE` → `AIM` | `Q` | Query gains and state |
 | `AIM` → `EYE` | `G pan <kp> <ki> <kd> tilt <kp> <ki> <kd> armed <0\|1>` | Reply to `K` and `Q` |
@@ -64,7 +65,15 @@ the dot and the target were seen in that frame. `M` is the manual counterpart:
 `EYE`'s mouse script sends a pan/tilt rate directly, bypassing the PID, and it is
 processed only while `input.channel = MANUAL`. `N` displaces the gimbal without
 telling the controller, which makes it a repeatable open-loop disturbance — the
-only honest way to compare two gain sets.
+only honest way to compare two gain sets. `P` is `N`'s absolute counterpart —
+drive straight to an angle rather than by an offset from wherever the gimbal
+currently is — for bench positioning such as centring on the working zone
+(`EYE`'s `ErrorLink.center()`/`--center`, the controls window's **Center**
+button). Like `N`, it is not gated by `input.channel` and bypasses the PID.
+
+Both `N` and `P` clamp to `Gimbal`'s current travel — the working zone
+intersected with the mechanical limits — so neither can drive the gimbal past
+its stops even if the requested value is outside that range.
 
 Frames for the non-selected channel (an `E` frame while `MANUAL` is active, or an
 `M` frame while `AUTO` is active) are still parsed and counted as `drop_inact`,
@@ -104,6 +113,7 @@ Applied before any value reaches the controller. A field that fails increments
 | `valid` | `0` or `1` |
 | `kp`, `ki`, `kd` | finite, `[0.0, 1000.0]` — negative gains invert the loop |
 | `dpan`, `dtilt` | finite, `[-30.0, 30.0]` degrees |
+| `pan`, `tilt` (`P` frame) | finite, `[0.0, 180.0]` degrees — `Gimbal::moveTo()` clamps further to the working zone |
 | `axis` | `p`, `t`, `b` |
 
 **`NaN` and `inf` are rejected explicitly**, before the bounds test — a `NaN`
@@ -229,6 +239,7 @@ same action a physical button does, skip persistence, and always ack `ok:true`:
 |---|---|---|
 | `fault.ack` | Clears a latched `FAULT` (see §4) | `CONTROL` button while `FAULT` |
 | `control.press` | Arm/disarm toggle, or `fault.ack` if `FAULT` — dispatched exactly like the button (`Ui::controlPressed()`) | `CONTROL` button |
+| `control.zone_tour` | Re-enters `ZONE_TOUR`, sweeping the *current* working zone with the laser lit. No-op outside `DISARMED`/`PARKED`, so a PC-triggered tour can never hijack an active operator | *(none — PC-only, no button)* |
 
 `control.press` is a deliberate trade: arming used to require standing at the
 board (the `CONTROL` button was the only path to `ARMED`); this key lets `EYE`
@@ -239,6 +250,26 @@ the `tlm` sample, §3.4).
 ```text
 {"t":"cfg.set","k":"control.press","v":true,"id":3}*EA
 {"t":"cfg.state","k":"control.press","v":true,"id":3,"ok":true,"err":null,"src":"uart","ver":1}*AE
+```
+
+`control.zone_tour` exists so the `zone.{pan,tilt}.{min,max}` bounds — already
+persisted config, applied live by `ctrl` on the next step — can be checked by
+eye without a reboot: send the new bounds, then this key, and watch the beam
+trace the new rectangle.
+
+`zone.limit.{pan,tilt}.{min,max}` are **read-only** — the compiled-in
+mechanical travel (`GIMBAL_PAN_MIN/MAX`, `GIMBAL_TILT_MIN/MAX`), the widest
+`zone.*` can ever be widened to. `cfg.get` returns the value; `cfg.set`
+rejects with `err:"readonly"`, since there is nothing to write:
+
+```text
+{"t":"cfg.get","k":"zone.limit.pan.max","id":11}*66
+{"t":"cfg.state","k":"zone.limit.pan.max","v":105,"id":11,"ok":true,"err":null,"src":"uart","ver":1}*86
+```
+
+```text
+{"t":"cfg.set","k":"control.zone_tour","v":true,"id":9}*20
+{"t":"cfg.state","k":"control.zone_tour","v":true,"id":9,"ok":true,"err":null,"src":"uart","ver":1}*43
 ```
 
 ### 3.4 Telemetry and events

@@ -225,6 +225,7 @@ def run(args):
                 if sample is not None:
                     telemetry = sample
                     telemetry_at = time.monotonic()
+                    manual.note_channel(sample.get("ch"))
                     continue
 
             # Display-only: how close counts as "on target" for the border
@@ -250,6 +251,12 @@ def run(args):
                     show_masks(red_mask, black_mask, args.rotate)
                 raw_key = _wait_key(folder_mode, controls)
                 key = raw_key & 0xFF if raw_key != -1 else -1
+                # Polled from the OS, not the cv2 key stream -- see
+                # toggle_pressed(). Checked before any `continue` below.
+                if manual.toggle_pressed(key):
+                    on = manual.toggle()
+                    print("keyboard MANUAL drive "
+                          + ("ON -- arrow keys pan/tilt" if on else "off"))
                 try:
                     # manual.handle_key() only consumes arrows while keyboard
                     # drive is engaged, so sim's arrow-key target nudge still
@@ -262,10 +269,6 @@ def run(args):
                     pass
                 if key == ord('q'):
                     break
-                if key == ord('m'):
-                    on = manual.toggle()
-                    print("keyboard MANUAL drive "
-                          + ("ON -- arrow keys pan/tilt" if on else "off"))
                 if key == ord('f'):
                     fire.trigger()
                     link.fire()

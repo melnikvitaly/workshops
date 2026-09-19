@@ -265,6 +265,14 @@ private:
         if (!std::strcmp(key, "telemetry.wifi.enabled")) return checkBool(v, _blob.telemetry_wifi_enabled);
         if (!std::strcmp(key, "telemetry.ble.enabled"))  return checkBool(v, _blob.telemetry_ble_enabled);
 
+        // zone.limit.* mirrors the compiled-in mechanical travel
+        // (GIMBAL_PAN_MIN/MAX, GIMBAL_TILT_MIN/MAX) for cfg.get only - there
+        // is nothing to write, so a cfg.set on one of these is rejected
+        // rather than silently accepted and discarded.
+        if (!std::strcmp(key, "zone.limit.pan.min")  || !std::strcmp(key, "zone.limit.pan.max") ||
+            !std::strcmp(key, "zone.limit.tilt.min") || !std::strcmp(key, "zone.limit.tilt.max"))
+            return "readonly";
+
         return "unknown_key";
     }
 
@@ -285,6 +293,10 @@ private:
         if (!std::strcmp(key, "zone.pan.max"))  { fmtNum(out, cap, _blob.zone.panMax);  return; }
         if (!std::strcmp(key, "zone.tilt.min")) { fmtNum(out, cap, _blob.zone.tiltMin); return; }
         if (!std::strcmp(key, "zone.tilt.max")) { fmtNum(out, cap, _blob.zone.tiltMax); return; }
+        if (!std::strcmp(key, "zone.limit.pan.min"))  { fmtNum(out, cap, config::GIMBAL_PAN_MIN);  return; }
+        if (!std::strcmp(key, "zone.limit.pan.max"))  { fmtNum(out, cap, config::GIMBAL_PAN_MAX);  return; }
+        if (!std::strcmp(key, "zone.limit.tilt.min")) { fmtNum(out, cap, config::GIMBAL_TILT_MIN); return; }
+        if (!std::strcmp(key, "zone.limit.tilt.max")) { fmtNum(out, cap, config::GIMBAL_TILT_MAX); return; }
         if (!std::strcmp(key, "laser.brightness"))  { std::snprintf(out, cap, "%u", _blob.laser_brightness);  return; }
         if (!std::strcmp(key, "telemetry.rate_hz")) { std::snprintf(out, cap, "%u", _blob.telemetry_rate_hz); return; }
         if (!std::strcmp(key, "log.sd.enabled"))        { fmtBool(out, cap, _blob.log_sd_enabled);        return; }

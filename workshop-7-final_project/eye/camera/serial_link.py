@@ -7,10 +7,13 @@ Downlink (PC -> ESP32):
     F\\n                       fire one shot
     K <p|t|b> <kp> <ki> <kd>  set PID gains live
     N <dpan> <dtilt>          nudge open loop, in degrees (a disturbance)
+    P <pan> <tilt>            absolute position, in degrees -> move_to/center
     T <0|1>                   telemetry stream off / on
     Q\\n                       report gains and arm state
     {"t":"cfg.set",...}*XX    NDJSON config write, e.g. input.channel -> cfg_set/set_channel
                                control.press is a remote CONTROL-button press -> press_control
+                               zone.{pan,tilt}.{min,max} -> set_zone
+                               control.zone_tour restarts ZONE_TOUR on demand -> zone_tour
 
 Uplink (ESP32 -> PC):
 
@@ -60,14 +63,24 @@ And the tuning console:
     py -3 serial_link.py --telemetry 1 --nudge 8 0   # T 1 then N 8 0
     py -3 serial_link.py --channel AUTO              # cfg.set input.channel AUTO
     py -3 serial_link.py --control                   # cfg.set control.press (arm/disarm toggle)
+    py -3 serial_link.py --zone 40 110 80 120        # cfg.set zone.{pan,tilt}.{min,max}
+    py -3 serial_link.py --zone-tour                 # cfg.set control.zone_tour
+    py -3 serial_link.py --zone-limits                # cfg.get zone.limit.* (mechanical travel)
+    py -3 serial_link.py --move-to 75 100             # P 75 100 (absolute degrees)
+    py -3 serial_link.py --center                     # move to the current working zone's centre
     py -3 serial_link.py --console                   # type lines interactively
 """
 
 import json
 import math
+import threading
 import time
 
 from tx_log import TxLog
+
+# Quiet time on the E/M stream before the keepalive thread steps in. Well under
+# the firmware's 300 ms link timeout, well over one frame interval (33 ms at 30 Hz).
+KEEPALIVE_AFTER = 0.12
 
 # USB-serial bridges found on ESP32 boards, in order of preference. The
 # DevKitC-1's UART connector is a CP2102, so that wins if several are attached;
@@ -366,11 +379,22 @@ class ErrorLink:
         # operator explicitly turned off with T 0.
         self.telemetry_wanted = True
         self._cfg_id = 0     # id counter for cfg.set/cfg.get, matched in cfg.state
+        # Last channel asked for through set_channel() (None = never). Lets
+        # manual_control.py stop streaming `M` as soon as the operator picks
+        # another channel, without waiting for a tlm sample to confirm it.
+        self.channel_requested = None
         self._last = 0.0
         self._last_manual = 0.0
         self._rx = b""
         self._pending = []   # complete lines received, not yet handed to poll()
         self._ser = None
+        # Keepalive: see _keepalive(). _write_lock exists because that thread
+        # and the main loop both write.
+        self._write_lock = threading.Lock()
+        self._stop = threading.Event()
+        self._last_kind = None   # "E" or "M": which stream the loop last fed
+        self._last_tx = 0.0
+        self._keepalive_thread = None
         if port is None:
             self.port = None
             print("Serial: disabled (no --port) -- detection only")
@@ -400,6 +424,28 @@ class ErrorLink:
         self._ser.open()
         print(f"Serial: {port} @ {baud} 8N1, "
               f"frames capped at {max_rate:g} Hz")
+        self._keepalive_thread = threading.Thread(
+            target=self._keepalive, name="link-keepalive", daemon=True)
+        self._keepalive_thread.start()
+
+    def _keepalive(self):
+        """Hold the link up while the main loop is stuck.
+
+        Windows runs a modal loop while a window is being dragged or resized,
+        and it blocks the thread that owns the window - which is the vision
+        loop, so no E/M frames go out until the mouse is released. The firmware
+        drops the link after 300 ms and resets its PIDs. Once the loop has been
+        quiet for KEEPALIVE_AFTER, this sends the harmless frame for whichever
+        stream was active - `valid=0` (hold) or zero velocity - never the stale
+        target, so the gimbal does not chase an old error while nobody looks.
+        """
+        while not self._stop.wait(0.05):
+            if self._last_kind is None:
+                continue
+            if time.time() - self._last_tx < KEEPALIVE_AFTER:
+                continue
+            line = "E 0.0000 0.0000 0\n" if self._last_kind == "E" else "M 0.000 0.000\n"
+            self._write(line)
 
     def send(self, dx, dy, valid):
         """Send one frame. Returns True if it went out, False if rate-limited."""
@@ -412,6 +458,7 @@ class ErrorLink:
             dx, dy, valid = 0.0, 0.0, False
         line = f"E {dx:.4f} {dy:.4f} {1 if valid else 0}\n"
 
+        self._last_kind = "E"
         if self._write(line):
             self.sent += 1
         self._drain()
@@ -435,6 +482,7 @@ class ErrorLink:
 
         if not (math.isfinite(vpan_deg_s) and math.isfinite(vtilt_deg_s)):
             vpan_deg_s, vtilt_deg_s = 0.0, 0.0
+        self._last_kind = "M"
         if self._write(f"M {vpan_deg_s:.3f} {vtilt_deg_s:.3f}\n"):
             self.sent += 1
         self._drain()
@@ -489,6 +537,35 @@ class ErrorLink:
         """
         self.send_raw(f"N {dpan_deg:g} {dtilt_deg:g}\n")
 
+    def move_to(self, pan_deg, tilt_deg):
+        """`P <pan> <tilt>` - drive both axes straight to an absolute angle,
+        in degrees, clamped by the firmware to the current working zone
+        (`Gimbal::moveTo()`). Unlike nudge(), this is not relative to wherever
+        the gimbal currently is, and unlike E/M it bypasses the PID and the
+        selected channel entirely -- a direct positioning primitive for bench
+        use, e.g. center().
+        """
+        self.send_raw(f"P {pan_deg:g} {tilt_deg:g}\n")
+
+    def center(self, timeout=0.4):
+        """Move the gimbal to the centre of the *current* working zone.
+
+        Reads zone.{pan,tilt}.{min,max} live (see read_zone()) rather than
+        assuming the PC's own working-zone fields match what is actually
+        applied on the board, then sends the midpoint with move_to(). Returns
+        the (pan, tilt) centre sent. Raises RuntimeError if the zone could not
+        be read within `timeout` (board unresponsive or not connected).
+        """
+        zone = self.read_zone(timeout)
+        missing = [k for k in ("pan_min", "pan_max", "tilt_min", "tilt_max") if k not in zone]
+        if missing:
+            raise RuntimeError(f"no reply for {', '.join(missing)} "
+                               "-- is the board connected?")
+        pan = (zone["pan_min"] + zone["pan_max"]) / 2.0
+        tilt = (zone["tilt_min"] + zone["tilt_max"]) / 2.0
+        self.move_to(pan, tilt)
+        return pan, tilt
+
     def telemetry(self, on):
         """`T <0|1>` - start/stop the plottable per-frame stream.
 
@@ -526,6 +603,64 @@ class ErrorLink:
         self.send_ndjson({"t": "cfg.set", "k": key, "v": value, "id": self._cfg_id})
         return self._cfg_id
 
+    def cfg_get(self, key):
+        """`cfg.get` - read one config key (docs/protocol.md §3.3).
+
+        Fire-and-forget from here too: the reply is a `cfg.state` line seen
+        through poll(), matched by the returned id (see parse_cfg_state).
+        """
+        self._cfg_id += 1
+        self.send_ndjson({"t": "cfg.get", "k": key, "id": self._cfg_id})
+        return self._cfg_id
+
+    def _read_keys(self, name_to_key, timeout):
+        """cfg.get every key in `name_to_key` ({result_name: wire_key}), then
+        block briefly draining poll() for up to `timeout` seconds matching
+        `cfg.state` replies back to their request by id -- the same one-shot
+        pattern _print_replies() uses below.
+
+        Returns a dict with whichever names actually got a numeric reply in
+        time; a missing name means no reply arrived (board unresponsive or
+        not connected), which callers treat as a failure rather than guess.
+        """
+        wanted = {self.cfg_get(key): name for name, key in name_to_key.items()}
+        out = {}
+        deadline = time.time() + timeout
+        while time.time() < deadline and len(out) < len(wanted):
+            for line in self.poll():
+                cfg = parse_cfg_state(line)
+                if cfg is None or cfg.get("id") not in wanted:
+                    continue
+                try:
+                    out[wanted[cfg["id"]]] = float(cfg.get("v"))
+                except (TypeError, ValueError):
+                    pass
+            time.sleep(0.02)
+        return out
+
+    def read_zone_limits(self, timeout=0.4):
+        """The gimbal's hard mechanical travel, read live from the firmware's
+        read-only `zone.limit.{pan,tilt}.{min,max}` keys (docs/protocol.md
+        §3.3) -- straight from Config.hpp's GIMBAL_PAN_MIN/MAX,
+        GIMBAL_TILT_MIN/MAX rather than a copy of those numbers kept here.
+        See _read_keys() for the blocking/missing-key behaviour.
+        """
+        return self._read_keys({
+            "pan_min": "zone.limit.pan.min", "pan_max": "zone.limit.pan.max",
+            "tilt_min": "zone.limit.tilt.min", "tilt_max": "zone.limit.tilt.max",
+        }, timeout)
+
+    def read_zone(self, timeout=0.4):
+        """The *current* working zone, read live from `zone.{pan,tilt}.{min,max}`
+        -- the bounds actually in effect right now, as opposed to
+        read_zone_limits()'s fixed mechanical ceiling. See _read_keys() for
+        the blocking/missing-key behaviour.
+        """
+        return self._read_keys({
+            "pan_min": "zone.pan.min", "pan_max": "zone.pan.max",
+            "tilt_min": "zone.tilt.min", "tilt_max": "zone.tilt.max",
+        }, timeout)
+
     def set_channel(self, channel):
         """cfg.set `input.channel` - NONE / AUTO / MANUAL.
 
@@ -539,6 +674,7 @@ class ErrorLink:
         c = str(channel).strip().upper()
         if c not in ("NONE", "AUTO", "MANUAL"):
             raise ValueError(f"channel must be NONE/AUTO/MANUAL (got {channel!r})")
+        self.channel_requested = c
         return self.cfg_set("input.channel", c)
 
     def press_control(self):
@@ -557,6 +693,34 @@ class ErrorLink:
         """
         return self.cfg_set("control.press", True)
 
+    def set_zone(self, pan_min, pan_max, tilt_min, tilt_max):
+        """cfg.set the four `zone.{pan,tilt}.{min,max}` keys - the working
+        area the gimbal is allowed to move in, narrower than (and clamped to)
+        the mechanical limits.
+
+        There is no batched cfg.set on the wire, so this is four separate
+        lines, each with its own id and its own `cfg.state` ack - a bad value
+        on one axis does not block the others. Returns the four ids, in
+        (pan_min, pan_max, tilt_min, tilt_max) order, so a caller can match
+        them up. Takes effect live (no reboot needed); use zone_tour() to see
+        the new bounds traced out.
+        """
+        return (self.cfg_set("zone.pan.min", pan_min),
+                self.cfg_set("zone.pan.max", pan_max),
+                self.cfg_set("zone.tilt.min", tilt_min),
+                self.cfg_set("zone.tilt.max", tilt_max))
+
+    def zone_tour(self):
+        """cfg.set `control.zone_tour` - restart the ZONE_TOUR bench sweep of
+        the *current* working zone, laser lit, without a reboot.
+
+        Same action-key trade as press_control(): no-ops outside
+        DISARMED/PARKED (a tour must not hijack the gimbal from an active
+        operator), always acks ok:true regardless, so watch `st:` in
+        telemetry for ZONE_TOUR to confirm it actually started.
+        """
+        return self.cfg_set("control.zone_tour", True)
+
     def send_raw(self, line):
         self._write(line)
         self._drain()
@@ -565,15 +729,18 @@ class ErrorLink:
         # Log the attempt regardless of whether it actually reaches the wire
         # -- see tx_log.py. This is the one call site every sender above
         # goes through, so it is also the one place logging needs to happen.
-        self._tx_log.record(line)
-        if self._ser is None:
-            return False
-        try:
-            self._ser.write(line.encode("ascii"))
-            return True
-        except Exception as e:   # a USB hiccup must not kill the vision loop
-            print("Serial write failed:", e)
-            return False
+        with self._write_lock:
+            self._tx_log.record(line)
+            if line[:1] in ("E", "M"):
+                self._last_tx = time.time()
+            if self._ser is None:
+                return False
+            try:
+                self._ser.write(line.encode("ascii"))
+                return True
+            except Exception as e:   # a USB hiccup must not kill the vision loop
+                print("Serial write failed:", e)
+                return False
 
     def poll(self):
         """Whatever the firmware has said since the last call, as text lines.
@@ -617,6 +784,9 @@ class ErrorLink:
         del self._pending[:-200]        # cap if nobody is calling poll()
 
     def close(self, park=True):
+        self._stop.set()
+        if self._keepalive_thread is not None:
+            self._keepalive_thread.join(timeout=0.5)
         if self._ser is not None:
             try:
                 if park:
@@ -773,6 +943,28 @@ def _main():
                          "-- arm/disarm toggle, or fault.ack if latched. "
                          "Selecting AUTO alone does not move the gimbal; it "
                          "also has to be ARMED (see st: in the telemetry)")
+    ap.add_argument("--zone", nargs=4, type=float,
+                    metavar=("PAN_MIN", "PAN_MAX", "TILT_MIN", "TILT_MAX"),
+                    help="cfg.set zone.{pan,tilt}.{min,max}: the working area, "
+                         "in degrees -- narrower than (and clamped to) the "
+                         "mechanical limits. Takes effect live")
+    ap.add_argument("--zone-tour", action="store_true",
+                    help="cfg.set control.zone_tour: restart the ZONE_TOUR "
+                         "bench sweep of the current working zone, laser lit, "
+                         "without a reboot. No-ops outside DISARMED/PARKED "
+                         "(see st: in the telemetry)")
+    ap.add_argument("--zone-limits", action="store_true",
+                    help="cfg.get zone.limit.{pan,tilt}.{min,max}: print the "
+                         "gimbal's hard mechanical travel, read live from the "
+                         "firmware")
+    ap.add_argument("--move-to", nargs=2, type=float, metavar=("PAN", "TILT"),
+                    help="P: drive both axes straight to an absolute angle, "
+                         "in degrees, clamped to the current working zone -- "
+                         "bypasses the PID and the selected channel entirely")
+    ap.add_argument("--center", action="store_true",
+                    help="read the current working zone live and move to its "
+                         "midpoint (P PAN TILT); see --move-to for an "
+                         "arbitrary position")
     ap.add_argument("--console", action="store_true",
                     help="interactive: type protocol lines (Q, K b 40 4 0, N 8 0, "
                          "T 1, F, E ...) and watch the replies")
@@ -786,13 +978,30 @@ def _main():
     # answer, print whatever came back. They compose, so `--gains ... --nudge ...`
     # runs a whole experiment in one line.
     if (args.query or args.gains or args.nudge or args.manual
-            or args.telemetry is not None or args.channel or args.control):
+            or args.telemetry is not None or args.channel or args.control
+            or args.zone or args.zone_tour or args.zone_limits
+            or args.move_to or args.center):
         link = ErrorLink(args.port, args.baud, echo=False, tx_log_path=args.tx_log)
         try:
             if args.channel:
                 link.set_channel(args.channel)
             if args.control:
                 link.press_control()
+            if args.zone:
+                link.set_zone(*args.zone)
+            if args.zone_tour:
+                link.zone_tour()
+            if args.zone_limits:
+                limits = link.read_zone_limits()
+                print("  zone limits:", limits or "(no reply)")
+            if args.move_to:
+                link.move_to(*args.move_to)
+            if args.center:
+                try:
+                    pan, tilt = link.center()
+                    print(f"  centered at pan={pan:g} tilt={tilt:g}")
+                except RuntimeError as e:
+                    print(f"  --center failed: {e}")
             if args.gains:
                 axis, kp, ki, kd = args.gains
                 try:

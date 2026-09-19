@@ -446,6 +446,12 @@ inline void CtrlTask::handleCmd<CmdKind::Nudge>(uint32_t /*now*/, const CmdItem 
 }
 
 template <>
+inline void CtrlTask::handleCmd<CmdKind::MoveTo>(uint32_t /*now*/, const CmdItem &c)
+{
+    _gimbal.moveTo(c.vec.x, c.vec.y);
+}
+
+template <>
 inline void CtrlTask::handleCmd<CmdKind::FireLaser>(uint32_t now, const CmdItem & /*c*/)
 {
     if (laserPermitted(_ipc))
@@ -492,6 +498,24 @@ inline void CtrlTask::handleCmd<CmdKind::FaultAck>(uint32_t now, const CmdItem &
     _sm.set(State::Disarmed, "fault.ack");
 }
 
+template <>
+inline void CtrlTask::handleCmd<CmdKind::ZoneTourStart>(uint32_t now, const CmdItem & /*c*/)
+{
+    // Only from an idle state: a tour started while ARMED/LINK_LOST would
+    // hijack the gimbal from whatever is actively driving it.
+    switch (_sm.state())
+    {
+    case State::Disarmed:
+    case State::Parked:
+        resetLoop(now);
+        _tour.begin();
+        _sm.set(State::ZoneTour, "cfg.tour");
+        break;
+    default:
+        break;
+    }
+}
+
 #pragma endregion
 
 inline void CtrlTask::drainCmds(uint32_t now)
@@ -509,9 +533,11 @@ inline void CtrlTask::drainCmds(uint32_t now)
         AIM_CMD_CASE(ErrorSample);
         AIM_CMD_CASE(ManualVelocity);
         AIM_CMD_CASE(Nudge);
+        AIM_CMD_CASE(MoveTo);
         AIM_CMD_CASE(FireLaser);
         AIM_CMD_CASE(Arm);
         AIM_CMD_CASE(FaultAck);
+        AIM_CMD_CASE(ZoneTourStart);
         }
     }
 

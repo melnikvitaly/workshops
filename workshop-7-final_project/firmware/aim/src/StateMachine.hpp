@@ -65,7 +65,7 @@ public:
 
     // No-op if already there. `trigger` is a short stable token: "boot",
     // "selftest.ok", "tour.done", "btn.control", "link.stale", "link.fresh",
-    // "estop", "fault.ack", "idle", "btn.mode", "cfg.channel".
+    // "estop", "fault.ack", "idle", "btn.mode", "cfg.channel", "cfg.tour".
     void set(State to, const char *trigger)
     {
         const State from = _state.load();

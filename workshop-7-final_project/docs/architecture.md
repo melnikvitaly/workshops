@@ -210,6 +210,24 @@ removes it.
   off it — overloading one button with safety-relevant actions is how a mode button
   becomes a hazard.
 
+### Testing the working zone from `EYE`
+
+`zone.{pan,tilt}.{min,max}` is regular config: set over `cfg.set` like any
+other key, validated, persisted and applied live — no reboot needed. But the
+zone only ever gets *walked* automatically once, at boot
+(`ZONE_TOUR_AT_BOOT`). `control.zone_tour` is an action key, the same shape as
+`control.press`, that re-enters `ZONE_TOUR` on demand: set new bounds, send
+`control.zone_tour`, and watch the beam trace the new rectangle rather than
+guessing whether it covers the scene. It no-ops outside `DISARMED`/`PARKED`,
+so it can never take over the gimbal from an operator mid-session — see
+`docs/protocol.md` §3.3.
+
+The widest `zone.*` can ever be set to is the mechanical travel itself
+(`GIMBAL_PAN_MIN/MAX`, `GIMBAL_TILT_MIN/MAX` in `Config.hpp`), exposed
+read-only as `zone.limit.{pan,tilt}.{min,max}` so `EYE` can read the true
+ceiling with `cfg.get` instead of keeping its own copy of those numbers —
+that is what the controls window's **Set Max Zone** button does.
+
 ### Emergency stop is not a channel
 
 E-stop is a distinct message accepted from **any** transport, in **any** state,
@@ -229,6 +247,7 @@ One versioned, flat key space rather than ad-hoc settings:
 input.channel                    pid.pan.{kp,ki,kd}      pid.tilt.{kp,ki,kd}
 zone.{pan,tilt}.{min,max}        laser.brightness        telemetry.rate_hz
 log.sd.enabled
+zone.limit.{pan,tilt}.{min,max}  (read-only - the mechanical travel, cfg.get only)
 ```
 
 - **Precedence:** compiled defaults → NVS → runtime message (NDJSON over UART1).

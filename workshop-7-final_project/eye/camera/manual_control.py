@@ -44,6 +44,12 @@ pressing 'm' is itself the operator's explicit request to drive by keyboard.
 Disengaging sends one immediate zero-velocity frame rather than waiting out
 the 300 ms failsafe, then stops sending; it does not change the channel back,
 since the operator may still want MANUAL selected.
+
+Keyboard drive also ends by itself, without sending anything, when the channel
+leaves MANUAL: the controls window picked another one (`link.channel_requested`,
+seen in `tick()`), or a `tlm` sample reports another `ch` after MANUAL was
+confirmed (`note_channel()`, e.g. the MODE button). The firmware would drop
+every `M` frame on a non-selected channel anyway.
 """
 
 import ctypes
@@ -66,6 +72,8 @@ _KEYS = {
     65361: (-1.0, 0.0), 65362: (0.0, -1.0), 65363: (1.0, 0.0), 65364: (0.0, 1.0),
     57448: (-1.0, 0.0), 57449: (0.0, -1.0), 57450: (1.0, 0.0), 57451: (0.0, 1.0),
 }
+
+_VK_M = 0x4D   # toggle key, polled by toggle_pressed()
 
 _WIN_TITLE = "dots: red -> black"   # overlay._WIN -- see _focused()
 
@@ -106,16 +114,58 @@ class ManualControl:
         self.engaged = False
         self._last_sent = None    # (vpan, vtilt) most recently written to the wire
         self._last_sent_at = 0.0
+        self._seen_manual = False  # a tlm sample has reported ch:MANUAL since engaging
+        self._m_down = False       # 'm' state at the previous toggle_pressed() call
 
     def toggle(self):
         """Flip keyboard drive on/off. Returns the new state."""
         self.engaged = not self.engaged
         if self.engaged:
+            self._seen_manual = False
             self.link.set_channel("MANUAL")
         else:
             self._last_sent = None
             self.link.manual_now(0.0, 0.0)
         return self.engaged
+
+    def note_channel(self, channel):
+        """Feed the `ch` field of each tlm sample. Once the firmware has
+        reported MANUAL, any other value (controls window, MODE button)
+        means the operator left MANUAL: stop sending. Before MANUAL is first
+        seen a stale sample still shows the old channel, so it is ignored."""
+        if not self.engaged:
+            return
+        if channel == "MANUAL":
+            self._seen_manual = True
+        elif self._seen_manual:
+            self._release()
+
+    def _release(self):
+        """Leave keyboard drive without sending anything: the channel is no
+        longer MANUAL, so the firmware would drop every `M` frame anyway."""
+        self.engaged = False
+        self._last_sent = None
+        print("keyboard MANUAL drive off -- channel is no longer MANUAL")
+
+    def toggle_pressed(self, key):
+        """True once per press of the 'm' key -- the caller then toggle()s.
+
+        Not read from the cv2 key stream on Windows: that stream delivers one
+        key per loop iteration, and the loop is slow (detection + drawing), so
+        'm' queues behind OS key-repeats of held arrows, and Shift/CapsLock
+        turn it into 'M'. GetAsyncKeyState sees the key as it is, and its
+        "pressed since last call" bit catches a tap shorter than one
+        iteration. Elsewhere fall back to the cv2 key code."""
+        if sys.platform != "win32":
+            return key in (ord("m"), ord("M"))
+        if not _focused():
+            self._m_down = False
+            return False
+        state = ctypes.windll.user32.GetAsyncKeyState(_VK_M)
+        down = bool(state & 0x8000)
+        pressed = bool(state & 0x0001) or (down and not self._m_down)
+        self._m_down = down
+        return pressed
 
     def handle_key(self, key):
         """True if `key` (an OpenCV waitKeyEx code) was an arrow direction
@@ -161,6 +211,10 @@ class ManualControl:
         stops the gimbal, and the 300 ms failsafe (correctly, this time)
         takes the state machine and the laser down with it."""
         if not self.engaged:
+            return
+        requested = getattr(self.link, "channel_requested", "MANUAL")
+        if requested != "MANUAL":
+            self._release()
             return
         vpan, vtilt = self.velocity()
         now = time.time()
