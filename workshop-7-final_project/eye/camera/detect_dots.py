@@ -21,7 +21,7 @@ other projects, so the same pipeline shape works for both.
 
 This file is the frame sources, the loop, and the command line. The display
 lives elsewhere: app_window.py is the single Tk window (controls on the left,
-camera view in the middle, tuning on the right), overlay.py draws on the frame,
+camera view in the middle, tuning on the right), overlay.py draws on the frame and words the status text,
 controls.py is the gains/protocol panel, tuning.py is the threshold sliders,
 simulated_target.py turns clicks into a stand-in target dot.
 
@@ -52,9 +52,10 @@ import cv2
 from app_window import AppWindow
 from dots import error_vector, find_black_dots, find_red_dot, pick_target
 from manual_control import ManualControl
-from overlay import _ROTATE, draw_overlay, render_masks
+from overlay import _ROTATE, draw_overlay, render_masks, status_lines
 from serial_link import ErrorLink, list_ports, parse_tlm
 from simulated_target import SimulatedTargetManager
+from speed import SpeedSettings
 from tuning import Thresholds
 
 _IMG_EXT = (".jpg", ".jpeg", ".png", ".bmp")
@@ -63,18 +64,75 @@ _VID_EXT = (".mp4", ".avi", ".mov", ".mkv")
 
 # --- frame sources ---------------------------------------------------------
 
-def camera_frames(resolution):
-    """Yield BGR frames from the OAK camera until the pipeline stops."""
-    import depthai as dai
+def _start_pipeline(dai, resolution, fps, queue_size):
+    """(running pipeline, its frame queue). RuntimeError if the sensor refuses."""
     pipeline = dai.Pipeline()
-    cam = pipeline.create(dai.node.Camera).build()
-    camera_out = cam.requestOutput(resolution, type=dai.ImgFrame.Type.BGR888i)
-    video_queue = camera_out.createOutputQueue(maxSize=4, blocking=False)
-    pipeline.start()
-    print("OAK pipeline started.")
-    with pipeline:
-        while pipeline.isRunning():
-            yield video_queue.get().getCvFrame()
+    try:
+        cam = pipeline.create(dai.node.Camera).build()
+        camera_out = cam.requestOutput(resolution, type=dai.ImgFrame.Type.BGR888i,
+                                       fps=fps)
+        video_queue = camera_out.createOutputQueue(maxSize=queue_size,
+                                                   blocking=False)
+        pipeline.start()
+    except RuntimeError:
+        try:
+            pipeline.stop()
+        except RuntimeError:
+            pass
+        raise
+    return pipeline, video_queue
+
+
+def camera_frames(resolution, speed):
+    """Yield BGR frames from the OAK camera until the pipeline stops.
+
+    `speed` (see speed.py) holds the live settings, read again every frame:
+
+      fps        -- the sensor frame rate. A change rebuilds the pipeline.
+      queue_size -- how many frames may wait for us. With a non-blocking queue
+                    get() returns the OLDEST waiting frame, so a deep queue
+                    means we detect on old images whenever we are slower than
+                    the camera. 1 always gives the newest (lowest latency).
+                    Changed on the running queue when the camera allows it,
+                    otherwise by rebuilding the pipeline.
+    """
+    import depthai as dai
+    good_fps = None   # last fps that actually started
+    while True:
+        fps, queue_size = speed.fps, speed.queue_size
+        try:
+            pipeline, video_queue = _start_pipeline(dai, resolution, fps, queue_size)
+        except RuntimeError as exc:
+            # The sensor only offers some size/fps pairs (12 MP tops out at
+            # 30 fps). Refusing one must not end the run: go back to the last
+            # fps that worked, or at startup step down to the next lower one.
+            print(f"OAK refused {resolution[0]}x{resolution[1]} @ {fps:g} fps: "
+                  f"{str(exc).splitlines()[0]}")
+            fallback = good_fps if good_fps is not None else next(
+                (f for f in (30.0, 15.0) if f < fps), None)
+            if fallback is None or fallback == fps:
+                raise
+            speed.refused(fallback, queue_size,
+                          f"{resolution[0]}x{resolution[1]} can't do {fps:g} fps")
+            continue
+        good_fps = fps
+        print(f"OAK pipeline started: {fps:g} fps, queue {queue_size}.")
+        restart = False
+        with pipeline:
+            while pipeline.isRunning():
+                if speed.fps != fps:
+                    restart = True
+                    break
+                if speed.queue_size != queue_size:
+                    try:
+                        video_queue.setMaxSize(speed.queue_size)
+                        queue_size = speed.queue_size
+                    except AttributeError:
+                        restart = True
+                        break
+                yield video_queue.get().getCvFrame()
+        if not restart:
+            return
 
 
 def capture_frames(source):
@@ -121,11 +179,11 @@ def file_frames(source):
             yield frame.copy()
 
 
-def open_source(args):
+def open_source(args, speed):
     """(frame generator, folder_mode) for whatever --source asks for."""
     src = args.source
     if src == "cam":
-        return camera_frames((args.width, args.height)), False
+        return camera_frames((args.width, args.height), speed), False
     if str(src).isdigit() or src.lower().endswith(_VID_EXT):
         return capture_frames(src), False
     return file_frames(src), os.path.isdir(src)
@@ -134,9 +192,10 @@ def open_source(args):
 # --- main loop -------------------------------------------------------------
 
 def run(args):
-    frames, folder_mode = open_source(args)
     link = ErrorLink(args.port, args.baud, max_rate=args.rate, echo=args.echo,
                      tx_log_path=args.tx_log)
+    speed = SpeedSettings(args, link)
+    frames, folder_mode = open_source(args, speed)
     fps, last_t = 0.0, time.time()
 
     telemetry = None
@@ -149,7 +208,7 @@ def run(args):
     th = Thresholds(args)
     win = None
     if not args.headless:
-        win = AppWindow(link, th, debug=args.debug)
+        win = AppWindow(link, th, speed, debug=args.debug)
         win.on_click = sim.place_display
         win.on_clear = sim.clear
     manual = ManualControl(link, speed_deg_s=args.manual_speed,
@@ -219,9 +278,12 @@ def run(args):
             telemetry_age = (time.monotonic() - telemetry_at) if telemetry is not None else None
 
             if win is not None:
-                view = draw_overlay(frame, red, targets, target,
-                                    dx, dy, valid, fps, link, telemetry,
-                                    telemetry_age, rejects if debug else ())
+                shown_rejects = rejects if debug else ()
+                win.set_status(status_lines(red, targets, target, dx, dy, valid,
+                                            fps, frame.shape, link, telemetry,
+                                            telemetry_age, shown_rejects))
+                view = draw_overlay(frame, red, targets, target, valid,
+                                    shown_rejects)
                 if args.rotate:
                     view = cv2.rotate(view, _ROTATE[args.rotate])
                 win.set_on_target(bool(on_target))
@@ -288,6 +350,12 @@ def main():
                          "webcam index")
     ap.add_argument("--width", type=int, default=1280, help="OAK frame width")
     ap.add_argument("--height", type=int, default=720, help="OAK frame height")
+    ap.add_argument("--fps", type=float, default=60.0,
+                    help="OAK sensor frame rate. The firmware uses one frame "
+                         "per 20 ms control step, so more than 50 is wasted")
+    ap.add_argument("--queue-size", type=int, default=1,
+                    help="OAK frames buffered for us; 1 = always the newest "
+                         "frame (lowest latency), higher = older frames")
     ap.add_argument("--rotate", type=int, default=0, choices=[0, 90, 180, 270],
                     help="rotate the DISPLAY N degrees CCW (detection unaffected)")
 
@@ -299,9 +367,9 @@ def main():
     ap.add_argument("--list-ports", action="store_true",
                     help="list the serial ports, marking the likely board, and exit")
     ap.add_argument("--baud", type=int, default=115200)
-    ap.add_argument("--rate", type=float, default=30.0,
-                    help="max frames/second put on the wire (15-30 is the "
-                         "protocol's recommended range)")
+    ap.add_argument("--rate", type=float, default=50.0,
+                    help="max frames/second put on the wire. The firmware "
+                         "control step is 50 Hz, so 50 is the useful maximum")
     ap.add_argument("--echo", action="store_true",
                     help="print every received ESP32 line, and every sent E "
                          "frame too (everything else already prints "

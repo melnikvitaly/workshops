@@ -1,4 +1,4 @@
-"""The controls panel: gain presets, manual gains, nudge, zone, telemetry, query.
+"""The controls panel: PID gain table with presets, nudge, zone, telemetry, query.
 
 This is a Tk frame, not an OpenCV one. HighGUI has no widgets in the build
 these wheels ship (`GUI: WIN32UI`, so `cv2.createButton` raises), which meant
@@ -27,8 +27,8 @@ if __package__ in (None, ""):
 # rows leave standing, and as the thing that winds up in Runaway. Tilt runs
 # slightly softer than pan throughout because it works against gravity.
 #
-# Four groups, in grid order: one term at a time -> two baselines -> the PD
-# ladder (same P, rising D) -> PD at other P levels.
+# Five groups, in grid order: one term at a time -> baselines -> the PD
+# ladder (same P, rising D) -> PD at other P levels -> the PI presets.
 PRESETS = [
     # --- one term at a time: what each does on its own ---
     {"name": "All Zero", "pan": (0.0, 0.0, 0.0), "tilt": (0.0, 0.0, 0.0)},
@@ -38,6 +38,11 @@ PRESETS = [
 
     # --- baselines: the firmware default, and it plus D ---
     {"name": "Default (PI)", "pan": (40.0, 4.0, 0.0), "tilt": (35.0, 4.0, 0.0)},
+    # Faster targeting: about 2x the default P, and a bigger I to close the
+    # last bit of error sooner. Still under the Kp*k <= 0.5/T ceiling for
+    # k = 0.02, T = 0.15 s (Kp <= 167). Made for the firmware slew clamps
+    # (200 / 160 deg/s). Lower it if the dot starts hunting.
+    {"name": "Recommended", "pan": (90.0, 12.0, 0.0), "tilt": (80.0, 10.0, 0.0)},
     {"name": "Full PID", "pan": (40.0, 4.0, 6.0), "tilt": (35.0, 4.0, 5.0)},
 
     # --- PD ladder: Default's P, no I, D climbing. Run these in order against
@@ -53,13 +58,22 @@ PRESETS = [
     {"name": "Soft PD", "pan": (10.0, 0.0, 2.0), "tilt": (8.0, 0.0, 1.6)},
     {"name": "Tiny PD", "pan": (1.0, 0.0, 0.3), "tilt": (1.0, 0.0, 0.25)},
 
+    # --- PI ladder: no D, I climbing at Default's P, then other P levels. Ki =
+    # Kp^2 * k / 4 (~8 at Kp = 40) is critical damping; above it rings.
+    {"name": "PI Light", "pan": (40.0, 2.0, 0.0), "tilt": (35.0, 2.0, 0.0)},
+    {"name": "PI Heavy", "pan": (40.0, 8.0, 0.0), "tilt": (35.0, 7.0, 0.0)},
+    {"name": "PI Sluggish", "pan": (25.0, 2.0, 0.0), "tilt": (22.0, 2.0, 0.0)},
+    {"name": "Aggressive PI", "pan": (80.0, 10.0, 0.0), "tilt": (70.0, 9.0, 0.0)},
+    {"name": "Soft PI", "pan": (10.0, 1.0, 0.0), "tilt": (8.0, 0.8, 0.0)},
+
     # Deliberately unstable: huge P with an integrator and nothing to damp it.
     # Keep it last - it is the "what does windup look like" demo, not a tuning
     # candidate.
     {"name": "Runaway", "pan": (500.0, 200.0, 0.0), "tilt": (500.0, 200.0, 0.0)},
 ]
 
-_AXES = {"pan": "p", "tilt": "t", "both": "b"}
+_AXES = (("pan", "p"), ("tilt", "t"))
+_TERMS = ("KP", "KI", "KD")
 
 _OK = "#1a7f37"
 _ERR = "#b42318"
@@ -109,6 +123,42 @@ def _wrap_to(label, parent):
                 lambda e: label.config(wraplength=max(e.width - 12, 100)), add="+")
 
 
+class Tooltip:
+    """A small text window shown while the pointer is over `widget`."""
+
+    def __init__(self, widget, text):
+        self._widget, self._text, self._tip = widget, text, None
+        widget.bind("<Enter>", self._show, add="+")
+        widget.bind("<Leave>", self._hide, add="+")
+        widget.bind("<ButtonPress>", self._hide, add="+")
+
+    def _show(self, _event):
+        if self._tip is not None:
+            return
+        tip = self._tip = tk.Toplevel(self._widget)
+        tip.wm_overrideredirect(True)
+        tip.wm_geometry(f"+{self._widget.winfo_rootx() + 12}"
+                        f"+{self._widget.winfo_rooty() + self._widget.winfo_height() + 4}")
+        tk.Label(tip, text=self._text, justify="left", wraplength=280,
+                 background="#ffffe0", relief="solid", borderwidth=1,
+                 padx=6, pady=4).pack()
+
+    def _hide(self, _event=None):
+        if self._tip is not None:
+            self._tip.destroy()
+            self._tip = None
+
+
+def _titled_box(parent, title, tip):
+    """A LabelFrame whose title is followed by an (i) icon showing `tip`."""
+    head = ttk.Frame(parent)
+    ttk.Label(head, text=title).pack(side="left")
+    icon = ttk.Label(head, text="ⓘ", foreground="#1f6feb", cursor="question_arrow")
+    icon.pack(side="left", padx=(4, 0))
+    Tooltip(icon, tip)
+    return ttk.LabelFrame(parent, labelwidget=head, padding=6)
+
+
 def _pair(parent, text, var, width=7):
     """A caption followed by an entry, kept together when a row wraps."""
     f = ttk.Frame(parent)
@@ -137,9 +187,13 @@ class Controls:
         # to press Set. AUTO is only the default shown here, since it is what
         # this script's own E frames need -- the firmware itself boots at NONE.
         self.channel = tk.StringVar(value="AUTO")
-        self.axis = tk.StringVar(value="both")
-        self.gains = {k: tk.StringVar(value=v)
-                      for k, v in (("KP", "40"), ("KI", "4"), ("KD", "6"))}
+        # One row per axis, one entry per term. Starts at the "Default (PI)"
+        # preset, the firmware's own gains.
+        default = next(p for p in PRESETS if p["name"] == "Default (PI)")
+        self.gains = {axis: {t: tk.StringVar(value=f"{v:g}")
+                             for t, v in zip(_TERMS, default[axis])}
+                      for axis, _ in _AXES}
+        self.preset_var = tk.StringVar(value=default["name"])
         self.nudge = {k: tk.StringVar(value="5") for k in ("dpan", "dtilt")}
         # Starting point only, not read back from the board -- there is no
         # cfg.get sender. Values are firmware's compiled defaults
@@ -153,7 +207,6 @@ class Controls:
         self.frame = outer
         self._build_link_row(outer)
         self._build_gains(outer)
-        self._build_presets(outer)
         self._build_zone(outer)
         self._build_nudge(outer)
 
@@ -170,11 +223,20 @@ class Controls:
         this panel: they are things you press mid-run, while the fields here
         are things you set. Their results still land on this panel's status.
         """
-        flow.add(ttk.Button(flow, text="Arm / Disarm (CONTROL)",
-                            command=self._press_control))
-        flow.add(ttk.Button(flow, text="Center", command=self._center))
-        flow.add(ttk.Button(flow, text="Start Zone Tour", command=self._zone_tour))
-        flow.add(ttk.Button(flow, text="Query gains", command=self._query))
+        for text, command, tip in (
+                ("Arm / Disarm (CONTROL)", self._press_control,
+                 "Same as the board's CONTROL button: toggles ARMED / DISARMED, "
+                 "or acknowledges a FAULT. Check 'st:' in the status."),
+                ("Center", self._center,
+                 "Moves to the middle of the current working zone (P frame -- "
+                 "bypasses the PID and the selected channel)."),
+                ("Start Zone Tour", self._zone_tour,
+                 "Sweeps the working zone. Does nothing unless the gimbal is "
+                 "DISARMED / PARKED."),
+                ("Query gains", self._query,
+                 "Asks the board for its gains. The reply is the 'esp32 |' "
+                 "line in the console.")):
+            Tooltip(flow.add(ttk.Button(flow, text=text, command=command)), tip)
 
     def _build_link_row(self, parent):
         row = Flow(parent)
@@ -189,59 +251,69 @@ class Controls:
             side="left", padx=(4, 0))
 
     def _build_gains(self, parent):
-        box = ttk.LabelFrame(parent, text="PID gains", padding=6)
+        box = _titled_box(parent, "PID gains", (
+            "Pick a preset to fill the table (nothing is sent yet). Edit any "
+            "value, then Apply sends pan and tilt gains together."))
         box.pack(fill="x", pady=(8, 0))
-        flow = Flow(box)
-        flow.pack(fill="x")
-        flow.add(ttk.Combobox(flow, textvariable=self.axis, width=6, state="readonly",
-                              values=list(_AXES)))
-        for name, var in self.gains.items():
-            flow.add(_pair(flow, name, var))
-        flow.add(ttk.Button(flow, text="Set", command=self._set_gains))
+
+        # Picking a preset only fills the table; nothing is sent until Apply.
+        top = ttk.Frame(box)
+        top.pack(fill="x")
+        ttk.Label(top, text="Preset").pack(side="left")
+        combo = ttk.Combobox(top, textvariable=self.preset_var, state="readonly",
+                             width=16, values=[p["name"] for p in PRESETS])
+        combo.pack(side="left", padx=(4, 0), fill="x", expand=True)
+        combo.bind("<<ComboboxSelected>>", lambda _e: self._fill_preset())
+
+        table = ttk.Frame(box)
+        table.pack(fill="x", pady=(6, 0))
+        for col, term in enumerate(_TERMS, start=1):
+            ttk.Label(table, text=term).grid(row=0, column=col)
+            table.columnconfigure(col, weight=1)
+        for row, (axis, _) in enumerate(_AXES, start=1):
+            ttk.Label(table, text=axis).grid(row=row, column=0, sticky="w", padx=(0, 6))
+            for col, term in enumerate(_TERMS, start=1):
+                ttk.Entry(table, textvariable=self.gains[axis][term], width=7,
+                          justify="right").grid(row=row, column=col, padx=2, pady=2,
+                                                sticky="ew")
+        ttk.Button(table, text="Apply", command=self._apply_gains).grid(
+            row=1, column=len(_TERMS) + 1, rowspan=2, padx=(8, 0), sticky="ns")
 
     def _build_nudge(self, parent):
-        box = ttk.LabelFrame(parent, text="Nudge physical gimbal (open loop, degrees)", padding=6)
+        box = _titled_box(parent, "Nudge gimbal (deg)", (
+            "Applies a known physical kick -- like a bump, vibration, wind "
+            "gust, or servo slip -- so the loop can correct it. Open loop."))
         box.pack(fill="x", pady=(8, 0))
         flow = Flow(box)
         flow.pack(fill="x")
         for name, var in self.nudge.items():
             flow.add(_pair(flow, name, var))
         flow.add(ttk.Button(flow, text="Nudge", command=self._do_nudge))
-        note = ttk.Label(box, text=("Applies a known physical kick -- like a bump, vibration, "
-                                    "wind gust, or servo slip -- so the loop can correct it."),
-                         justify="left")
-        note.pack(fill="x", pady=(4, 0))
-        _wrap_to(note, box)
 
     def _build_zone(self, parent):
-        box = ttk.LabelFrame(parent, text="Working zone (deg)", padding=6)
-        box.pack(fill="x", pady=(8, 0))
-        flow = Flow(box)
-        flow.pack(fill="x")
-        labels = (("pan_min", "pan min"), ("pan_max", "pan max"),
-                  ("tilt_min", "tilt min"), ("tilt_max", "tilt max"))
-        for key, label in labels:
-            flow.add(_pair(flow, label, self.zone[key]))
-        flow.add(ttk.Button(flow, text="Set zone", command=self._set_zone))
-        flow.add(ttk.Button(flow, text="Set Max Zone", command=self._set_max_zone))
-        note = ttk.Label(box, text=("Sets the area the gimbal is allowed to move in, live -- "
-                                    "Set Max Zone opens it to the mechanical limits. Start Zone "
-                                    "Tour and Center are under the view."), justify="left")
-        note.pack(fill="x", pady=(4, 0))
-        _wrap_to(note, box)
-
-    def _build_presets(self, parent):
-        box = ttk.LabelFrame(parent, text="Presets", padding=6)
+        box = _titled_box(parent, "Working zone (deg)", (
+            "Sets the area the gimbal is allowed to move in, live. Set Max "
+            "Zone opens it to the mechanical limits. Start Zone Tour and "
+            "Center are under the view."))
         box.pack(fill="x", pady=(8, 0))
 
-        self.preset_var = tk.StringVar(value=PRESETS[0]["name"])
-        self.preset_names = [p["name"] for p in PRESETS]
-        ttk.OptionMenu(box, self.preset_var, self.preset_var.get(),
-                       *self.preset_names).grid(row=0, column=0,
-                                                sticky="ew", padx=(0, 8))
-        ttk.Button(box, text="Apply", command=self._apply_selected_preset).grid(
-            row=0, column=1, sticky="e")
-        box.columnconfigure(0, weight=1)
+        # One row per axis, min and max columns; keys stay "<axis>_<min|max>".
+        table = ttk.Frame(box)
+        table.pack(fill="x")
+        for col, text in enumerate(("min", "max"), start=1):
+            ttk.Label(table, text=text).grid(row=0, column=col)
+            table.columnconfigure(col, weight=1)
+        for row, axis in enumerate(("pan", "tilt"), start=1):
+            ttk.Label(table, text=axis).grid(row=row, column=0, sticky="w", padx=(0, 6))
+            for col, edge in enumerate(("min", "max"), start=1):
+                ttk.Entry(table, textvariable=self.zone[f"{axis}_{edge}"], width=7,
+                          justify="right").grid(row=row, column=col, padx=2, pady=2,
+                                                sticky="ew")
+        buttons = ttk.Frame(table)
+        buttons.grid(row=1, column=3, rowspan=2, padx=(8, 0), sticky="ns")
+        ttk.Button(buttons, text="Set zone", command=self._set_zone).pack(fill="x")
+        ttk.Button(buttons, text="Set Max Zone", command=self._set_max_zone).pack(
+            fill="x", pady=(4, 0))
 
     # --- actions -----------------------------------------------------------
 
@@ -291,14 +363,17 @@ class Controls:
             self.telemetry_on.set(not on)
             self._say(f"telemetry failed: {exc}", ok=False)
 
-    def _set_gains(self):
+    def _apply_gains(self):
         try:
-            kp, ki, kd = self._floats(self.gains)
-            axis = _AXES[self.axis.get()]
-            self.link.set_gains(axis, kp, ki, kd)
-            self._say(f"gains {self.axis.get()} {kp:g}, {ki:g}, {kd:g}")
+            values = {axis: self._floats(self.gains[axis]) for axis, _ in _AXES}
+            for axis, code in _AXES:
+                self.link.set_gains(code, *values[axis])
         except Exception as exc:
             self._say(f"set gains failed: {exc}", ok=False)
+            return
+        self._say("gains applied: " + "; ".join(
+            f"{axis} {', '.join(f'{v:g}' for v in values[axis])}"
+            for axis, _ in _AXES))
 
     def _do_nudge(self):
         try:
@@ -356,18 +431,10 @@ class Controls:
         except Exception as exc:
             self._say(f"center failed: {exc}", ok=False)
 
-    def _apply_selected_preset(self):
-        preset_name = self.preset_var.get()
-        preset = next(p for p in PRESETS if p["name"] == preset_name)
-        try:
-            self.link.set_gains("p", *preset["pan"])
-            self.link.set_gains("t", *preset["tilt"])
-        except Exception as exc:
-            self._say(f"preset {preset['name']} failed: {exc}", ok=False)
-            return
-        # Leave the manual fields showing what is actually loaded, so a preset
-        # can be nudged by hand from where it landed.
-        for name, value in zip(("KP", "KI", "KD"), preset["pan"]):
-            self.gains[name].set(f"{value:g}")
-        self.axis.set("pan")
-        self._say(f"preset {preset['name']} applied")
+    def _fill_preset(self):
+        """Copy the chosen preset into the table. Sends nothing."""
+        preset = next(p for p in PRESETS if p["name"] == self.preset_var.get())
+        for axis, _ in _AXES:
+            for term, value in zip(_TERMS, preset[axis]):
+                self.gains[axis][term].set(f"{value:g}")
+        self._say(f"preset {preset['name']} filled - press Apply to send")

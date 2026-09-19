@@ -1,5 +1,6 @@
 """Tk-native plotting window for tracking error traces."""
 
+import time
 from collections import deque
 
 import tkinter as tk
@@ -8,6 +9,9 @@ import matplotlib
 matplotlib.use("TkAgg")
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
+
+
+_REDRAW_S = 0.2  # repaint at most 5 times a second
 
 
 class ErrorGraphWindow:
@@ -27,6 +31,14 @@ class ErrorGraphWindow:
         self.ax.set_ylabel("error")
         self.ax.grid(True, alpha=0.3)
 
+        # The lines and legend are made once; _draw() only swaps their data.
+        # Rebuilding the axes on every frame cost ~40 ms and capped the whole
+        # detection loop below 25 fps.
+        (self._pan_line,) = self.ax.plot([], [], label="pan", color="#ff9f1c", linewidth=2)
+        (self._tilt_line,) = self.ax.plot([], [], label="tilt", color="#3b82f6", linewidth=2)
+        self.ax.legend(loc="upper right")
+        self._last_draw = 0.0
+
         self.canvas = FigureCanvasTkAgg(fig, master=self.frame)
         self.canvas.draw()
         self.canvas.get_tk_widget().pack(fill="both", expand=True)
@@ -41,25 +53,20 @@ class ErrorGraphWindow:
             return
         self.values["pan"].append(dx)
         self.values["tilt"].append(dy)
-        self._draw()
+        # Every sample is kept; only the repaint is throttled.
+        now = time.monotonic()
+        if now - self._last_draw >= _REDRAW_S:
+            self._last_draw = now
+            self._draw()
 
     def _draw(self):
         if not self._alive:
             return
-        self.ax.clear()
-        self.ax.set_title("tracking error over time")
-        self.ax.set_xlabel("sample")
-        self.ax.set_ylabel("error")
-        self.ax.grid(True, alpha=0.3)
-
         pan = list(self.values["pan"])
         tilt = list(self.values["tilt"])
-        if pan:
-            self.ax.plot(range(len(pan)), pan, label="pan", color="#ff9f1c", linewidth=2)
-        if tilt:
-            self.ax.plot(range(len(tilt)), tilt, label="tilt", color="#3b82f6", linewidth=2)
-
-        self.ax.legend(loc="upper right")
+        self._pan_line.set_data(range(len(pan)), pan)
+        self._tilt_line.set_data(range(len(tilt)), tilt)
+        self.ax.set_xlim(0, max(len(pan), len(tilt), 1))
         if pan or tilt:
             peak = max((max(abs(v) for v in pan) if pan else 0.0),
                        (max(abs(v) for v in tilt) if tilt else 0.0),

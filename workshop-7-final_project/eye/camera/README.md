@@ -21,11 +21,12 @@ unnecessary here because a PC can run the color filter directly.
 | `dots.py`             | the detection itself: red dot, black dots, target choice, error vector             |
 | `serial_link.py`      | the COM link and the wire format; also a standalone sender for bring-up            |
 | `app_window.py`       | the one Tk window: controls left, camera view + FIRE middle, tuning right          |
-| `overlay.py`          | what is drawn on each frame: detections, error arrow, status text, mask image      |
+| `overlay.py`          | what is drawn on each frame: detections, error arrow, mask image; status text      |
 | `controls.py`         | the left panel and action buttons: gain presets, manual gains, nudge, zone, query  |
 | `manual_control.py`   | keyboard-driven `MANUAL` channel: arrow keys → `M <vpan> <vtilt>` frames           |
 | `tx_log.py`           | the one place every line sent to the ESP32 is logged (console and/or file)         |
 | `tuning.py`           | the threshold sliders (right panel), and printing them back out as a command line  |
+| `speed.py`            | the Speed box (right panel): camera fps, frame queue, send rate                    |
 | `simulated_target.py` | click or arrow-key a stand-in target dot when no black dot is printed              |
 
 ## Install and run
@@ -71,7 +72,7 @@ its edge; the tuning panel on the right starts folded.
 
 | Column | Holds                                                                                           |
 |--------|-------------------------------------------------------------------------------------------------|
-| Left   | the settings: telemetry, channel, PID gains, presets, working zone, nudge, status line          |
+| Left   | the settings: telemetry, channel, PID gain table + presets, working zone, nudge, status         |
 | Middle | the camera view, and under it **FIRE**, keyboard drive and the action buttons (see below)       |
 | Right  | **Debug view**, the mask image, the red / black threshold sliders, the tracking-error graph     |
 
@@ -85,7 +86,8 @@ Every frame is rendered with its detections drawn on it:
 - **blue circles** — every black dot found;
 - **green circle + tilted cross** — the one chosen as the target;
 - **white arrow** — the error vector, tail on the laser, head on the target;
-- top-left readout — what was found, the exact frame being sent, fps, counters.
+- top-left readout — what was found, the exact frame being sent, fps and
+  frame size (`WxH`), counters.
 
 Keys (they work while the view has focus; click it to give it back after using
 a text box): `q` quit · `f` fire · `d` toggle the mask image and the labelled
@@ -162,7 +164,7 @@ sender printing (or not printing) it on its own. Two independent outputs:
 - **Console** — everything prints as `-> ...` (`F`, `K`, `N`, `T`, `Q`,
   `cfg.set`, and keyboard `MANUAL` drive's `M` frames), except `E`. `E` is
   the one tag sent continuously regardless of any key or click — up to
-  `--rate`, commonly 20–30 Hz, for as long as `AUTO` runs — so printing every
+  `--rate`, 50 Hz by default, for as long as `AUTO` runs — so printing every
   one by default would drown everything else; add `--echo` to also print
   those, and received lines too. `M` gets no such throttling: it only goes
   out while a direction key is actually held, so it stays visible the same
@@ -398,9 +400,48 @@ red pixels score at all, thresholded relative to the frame's own peak.
 ## Protocol
 
 `docs/uart-protocol.md` is the contract; `src/inputs/ErrorVectorInput.hpp` is
-the receiving end. In short: `E <dx> <dy> <valid>\n` at 15–30 Hz, 115200 8N1,
+the receiving end. In short: `E <dx> <dy> <valid>\n` at up to 50 Hz, 115200 8N1,
 `±1.0` spans half the frame, `valid = 0` when either dot is missing (keep
 sending — silence for 300 ms trips the failsafe and resets the PIDs).
+
+### Speed settings
+
+These set how fast the vision side feeds the firmware. The firmware uses at
+most one frame per 20 ms control step, so more than 50 Hz is wasted.
+
+The flags give the starting values. While running, the **Speed** box in the
+right panel changes them: edit the numbers and press **Apply** (or Enter).
+Bad numbers are refused and shown in the box.
+
+| Setting      | Live change                                                       |
+|--------------|-------------------------------------------------------------------|
+| Send rate    | at once                                                           |
+| Frame queue  | at once if the camera allows it, otherwise the camera restarts    |
+| Camera fps   | the camera restarts (about a second, the view freezes)           |
+
+The OAK-1 sensor (IMX378, up to 4056×3040) only offers some size and fps
+pairs. Measured on this camera:
+
+| Size      | fps that work |
+|-----------|---------------|
+| 4056×3040 | 15, 30        |
+| 3840×2160 | 15, 30        |
+| 1920×1080 | 30, 45, 60    |
+| 1280×720  | 15–60         |
+| 640×360   | 15–60         |
+
+If the camera refuses a pair, the run does not stop. It keeps the last fps
+that worked (at startup it steps down to 30, then 15), and the Speed box
+shows which fps is in use.
+
+| Flag           | Default | Meaning                                                                 |
+|----------------|---------|-------------------------------------------------------------------------|
+| `--fps`        | 60      | OAK sensor frame rate                                                   |
+| `--queue-size` | 1       | OAK frames buffered; 1 = always the newest frame (lowest latency)       |
+| `--rate`       | 50      | max `E` frames per second put on the wire                               |
+
+Detection time per frame can still cap the real rate; the `fps` readout on
+the view shows what the loop actually reaches.
 
 All serial I/O runs on one worker thread inside `ErrorLink`
 (`serial_link.py`). The main loop only queues lines (`send`, `set_gains`, …)

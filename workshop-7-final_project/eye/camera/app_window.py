@@ -5,7 +5,7 @@
     | (gains,  |                           |  masks    |
     |  nudge,  |                           |  sliders  |
     |  zone…)  +---------------------------+  error    |
-    |          |  FIRE   keyboard drive    |  graph    |
+    |  status  |  FIRE   keyboard drive    |  graph    |
     +----------+---------------------------+-----------+
 
 Everything is Tk. The camera view is a canvas showing the annotated frame as a
@@ -62,7 +62,7 @@ def _photo(bgr, max_w, max_h):
 class AppWindow:
     """Build it, then call `pump()` once per frame and `show_frame()` per view."""
 
-    def __init__(self, link, thresholds, debug=False):
+    def __init__(self, link, thresholds, speed, debug=False):
         self.alive = True
         self._keys = collections.deque()
         self._fire_clicked = False
@@ -92,9 +92,11 @@ class AppWindow:
         panes.add(centre, weight=1)
         panes.add(right, weight=0)
 
+        # Packed first, on the bottom edge, so Controls fills what is left.
+        self._build_status(left_body)
         self.controls = Controls(link, left_body)
         self._build_view(centre)
-        self._build_right(right_body, thresholds, debug)
+        self._build_right(right_body, thresholds, speed, debug)
         # The tuning panel starts folded: it is for bring-up, not for driving.
         # The sash can only be placed once the panes have a real size.
         self.root.update()
@@ -140,6 +142,13 @@ class AppWindow:
 
     # --- construction ------------------------------------------------------
 
+    def _build_status(self, parent):
+        box = ttk.LabelFrame(parent, text="Status", padding=6)
+        box.pack(side="bottom", fill="x", padx=8, pady=(0, 8))
+        self._status = ttk.Label(box, font=("Consolas", 11), justify="left",
+                                 wraplength=_LEFT_W - 60)
+        self._status.pack(fill="x")
+
     def _build_view(self, parent):
         bar = ttk.Frame(parent, padding=(8, 6))
         bar.pack(side="bottom", fill="x")
@@ -170,7 +179,7 @@ class AppWindow:
         self.canvas.bind("<Button-3>", self._on_right)
         self.canvas.focus_set()
 
-    def _build_right(self, parent, thresholds, debug):
+    def _build_right(self, parent, thresholds, speed, debug):
         top = ttk.Frame(parent, padding=(8, 6))
         top.pack(fill="x")
         self.debug = tk.BooleanVar(value=debug)
@@ -185,6 +194,8 @@ class AppWindow:
         self._mask_photo = None
         if debug:
             self._mask_label.pack(fill="x", padx=8)
+
+        speed.build(parent).pack(fill="x", padx=8, pady=(6, 0))
 
         self.sliders = thresholds.build(parent)
         self.sliders.pack(fill="x", padx=8, pady=(6, 0))
@@ -281,6 +292,10 @@ class AppWindow:
         self._map = (ox, oy, scale, view.shape[1], view.shape[0])
         self.canvas.coords(self._image_item, ox, oy)
         self.canvas.itemconfig(self._image_item, image=self._photo)
+
+    def set_status(self, lines):
+        """Show the per-frame status text (see overlay.status_lines)."""
+        self._status.config(text="\n".join(lines))
 
     def show_masks(self, image):
         """Draw the debug mask image (BGR) above the sliders."""

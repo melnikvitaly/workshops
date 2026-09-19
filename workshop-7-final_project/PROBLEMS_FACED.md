@@ -49,3 +49,20 @@
 ### Solution 6
 
 - TODO: cause and fix.
+
+## 7. Slow targeting
+
+### Solution 7
+
+- TODO: cause and fix.
+
+## 8. Dot detection is not reliable
+
+- Detector can lose the dot for a few frames, then find it again ("blink").
+- Effect: error jumps or drops out, so aim can twitch or stop for a moment.
+- Code: [`detect_dots.py`](eye/camera/detect_dots.py).
+
+### Solution 8
+
+- TODO: cause and fix (for example: hold last position for a short time,
+  filter jumps, tune thresholds).

@@ -27,8 +27,10 @@ namespace config
     // sag. Commanding faster than the servo can actually move means it silently
     // falls behind, the loop briefly runs open, and the current spike upsets
     // the shared supply.
-    constexpr float SERVO_PAN_MAX_RATE = 150.0f;
-    constexpr float SERVO_TILT_MAX_RATE = 120.0f;
+    constexpr float SERVO_PAN_MAX_RATE = 240.0f;  // was 150: faster targeting
+    constexpr float SERVO_TILT_MAX_RATE = 200.0f; // was 120; NOT yet checked on the
+                                                  // rig - watch for the servo falling
+                                                  // behind and for supply sag
 
     // LEDC resource assignment for the two servo channels.
     constexpr ledc_channel_t PAN_PWM_CHANNEL = LEDC_CHANNEL_0;
@@ -146,8 +148,10 @@ namespace config
     // PID output clamp (deg/s): how fast the *loop* is allowed to drive each
     // axis. This is a tuning knob - lower it for gentler tracking - and it also
     // defines "saturated" for the anti-windup logic.
-    constexpr float PAN_MAX_SLEW = 120.0f;
-    constexpr float TILT_MAX_SLEW = 90.0f;
+    constexpr float PAN_MAX_SLEW = 200.0f;  // was 120
+    constexpr float TILT_MAX_SLEW = 160.0f; // was 90
+    // Note: the error is at most 1.0, so the P term alone tops out at Kp deg/s.
+    // These caps only bite when Kp (plus the integral) exceeds them.
 
     // These must not exceed the Gimbal's hard rate ceiling. If they did, the
     // PID would believe it was still in range while the Gimbal was quietly

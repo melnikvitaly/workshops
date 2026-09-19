@@ -40,20 +40,17 @@ def _age_text(age):
     return f"{age:.1f}s ago" if age < 10.0 else f"{age:.0f}s ago"
 
 
-def draw_overlay(frame, red, targets, target, dx, dy, valid, fps, link, telemetry=None,
-                 telemetry_age=None, rejects=()):
+def draw_overlay(frame, red, targets, target, valid, rejects=()):
     """Annotate the frame with both detections and the error vector.
-
-    `telemetry` is a parsed `tlm` sample (serial_link.parse_tlm) or None if
-    none has arrived yet. `telemetry_age` is seconds since it was received -
-    shown as "Xs ago" rather than hiding the sample once it goes stale, so a
-    dead link reads as a growing age instead of the readout vanishing.
 
     `rejects` is [(Dot, reason)] from find_black_dots - the blobs that were the
     right size but were not round enough (or not dark enough) to be a dot.
     Drawn in grey with the measurement that failed, so a missed dot can be read
     off the frame: "circ 0.71" says raise nothing, it is not round; "pale 0.86"
     says the ink test is what to loosen.
+
+    The numbers (error, fps, telemetry...) are not drawn here: see
+    `status_lines`, shown in the left panel.
     """
     s = _ui_scale(frame)
     thick = max(1, int(2 * s))
@@ -82,33 +79,43 @@ def draw_overlay(frame, red, targets, target, dx, dy, valid, fps, link, telemetr
         # The error vector itself: tail on the laser, head on the target.
         cv2.arrowedLine(frame, red.center, target.center, _WHITE, thick,
                         cv2.LINE_AA, tipLength=0.15)
+    return frame
 
-    # The target's roundness is worth a slot: it is the one number that says
-    # how comfortably the chosen dot passed, and a target hovering near the
-    # threshold is what a flickering lock looks like from here.
+
+def status_lines(red, targets, target, dx, dy, valid, fps, frame_shape, link,
+                 telemetry=None, telemetry_age=None, rejects=()):
+    """The status text for the left panel, one string per line.
+
+    `telemetry` is a parsed `tlm` sample (serial_link.parse_tlm) or None if
+    none has arrived yet. `telemetry_age` is seconds since it was received -
+    shown as "Xs ago" rather than hiding the sample once it goes stale, so a
+    dead link reads as a growing age instead of the readout vanishing.
+
+    The target's roundness is worth a slot: it is the one number that says
+    how comfortably the chosen dot passed, and a target hovering near the
+    threshold is what a flickering lock looks like from here.
+    """
     lines = [
-        f"red: {'YES' if red is not None else 'no'}   "
+        f"red: {'YES' if red is not None else 'no'}",
         f"black: {len(targets)}"
-        + (f" (+{len(rejects)} rejected)" if rejects else "")
-        + "   target: "
+        + (f" (+{len(rejects)} rejected)" if rejects else ""),
+        "target: "
         + (f"YES roundness score {target.roundness:.2f}"
            if target is not None else "no"),
-        f"E {dx:+.3f} {dy:+.3f} {1 if valid else 0}   "
-        f"{fps:.0f} fps   sent {link.sent}   fired {link.fired}   "
-        f"{link.port or 'no port'}",
+        f"E {dx:+.3f} {dy:+.3f} {1 if valid else 0}",
+        f"{fps:.0f} fps {frame_shape[1]}x{frame_shape[0]}",
+        f"sent {link.sent}   fired {link.fired}",
+        f"port: {link.port or 'no port'}",
     ]
     if telemetry is not None:
-        lines.append(
-            f"ESP T  st:{telemetry['st']} ch:{telemetry['ch']}  "
-            f"ex:{telemetry['ex']:+.3f} ey:{telemetry['ey']:+.3f}  "
-            f"v:{telemetry['vp']:+.1f}/{telemetry['vt']:+.1f} deg/s  "
-            f"pan:{telemetry['pan']:.1f} tilt:{telemetry['tilt']:.1f}  "
-            f"{_age_text(telemetry_age)}")
-    for i, text in enumerate(lines):
-        org = (int(10 * s) + 2, int((30 + 26 * i) * s) + 8)
-        cv2.putText(frame, text, org, cv2.FONT_HERSHEY_SIMPLEX, 0.65 * s,
-                    _WHITE, max(1, int(2 * s)), cv2.LINE_AA)
-    return frame
+        lines += [
+            f"ESP T  st:{telemetry['st']} ch:{telemetry['ch']}   "
+            f"{_age_text(telemetry_age)}",
+            f"ex:{telemetry['ex']:+.3f} ey:{telemetry['ey']:+.3f}",
+            f"v:{telemetry['vp']:+.1f}/{telemetry['vt']:+.1f} deg/s",
+            f"pan:{telemetry['pan']:.1f} tilt:{telemetry['tilt']:.1f}",
+        ]
+    return lines
 
 
 def render_masks(red_mask, black_mask, rotate):

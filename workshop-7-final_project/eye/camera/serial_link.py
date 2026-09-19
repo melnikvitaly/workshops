@@ -365,10 +365,14 @@ class ErrorLink:
     and confirms it with the `Q`/`G` handshake (see `autodetect_port`).
     """
 
+    def set_rate(self, max_rate):
+        """Cap on frames/second put on the wire; 0 = no cap. Safe to call live."""
+        self.min_interval = 1.0 / max_rate if max_rate > 0 else 0.0
+
     def __init__(self, port=None, baud=115200, max_rate=30.0, echo=False,
                  tx_log_path=None):
         self.echo = echo
-        self.min_interval = 1.0 / max_rate if max_rate > 0 else 0.0
+        self.set_rate(max_rate)
         self.sent = 0
         self.fired = 0
         # Every line _write() sends passes through here -- see tx_log.py for
