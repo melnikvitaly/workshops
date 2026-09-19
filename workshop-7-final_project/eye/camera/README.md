@@ -20,12 +20,12 @@ unnecessary here because a PC can run the color filter directly.
 | `detect_dots.py`      | main script: frame sources → detection → error vector → COM, plus the command line |
 | `dots.py`             | the detection itself: red dot, black dots, target choice, error vector             |
 | `serial_link.py`      | the COM link and the wire format; also a standalone sender for bring-up            |
-| `overlay.py`          | what is drawn on each frame: detections, error arrow, status text, mask windows    |
-| `fire_button.py`      | the on-screen FIRE button and its border states (converging / on target)           |
-| `controls.py`         | the controls window (Tk): gain presets, manual gains, nudge, telemetry, query      |
+| `app_window.py`       | the one Tk window: controls left, camera view + FIRE middle, tuning right          |
+| `overlay.py`          | what is drawn on each frame: detections, error arrow, status text, mask image      |
+| `controls.py`         | the left panel and action buttons: gain presets, manual gains, nudge, zone, query  |
 | `manual_control.py`   | keyboard-driven `MANUAL` channel: arrow keys → `M <vpan> <vtilt>` frames           |
 | `tx_log.py`           | the one place every line sent to the ESP32 is logged (console and/or file)         |
-| `tuning.py`           | the `--debug` threshold sliders, and printing them back out as a command line      |
+| `tuning.py`           | the threshold sliders (right panel), and printing them back out as a command line  |
 | `simulated_target.py` | click or arrow-key a stand-in target dot when no black dot is printed              |
 
 ## Install and run
@@ -66,6 +66,19 @@ plugged in, name the port rather than trusting the guess.
 
 ## The window
 
+One window, three columns. Each side panel folds away with the arrow button on
+its edge; the tuning panel on the right starts folded.
+
+| Column | Holds                                                                                           |
+|--------|-------------------------------------------------------------------------------------------------|
+| Left   | the settings: telemetry, channel, PID gains, presets, working zone, nudge, status line          |
+| Middle | the camera view, and under it **FIRE**, keyboard drive and the action buttons (see below)       |
+| Right  | **Debug view**, the mask image, the red / black threshold sliders, the tracking-error graph     |
+
+Under the view: **FIRE** (red border colour = on target, green = converging),
+**Keyboard drive**, **Arm / Disarm (CONTROL)**, **Center**, **Start Zone Tour**
+and **Query gains**. The row wraps when the view is narrow.
+
 Every frame is rendered with its detections drawn on it:
 
 - **red circle + cross** — the red dot;
@@ -74,12 +87,13 @@ Every frame is rendered with its detections drawn on it:
 - **white arrow** — the error vector, tail on the laser, head on the target;
 - top-left readout — what was found, the exact frame being sent, fps, counters.
 
-Keys: `q` quit · `f` fire · `d` toggle the binary masks and the threshold
-sliders · `p` print the current thresholds as a command line · `m` toggle
+Keys (they work while the view has focus; click it to give it back after using
+a text box): `q` quit · `f` fire · `d` toggle the mask image and the labelled
+rejections · `p` print the current thresholds as a command line · `m` toggle
 keyboard `MANUAL` drive · arrows move the simulated target, or drive the
 gimbal while `m` is engaged · `SPACE`/`n` next image (folder mode).
 
-Mouse (view window): left-click places or moves a **simulated target** where no
+Mouse (on the view): left-click places or moves a **simulated target** where no
 black dot is printed, right-click clears it. The arrow keys nudge it 24 px at a
 time, in the direction it moves on screen even under `--rotate`; with no dot yet
 the first arrow puts one at the frame centre. While keyboard `MANUAL` drive is
@@ -90,11 +104,11 @@ touch the simulated target.
 
 Press `m` to toggle **keyboard `MANUAL` drive** (`manual_control.py`). Turning
 it on also sets `input.channel = MANUAL` on the board — the same effect as
-picking `MANUAL` + **Set** in the controls window — then the arrow keys send
+picking `MANUAL` + **Set** in the left panel — then the arrow keys send
 `M <vpan> <vtilt>` frames (`docs/protocol.md`) for as long as they are held,
 at `--manual-speed` deg/s per axis (default 40). Turning it off sends one
 immediate zero-velocity frame and stops sending; the gimbal still needs
-`ARMED` (`--control`, or the controls window's **Arm / Disarm**) to actually
+`ARMED` (`--control`, or the **Arm / Disarm** button) to actually
 move, same as `AUTO`.
 
 MANUAL fails safe the same way AUTO does — 300 ms without a fresh `M` frame
@@ -102,7 +116,7 @@ parks the gimbal — so `manual_control.py` keeps a keep-alive frame going
 (every 150 ms) the whole time a key is down, even if the commanded velocity
 has not changed, and sends immediately the moment it does change. "Held" is
 read straight from the OS key state (Windows only), not guessed from
-OpenCV's key-repeat, so release is immediate and exact — see the module
+key-repeat events, so release is immediate and exact — see the module
 docstring.
 
 Driving one frame at a time, without the keyboard, from the command line or
@@ -199,7 +213,7 @@ session, the pilot remote), so it always waits for an explicit action:
 py -3 serial_link.py --channel AUTO     # cfg.set input.channel AUTO, then exit
 ```
 
-or the **Channel** dropdown + **Set** button in the controls window (below).
+or the **Channel** dropdown + **Set** button in the left panel (below).
 Either way it is a `cfg.set` NDJSON message, acknowledged by a `cfg.state`
 reply (`docs/protocol.md` §3.3) printed as `cfg: input.channel='AUTO' OK
 [id N]` with `--echo`/`--console`/`--monitor`; confirm it actually took by
@@ -217,7 +231,7 @@ so `EYE` can arm remotely too:
 py -3 serial_link.py --control     # cfg.set control.press: arm/disarm toggle
 ```
 
-or the **Arm / Disarm (CONTROL)** button in the controls window. It is a
+or the **Arm / Disarm (CONTROL)** button under the view. It is a
 **toggle**, same as the physical button — it arms from `DISARMED`/`PARKED`,
 disarms from `ARMED`/`LINK_LOST`, acknowledges a latched `FAULT` instead of
 either, and no-ops during boot/self-test/zone-tour. There is no separate
@@ -227,15 +241,17 @@ arming gave (nobody can arm the gimbal without standing at the board) for
 bench-testing convenience — see `docs/protocol.md` §3.3 before wiring it into
 anything unattended.
 
-### The controls window
+### The controls
 
-A second window, `gimbal controls`, carries everything on the command side of
-the protocol: **Query gains**, a **Telemetry** toggle, a **Channel** selector,
-**Arm / Disarm (CONTROL)**, an axis + KP/KI/KD row with **Set**, an open-loop
-**Nudge**, a **Working zone** box, and the grid of gain presets. Nudge moves
-the physical gimbal by the entered number of degrees, simulating a sudden bump,
-vibration, wind gust, or mechanical slip; it is a repeatable disturbance for
-checking how the loop recovers, not an aiming offset. Clicking a
+The left panel of the window, plus the buttons under the view, carry everything
+on the command side of the protocol: a **Telemetry** toggle, a **Channel**
+selector, an axis + KP/KI/KD row with **Set**, the gain presets, a **Working
+zone** box, and an open-loop **Nudge**, in that order. The one-shot buttons
+under the view are **Arm / Disarm (CONTROL)**, **Center**, **Start Zone Tour**
+and **Query gains**. Nudge moves the physical gimbal by the entered number of
+degrees, simulating a sudden bump, vibration, wind gust, or mechanical slip; it
+is a repeatable disturbance for checking how the loop recovers, not an aiming
+offset. Clicking a
 preset also loads its numbers into the KP/KI/KD fields, so it can be adjusted by
 hand from wherever it landed. Results — and any refusal from the link — appear
 on the status line at the bottom; `Q`'s reply comes back on the `esp32 |` line
@@ -266,11 +282,12 @@ absolute angle instead of an offset. The equivalent from `serial_link.py` is
 `--zone PAN_MIN PAN_MAX TILT_MIN TILT_MAX`, `--zone-tour`, `--move-to PAN
 TILT`, and `--center`.
 
-It is a Tk window rather than a painted OpenCV one, which is why it has real
-text fields. Tk ships with Python, so this costs no extra dependency; if it is
-somehow unavailable the script says so and keeps tracking without the panel, and
-closing the window does the same. It shares the main thread with the loop, so a
-click has reached the serial link before the next frame is detected.
+The whole window is Tk rather than a painted OpenCV one, which is why it has
+real text fields and buttons. Tk ships with Python, so this costs no extra
+dependency, and the camera view is shown as a PPM image, so there is no Pillow
+either. There is no OpenCV window and no `cv2.waitKey`. Closing the window ends
+the run. It shares the main thread with the loop, so a click has reached the
+serial link's queue before the next frame is detected.
 
 ## Which black dot is the target
 
@@ -280,18 +297,19 @@ the one closest to the red dot.
 
 ## Tuning
 
-Run with `--debug`: the mask window shows the two binary masks that everything
-else is derived from, and every rejected blob is boxed in grey **on the frame
-itself, labelled with the measurement that failed** — `circ 0.66`, `hollow 0.46`,
-`pale 0.91`. That label names the knob, so tuning is reading rather than
-guessing. The chosen target's `round` score is in the top-left readout; a target
-hovering near a threshold is what a flickering lock looks like from here.
+Turn on **Debug view** (or `--debug`, or `d`): the right panel shows the two
+binary masks that everything else is derived from, and every rejected blob is
+boxed in grey **on the frame itself, labelled with the measurement that failed**
+— `circ 0.66`, `hollow 0.46`, `pale 0.91`. That label names the knob, so tuning
+is reading rather than guessing. The chosen target's `round` score is in the
+top-left readout; a target hovering near a threshold is what a flickering lock
+looks like from here.
 
-`--debug` also opens **`tune: red dot`** and **`tune: black dots`**, one slider
-per threshold, so a value can be swept against a live frame instead of costing a
-restart per guess. The flags below still set the starting point; the sliders take
-over from there. Sliders are integers, so fractions carry their scale in the
-name: `circ /100` at 80 is `0.80`, `area max x100` at 200 is `20000`.
+The right panel has one tab per detector, **Red dot** and **Black dots**, with a
+slider per threshold, so a value can be swept against a live frame instead of
+costing a restart per guess. The flags below still set the starting point; the
+sliders take over from there. Each slider shows its real value, for example
+`circ` at `0.80`.
 
 The sliders die with the window, so `p` prints the current set as a command
 line — that is how a tuning session becomes the next run's flags:
@@ -384,10 +402,14 @@ the receiving end. In short: `E <dx> <dy> <valid>\n` at 15–30 Hz, 115200 8N1,
 `±1.0` spans half the frame, `valid = 0` when either dot is missing (keep
 sending — silence for 300 ms trips the failsafe and resets the PIDs).
 
-Windows blocks the main loop while a window is dragged or resized. To keep the
-link up, a keepalive thread in `serial_link.py` sends a hold frame
-(`E 0 0 0`, or `M 0 0` if MANUAL was last) once the loop is quiet for 120 ms.
-The gimbal holds still and does not chase the old target.
+All serial I/O runs on one worker thread inside `ErrorLink`
+(`serial_link.py`). The main loop only queues lines (`send`, `set_gains`, …)
+and collects replies with `poll()`; it never touches the port.
+
+Windows blocks the main loop while a window is dragged or resized. The worker
+keeps the link up: once the loop is quiet for 120 ms it sends a hold frame
+(`E 0 0 0`, or `M 0 0` if MANUAL was last). The gimbal holds still and does
+not chase the old target. Keepalive frames are not written to the tx log.
 
 Bring-up, before connecting the camera:
 

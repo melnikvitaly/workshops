@@ -68,7 +68,7 @@ telling the controller, which makes it a repeatable open-loop disturbance — th
 only honest way to compare two gain sets. `P` is `N`'s absolute counterpart —
 drive straight to an angle rather than by an offset from wherever the gimbal
 currently is — for bench positioning such as centring on the working zone
-(`EYE`'s `ErrorLink.center()`/`--center`, the controls window's **Center**
+(`EYE`'s `ErrorLink.center()`/`--center`, the **Center** button
 button). Like `N`, it is not gated by `input.channel` and bypasses the PID.
 
 Both `N` and `P` clamp to `Gimbal`'s current travel — the working zone

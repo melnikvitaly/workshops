@@ -1,9 +1,9 @@
-"""Frame drawing for detect_dots: detections, error vector, and mask windows.
+"""Frame drawing for detect_dots: detections, error vector, and the mask image.
 
 Everything here is display-only. Detection coordinates are always in original
 camera space, so the overlay is drawn BEFORE any --rotate is applied to the
-view (see _ROTATE); the FIRE button in fire_button.py is drawn after, because
-its clicks arrive in window coordinates.
+view (see _ROTATE); clicks on the view arrive in rotated (display) coordinates
+and simulated_target.py maps them back.
 """
 
 import cv2
@@ -22,11 +22,6 @@ _GREEN = (0, 220, 0)
 _BLUE = (255, 160, 0)
 _WHITE = (255, 255, 255)
 _GREY = (140, 140, 140)
-
-# Window titles. HighGUI addresses windows by title, so every imshow /
-# namedWindow / setMouseCallback for the same window must use the same string.
-_WIN = "dots: red -> black"
-_MASK_WIN = "masks (debug)"
 
 
 def _ui_scale(frame):
@@ -116,8 +111,8 @@ def draw_overlay(frame, red, targets, target, dx, dy, valid, fps, link, telemetr
     return frame
 
 
-def show_masks(red_mask, black_mask, rotate):
-    """One window with both binary masks side by side, for threshold tuning."""
+def render_masks(red_mask, black_mask, rotate):
+    """One BGR image with both binary masks side by side, for threshold tuning."""
     both = np.hstack([red_mask, black_mask])
     scale = 900.0 / both.shape[1]
     if scale < 1.0:
@@ -128,12 +123,4 @@ def show_masks(red_mask, black_mask, rotate):
                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, _GREEN, 2)
     if rotate:
         both = cv2.rotate(both, _ROTATE[rotate])
-    cv2.imshow(_MASK_WIN, both)
-
-
-def hide_masks():
-    """Close the mask window (no-op if it was never opened)."""
-    try:
-        cv2.destroyWindow(_MASK_WIN)
-    except cv2.error:
-        pass
+    return both

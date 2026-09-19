@@ -71,8 +71,10 @@ And the tuning console:
     py -3 serial_link.py --console                   # type lines interactively
 """
 
+import collections
 import json
 import math
+import queue
 import threading
 import time
 
@@ -385,16 +387,18 @@ class ErrorLink:
         self.channel_requested = None
         self._last = 0.0
         self._last_manual = 0.0
-        self._rx = b""
-        self._pending = []   # complete lines received, not yet handed to poll()
+        self._rx = b""       # worker only: partial line being assembled
+        # Complete lines received, not yet handed to poll(). A deque so the
+        # worker appends and poll() pops with no lock; maxlen drops the oldest
+        # if nobody is calling poll().
+        self._pending = collections.deque(maxlen=200)
         self._ser = None
-        # Keepalive: see _keepalive(). _write_lock exists because that thread
-        # and the main loop both write.
-        self._write_lock = threading.Lock()
-        self._stop = threading.Event()
+        # All serial I/O happens on one worker thread (see _worker()). The rest
+        # of the program only queues lines (_write) and reads lines (poll).
+        self._tx = queue.Queue()
         self._last_kind = None   # "E" or "M": which stream the loop last fed
         self._last_tx = 0.0
-        self._keepalive_thread = None
+        self._thread = None
         if port is None:
             self.port = None
             print("Serial: disabled (no --port) -- detection only")
@@ -424,28 +428,48 @@ class ErrorLink:
         self._ser.open()
         print(f"Serial: {port} @ {baud} 8N1, "
               f"frames capped at {max_rate:g} Hz")
-        self._keepalive_thread = threading.Thread(
-            target=self._keepalive, name="link-keepalive", daemon=True)
-        self._keepalive_thread.start()
+        self._thread = threading.Thread(
+            target=self._worker, name="esp-link", daemon=True)
+        self._thread.start()
 
-    def _keepalive(self):
-        """Hold the link up while the main loop is stuck.
+    def _worker(self):
+        """The only code that touches the serial port.
 
-        Windows runs a modal loop while a window is being dragged or resized,
-        and it blocks the thread that owns the window - which is the vision
-        loop, so no E/M frames go out until the mouse is released. The firmware
-        drops the link after 300 ms and resets its PIDs. Once the loop has been
-        quiet for KEEPALIVE_AFTER, this sends the harmless frame for whichever
-        stream was active - `valid=0` (hold) or zero velocity - never the stale
-        target, so the gimbal does not chase an old error while nobody looks.
+        Loop: write whatever the program queued, read whatever the board sent,
+        and keep the link alive. Doing this off the main thread means a stalled
+        main loop cannot stall the link. Windows blocks the thread that owns a
+        window while it is dragged or resized, and that is the vision loop, so
+        without this no E/M frames would go out until the mouse is released and
+        the firmware would drop the link after 300 ms and reset its PIDs.
+
+        Keepalive: once the E/M stream has been quiet for KEEPALIVE_AFTER, send
+        the harmless frame for whichever stream was active - `valid=0` (hold) or
+        zero velocity - never the stale target, so the gimbal does not chase an
+        old error while nobody looks. These are not written to the tx log.
         """
-        while not self._stop.wait(0.05):
-            if self._last_kind is None:
-                continue
-            if time.time() - self._last_tx < KEEPALIVE_AFTER:
-                continue
-            line = "E 0.0000 0.0000 0\n" if self._last_kind == "E" else "M 0.000 0.000\n"
-            self._write(line)
+        ser = self._ser
+        next_keepalive = 0.0
+        while True:
+            try:
+                line = self._tx.get(timeout=0.01)
+            except queue.Empty:
+                line = ""
+            if line is None:            # close(): everything queued was sent
+                return
+            try:
+                if line:
+                    ser.write(line.encode("ascii"))
+                    continue            # more may be queued; reading can wait
+                self._read(ser)
+                now = time.time()
+                if (self._last_kind is not None and now >= next_keepalive
+                        and now - self._last_tx >= KEEPALIVE_AFTER):
+                    ser.write(b"E 0.0000 0.0000 0\n" if self._last_kind == "E"
+                              else b"M 0.000 0.000\n")
+                    next_keepalive = now + 0.05
+            except Exception as e:      # a USB hiccup must not kill the link
+                print("Serial I/O failed:", e)
+                time.sleep(0.05)
 
     def send(self, dx, dy, valid):
         """Send one frame. Returns True if it went out, False if rate-limited."""
@@ -461,7 +485,6 @@ class ErrorLink:
         self._last_kind = "E"
         if self._write(line):
             self.sent += 1
-        self._drain()
         return True
 
     def manual(self, vpan_deg_s, vtilt_deg_s):
@@ -485,7 +508,6 @@ class ErrorLink:
         self._last_kind = "M"
         if self._write(f"M {vpan_deg_s:.3f} {vtilt_deg_s:.3f}\n"):
             self.sent += 1
-        self._drain()
         return True
 
     def manual_now(self, vpan_deg_s, vtilt_deg_s):
@@ -502,7 +524,6 @@ class ErrorLink:
         """
         self.fired += 1
         self._write("F\n")
-        self._drain()
 
     # --- tuning console --------------------------------------------------------
     # One-shot commands, never rate limited: unlike an E frame, none of them is
@@ -723,50 +744,44 @@ class ErrorLink:
 
     def send_raw(self, line):
         self._write(line)
-        self._drain()
 
     def _write(self, line):
-        # Log the attempt regardless of whether it actually reaches the wire
-        # -- see tx_log.py. This is the one call site every sender above
-        # goes through, so it is also the one place logging needs to happen.
-        with self._write_lock:
-            self._tx_log.record(line)
-            if line[:1] in ("E", "M"):
-                self._last_tx = time.time()
-            if self._ser is None:
-                return False
-            try:
-                self._ser.write(line.encode("ascii"))
-                return True
-            except Exception as e:   # a USB hiccup must not kill the vision loop
-                print("Serial write failed:", e)
-                return False
+        """Queue one line for the worker. True if a port will send it.
+
+        Log the attempt regardless of whether it actually reaches the wire
+        -- see tx_log.py. This is the one call site every sender above
+        goes through, so it is also the one place logging needs to happen.
+        """
+        self._tx_log.record(line)
+        if self._ser is None:
+            return False
+        if line[:1] in ("E", "M"):
+            self._last_tx = time.time()
+        self._tx.put(line)
+        return True
 
     def poll(self):
         """Whatever the firmware has said since the last call, as text lines.
 
-        Only protocol lines are expected on this UART (console logs are UART0
-        / USB-Serial-JTAG, not this port -- see the module docstring), but
-        reading unconditionally costs nothing and leaving RX unread eventually
-        fills the OS buffer, so this runs every frame whether anyone looks or
-        not.
+        The worker reads the port continuously; this only hands over what it
+        has collected. Only protocol lines are expected on this UART (console
+        logs are UART0 / USB-Serial-JTAG, not this port -- see the module
+        docstring). Call it every frame or the oldest lines fall off.
         """
-        self._drain()
-        lines, self._pending = self._pending, []
+        lines = []
+        while self._pending:
+            try:
+                lines.append(self._pending.popleft())
+            except IndexError:
+                break
         return lines
 
-    def _drain(self):
-        if self._ser is None:
+    def _read(self, ser):
+        """Worker only: move whatever the port has into `_pending`."""
+        waiting = ser.in_waiting
+        if not waiting:
             return
-        try:
-            waiting = self._ser.in_waiting
-            if not waiting:
-                return
-            data = self._ser.read(waiting)
-        except Exception:
-            return
-
-        self._rx += data
+        self._rx += ser.read(waiting)
         while b"\n" in self._rx:
             raw, self._rx = self._rx.split(b"\n", 1)
             # NULs are stripped rather than shown: a board held in reset streams
@@ -781,20 +796,18 @@ class ErrorLink:
         # never delivers a '\n' at all).
         if len(self._rx) > 4096:
             self._rx = self._rx[-512:]
-        del self._pending[:-200]        # cap if nobody is calling poll()
 
     def close(self, park=True):
-        self._stop.set()
-        if self._keepalive_thread is not None:
-            self._keepalive_thread.join(timeout=0.5)
         if self._ser is not None:
+            if park:
+                # Zero both channels: whichever one is actually selected
+                # is what stops the gimbal, and there is no way to read
+                # input.channel back from here to send only the right one.
+                self.send_now(0.0, 0.0, False)   # AUTO
+                self.manual_now(0.0, 0.0)        # MANUAL
+            self._tx.put(None)                   # worker exits after sending these
+            self._thread.join(timeout=1.0)
             try:
-                if park:
-                    # Zero both channels: whichever one is actually selected
-                    # is what stops the gimbal, and there is no way to read
-                    # input.channel back from here to send only the right one.
-                    self.send_now(0.0, 0.0, False)   # AUTO
-                    self.manual_now(0.0, 0.0)        # MANUAL
                 self._ser.close()
             except Exception:
                 pass

@@ -20,9 +20,10 @@ The camera plumbing is DepthAI v3 and mirrors the on-camera NN pipeline used on
 other projects, so the same pipeline shape works for both.
 
 This file is the frame sources, the loop, and the command line. The display
-lives elsewhere: overlay.py draws on the frame, fire_button.py is the FIRE
-widget, controls.py is the gains/protocol window (Tk), tuning.py is the
-threshold sliders, simulated_target.py turns clicks into a stand-in target dot.
+lives elsewhere: app_window.py is the single Tk window (controls on the left,
+camera view in the middle, tuning on the right), overlay.py draws on the frame,
+controls.py is the gains/protocol panel, tuning.py is the threshold sliders,
+simulated_target.py turns clicks into a stand-in target dot.
 
 Usage:
     py -3 detect_dots.py --port                          # live OAK -> ESP32 (auto-found)
@@ -32,11 +33,11 @@ Usage:
     py -3 detect_dots.py --source dataset/ --debug       # step through a folder
     py -3 detect_dots.py --source 0                      # any webcam, no OAK
 
-Keys: q = quit, f = fire, d = toggle the mask windows, the labelled rejections
-and the threshold sliders, p = print the current thresholds as a command line,
-m = toggle keyboard MANUAL drive (see manual_control.py), arrows = move the
-simulated target, or drive the gimbal while 'm' is engaged, SPACE/n = next
-image (folder mode).
+Keys (with the view focused, not a text box): q = quit, f = fire, d = toggle
+the mask view and the labelled rejections, p = print the current thresholds as
+a command line, m = toggle keyboard MANUAL drive (see manual_control.py),
+arrows = move the simulated target, or drive the gimbal while 'm' is engaged,
+SPACE/n = next image (folder mode).
 Mouse: left-click places the simulated target, right-click clears it.
 """
 
@@ -48,11 +49,10 @@ import time
 
 import cv2
 
-from controls import Controls
+from app_window import AppWindow
 from dots import error_vector, find_black_dots, find_red_dot, pick_target
-from fire_button import FireButton
 from manual_control import ManualControl
-from overlay import _ROTATE, _WIN, draw_overlay, hide_masks, show_masks
+from overlay import _ROTATE, draw_overlay, render_masks
 from serial_link import ErrorLink, list_ports, parse_tlm
 from simulated_target import SimulatedTargetManager
 from tuning import Thresholds
@@ -133,60 +133,38 @@ def open_source(args):
 
 # --- main loop -------------------------------------------------------------
 
-def _wait_key(block, controls):
-    """One key from the view window, keeping the Tk panel alive while waiting.
-
-    HighGUI pumps its own windows from inside waitKey, but nobody else's, so a
-    blocking `waitKeyEx(0)` -- what folder mode wants, one image per press --
-    would freeze the controls window until a key arrived. Block in short slices
-    and service Tk between them instead.
-    """
-    while True:
-        if controls is not None:
-            controls.pump()
-        raw = cv2.waitKeyEx(15 if block else 1)
-        if raw != -1 or not block:
-            return raw
-
-
 def run(args):
     frames, folder_mode = open_source(args)
     link = ErrorLink(args.port, args.baud, max_rate=args.rate, echo=args.echo,
                      tx_log_path=args.tx_log)
-    debug = args.debug
     fps, last_t = 0.0, time.time()
 
-    fire = FireButton()
-    manual = ManualControl(link, speed_deg_s=args.manual_speed)
     telemetry = None
     telemetry_at = 0.0
     telemetry_requested_at = 0.0
-    # The simulated target manager owns the view window's mouse: it lets the
-    # FIRE button inspect each click first, then treats what is left over as a
-    # request to place, move or clear a stand-in black dot.
-    sim = SimulatedTargetManager(fire, rotate=args.rotate)
+    # The simulated target manager turns clicks on the view into a stand-in
+    # black dot, mapping display coordinates back through any --rotate.
+    sim = SimulatedTargetManager(rotate=args.rotate)
     # The flags set the starting point; from here the sliders own these values.
     th = Thresholds(args)
-    controls = None
+    win = None
     if not args.headless:
-        cv2.namedWindow(_WIN, cv2.WINDOW_AUTOSIZE)
-        cv2.setMouseCallback(_WIN, sim.on_mouse)
-        if debug:
-            th.show()
-        try:
-            controls = Controls(link)
-        except Exception as exc:
-            # A missing or broken Tk should cost the panel, not the tracking.
-            print(f"controls window unavailable ({exc}); running without it.")
+        win = AppWindow(link, th, debug=args.debug)
+        win.on_click = sim.place_display
+        win.on_clear = sim.clear
+    manual = ManualControl(link, speed_deg_s=args.manual_speed,
+                           active=win.keys_ready if win else None)
+    drive_shown = False
 
     print("Press 'q' to quit, 'f' or the FIRE button to flash the laser, "
           "'m' to toggle keyboard MANUAL drive (arrow keys)."
           + ("  SPACE/n = next image." if folder_mode else ""))
     try:
         for frame in frames:
-            # Read the sliders once, here, so the whole frame is detected with
-            # one consistent set of thresholds. No-op while they are hidden.
-            th.poll()
+            # The sliders write straight into `th` from Tk callbacks, which only
+            # run inside win.pump() below - never mid-frame - so this whole
+            # frame is detected with one consistent set of thresholds.
+            debug = win.debug.get() if win is not None else args.debug
             red, red_mask = find_red_dot(frame, *th.red_args())
             targets, black_mask, rejects = find_black_dots(frame, *th.black_args())
             target = pick_target(targets, frame.shape, args.target, red)
@@ -197,8 +175,8 @@ def run(args):
                 target = sim.get_simulated()
 
             dx, dy, valid = error_vector(red, target, frame.shape)
-            if controls is not None:
-                controls.record_error(dx, dy)
+            if win is not None:
+                win.record_error(dx, dy)
             # On by default, and kept that way: re-ask for telemetry (at most
             # once a second) whenever no tlm sample has landed in the last 2s
             # and nobody has asked for it to be off. A single T 1 right after
@@ -240,50 +218,47 @@ def run(args):
             # operator the link died, rather than the readout vanishing.
             telemetry_age = (time.monotonic() - telemetry_at) if telemetry is not None else None
 
-            if not args.headless:
+            if win is not None:
                 view = draw_overlay(frame, red, targets, target,
                                     dx, dy, valid, fps, link, telemetry,
                                     telemetry_age, rejects if debug else ())
                 if args.rotate:
                     view = cv2.rotate(view, _ROTATE[args.rotate])
-                cv2.imshow(_WIN, fire.draw(view, on_target))
+                win.set_on_target(bool(on_target))
+                win.show_frame(view)
                 if debug:
-                    show_masks(red_mask, black_mask, args.rotate)
-                raw_key = _wait_key(folder_mode, controls)
-                key = raw_key & 0xFF if raw_key != -1 else -1
-                # Polled from the OS, not the cv2 key stream -- see
-                # toggle_pressed(). Checked before any `continue` below.
+                    win.show_masks(render_masks(red_mask, black_mask, args.rotate))
+                key = win.wait_key(folder_mode)
                 if manual.toggle_pressed(key):
                     on = manual.toggle()
                     print("keyboard MANUAL drive "
                           + ("ON -- arrow keys pan/tilt" if on else "off"))
+                if manual.engaged != drive_shown:
+                    drive_shown = manual.engaged
+                    win.set_drive(drive_shown)
                 try:
                     # manual.handle_key() only consumes arrows while keyboard
                     # drive is engaged, so sim's arrow-key target nudge still
                     # works normally the rest of the time.
-                    if manual.handle_key(raw_key):
+                    if manual.handle_key(key):
                         continue
-                    if sim.handle_key(raw_key):
+                    if sim.handle_key(key):
                         continue
                 except Exception:
                     pass
-                if key == ord('q'):
+                if key == "q" or not win.alive:
                     break
-                if key == ord('f'):
-                    fire.trigger()
+                if key == "f":
+                    win.flash_fire()
                     link.fire()
-                elif fire.take():
+                elif win.take_fire():
+                    win.flash_fire()
                     link.fire()
                 # Simulated targets persist across keypresses; right-click in
                 # the view clears them.
-                if key == ord('d'):
-                    debug = not debug
-                    if debug:
-                        th.show()
-                    else:
-                        hide_masks()
-                        th.hide()
-                if key == ord('p'):
+                if key == "d":
+                    win.toggle_debug()
+                if key == "p":
                     # Sliders are lost on exit; this is how a session's tuning
                     # becomes the next run's command line.
                     print(th.flags())
@@ -300,9 +275,8 @@ def run(args):
         pass
     finally:
         link.close()
-        if controls is not None:
-            controls.close()
-        cv2.destroyAllWindows()
+        if win is not None:
+            win.close()
     print(f"{link.sent} frames sent.")
 
 

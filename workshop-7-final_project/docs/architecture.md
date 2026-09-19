@@ -226,7 +226,7 @@ The widest `zone.*` can ever be set to is the mechanical travel itself
 (`GIMBAL_PAN_MIN/MAX`, `GIMBAL_TILT_MIN/MAX` in `Config.hpp`), exposed
 read-only as `zone.limit.{pan,tilt}.{min,max}` so `EYE` can read the true
 ceiling with `cfg.get` instead of keeping its own copy of those numbers —
-that is what the controls window's **Set Max Zone** button does.
+that is what the left panel's **Set Max Zone** button does.
 
 ### Emergency stop is not a channel
 

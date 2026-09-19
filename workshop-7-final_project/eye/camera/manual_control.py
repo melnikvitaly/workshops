@@ -7,46 +7,38 @@ safe the same way AUTO does on `E` frames -- config::TRACK_TIMEOUT_MS
 still means refreshing the last frame periodically while a direction key is
 held, even if the commanded velocity has not changed.
 
-Earlier versions tracked "is this arrow still held" by watching
-cv2.waitKeyEx() repeats -- HighGUI has no key-up event, only key-down,
-repeated by the OS's own key-repeat -- and guessing a direction had been
-released once no repeat arrived within a timeout window. That guess was
-unreliable: depending on the OS's initial-repeat delay and which of several
-platform-specific key codes a given OpenCV build reports, it could read a
-real hold as released (velocity snapping to 0 and back) or miss presses
-outright. `_held()` below reads the actual OS key state instead
-(`GetAsyncKeyState`), so "held" means held, with no timing guesswork and no
-key-code table to keep in sync with whatever this OpenCV build reports.
+"Held" is read from the actual OS key state (`_held()`, `GetAsyncKeyState`),
+not from key-repeat events: Tk delivers key-down repeats but no key-up, and
+guessing a release from a missing repeat misread real holds. Reading the OS
+state means "held" means held, with no timing guesswork.
 
 Windows only (this rig runs on Windows) -- elsewhere `_held()`/`_focused()`
 always report false, so engaging keyboard drive is a documented no-op there
 rather than a silent one.
 
 GetAsyncKeyState reads the *global* keyboard state, not per-window input, so
-`_focused()` gates it on the camera view being the foreground window --
-without that, holding an arrow key would drive the gimbal even while some
-other application has focus.
+`_focused()` gates it on the main window being the foreground window, and the
+optional `active` callback on the caller saying no text field has the keyboard
+-- without those, holding an arrow key would drive the gimbal while some other
+application (or a gain entry box) has focus.
 
-Arrow keys only, not WASD: 'd' is detect_dots.py's debug-mask toggle, and
-every HighGUI key arrives in the same stream this module's caller reads (see
+Arrow keys only, not WASD: 'd' is the debug toggle in detect_dots.py, and every
+key arrives in the same stream this module's caller reads (see
 simulated_target.py's docstring for the same collision, on the same keys).
-`handle_key()` still consumes the cv2 key event for those four keys (Windows
-extended, X11/GTK, and the 574xx Qt code sets -- same as
-simulated_target.py's `_MOVE`, since which one a given OpenCV build reports
-is not otherwise knowable) so simulated_target.py's own arrow-key nudge does
-not also fire while keyboard drive is engaged; the actual commanded velocity
-never comes from these codes or their repeat cadence.
+`handle_key()` still consumes the key event for those four keys, so
+simulated_target.py's own arrow-key nudge does not also fire while keyboard
+drive is engaged; the actual commanded velocity never comes from the event.
 
 Engaging keyboard drive (`toggle()`, bound to 'm' in detect_dots.py) also
 switches the firmware to MANUAL (ErrorLink.set_channel) -- the same explicit
-action as picking MANUAL + Set in the controls window, justified here because
+action as picking MANUAL + Set in the left panel, justified here because
 pressing 'm' is itself the operator's explicit request to drive by keyboard.
 Disengaging sends one immediate zero-velocity frame rather than waiting out
 the 300 ms failsafe, then stops sending; it does not change the channel back,
 since the operator may still want MANUAL selected.
 
 Keyboard drive also ends by itself, without sending anything, when the channel
-leaves MANUAL: the controls window picked another one (`link.channel_requested`,
+leaves MANUAL: the left panel picked another one (`link.channel_requested`,
 seen in `tick()`), or a `tlm` sample reports another `ch` after MANUAL was
 confirmed (`note_channel()`, e.g. the MODE button). The firmware would drop
 every `M` frame on a non-selected channel anyway.
@@ -64,18 +56,11 @@ import time
 # the wire's vpan sign -- so VK_LEFT/VK_RIGHT are swapped here to match.
 _VK_ARROWS = {0x25: (1.0, 0.0), 0x26: (0.0, -1.0), 0x27: (-1.0, 0.0), 0x28: (0.0, 1.0)}
 
-# cv2.waitKeyEx codes for the same four keys -- Windows extended, X11/GTK, and
-# the 574xx Qt set. Used only by handle_key() to swallow the event (see the
-# module docstring); not used to compute velocity.
-_KEYS = {
-    2424832: (-1.0, 0.0), 2490368: (0.0, -1.0), 2555904: (1.0, 0.0), 2621440: (0.0, 1.0),
-    65361: (-1.0, 0.0), 65362: (0.0, -1.0), 65363: (1.0, 0.0), 65364: (0.0, 1.0),
-    57448: (-1.0, 0.0), 57449: (0.0, -1.0), 57450: (1.0, 0.0), 57451: (0.0, 1.0),
-}
+# Tk keysyms for the same four keys. Used only by handle_key() to swallow the
+# event (see the module docstring); not used to compute velocity.
+_KEYS = {"Left", "Up", "Right", "Down"}
 
-_VK_M = 0x4D   # toggle key, polled by toggle_pressed()
-
-_WIN_TITLE = "dots: red -> black"   # overlay._WIN -- see _focused()
+_WIN_TITLE = "gimbal eye"   # app_window.TITLE -- see _focused()
 
 # Refresh comfortably inside config::TRACK_TIMEOUT_MS (300 ms) even when the
 # commanded velocity has not changed, so a held key does not itself trip the
@@ -91,7 +76,7 @@ def _held(vk):
 
 
 def _focused():
-    """True if the camera view window is the foreground window."""
+    """True if the main window is the foreground window."""
     if sys.platform != "win32":
         return False
     user32 = ctypes.windll.user32
@@ -108,14 +93,14 @@ class ManualControl:
     arrived -- `tick()` decides for itself whether anything needs to be sent.
     """
 
-    def __init__(self, link, speed_deg_s=40.0):
+    def __init__(self, link, speed_deg_s=40.0, active=None):
         self.link = link
+        self._active = active or (lambda: True)
         self.speed = speed_deg_s
         self.engaged = False
         self._last_sent = None    # (vpan, vtilt) most recently written to the wire
         self._last_sent_at = 0.0
         self._seen_manual = False  # a tlm sample has reported ch:MANUAL since engaging
-        self._m_down = False       # 'm' state at the previous toggle_pressed() call
 
     def toggle(self):
         """Flip keyboard drive on/off. Returns the new state."""
@@ -130,7 +115,7 @@ class ManualControl:
 
     def note_channel(self, channel):
         """Feed the `ch` field of each tlm sample. Once the firmware has
-        reported MANUAL, any other value (controls window, MODE button)
+        reported MANUAL, any other value (left panel, MODE button)
         means the operator left MANUAL: stop sending. Before MANUAL is first
         seen a stale sample still shows the old channel, so it is ignored."""
         if not self.engaged:
@@ -148,39 +133,24 @@ class ManualControl:
         print("keyboard MANUAL drive off -- channel is no longer MANUAL")
 
     def toggle_pressed(self, key):
-        """True once per press of the 'm' key -- the caller then toggle()s.
-
-        Not read from the cv2 key stream on Windows: that stream delivers one
-        key per loop iteration, and the loop is slow (detection + drawing), so
-        'm' queues behind OS key-repeats of held arrows, and Shift/CapsLock
-        turn it into 'M'. GetAsyncKeyState sees the key as it is, and its
-        "pressed since last call" bit catches a tap shorter than one
-        iteration. Elsewhere fall back to the cv2 key code."""
-        if sys.platform != "win32":
-            return key in (ord("m"), ord("M"))
-        if not _focused():
-            self._m_down = False
-            return False
-        state = ctypes.windll.user32.GetAsyncKeyState(_VK_M)
-        down = bool(state & 0x8000)
-        pressed = bool(state & 0x0001) or (down and not self._m_down)
-        self._m_down = down
-        return pressed
+        """True if `key` (a Tk keysym) is the 'm' toggle -- the caller then
+        toggle()s. Shift/CapsLock turn it into 'M', so both count."""
+        return key in ("m", "M")
 
     def handle_key(self, key):
-        """True if `key` (an OpenCV waitKeyEx code) was an arrow direction
+        """True if `key` (a Tk keysym) was an arrow direction
         AND keyboard drive is engaged -- the caller should treat it as
         consumed (e.g. not also hand it to simulated_target's arrow nudge).
         Purely an event-swallow; see the module docstring for why this does
         not feed into the commanded velocity."""
-        return self.engaged and int(key) in _KEYS
+        return self.engaged and key in _KEYS
 
     def velocity(self):
         """Current commanded (vpan, vtilt), deg/s, from the arrow keys
         actually down right now. Two opposite keys cancel; two adjacent ones
         (e.g. up+right) are normalised so a diagonal is not faster than one
         axis alone."""
-        if not self.engaged or not _focused():
+        if not self.engaged or not _focused() or not self._active():
             return 0.0, 0.0
         dpan = dtilt = 0.0
         for vk, (dp, dt) in _VK_ARROWS.items():

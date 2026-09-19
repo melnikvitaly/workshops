@@ -1,20 +1,14 @@
-"""The controls window: gain presets, manual gains, nudge, telemetry, query.
+"""The controls panel: gain presets, manual gains, nudge, zone, telemetry, query.
 
-This is a Tk window, not an OpenCV one. HighGUI has no widgets in the build
+This is a Tk frame, not an OpenCV one. HighGUI has no widgets in the build
 these wheels ship (`GUI: WIN32UI`, so `cv2.createButton` raises), which meant
-the previous version painted its own buttons into an image and matched clicks
-against their *labels* - a preset named "Tiny PD" and the "T: telemetry" action
-both answered to the same test - and read text one `waitKey` character at a
-time, with no caret and no backspace beyond the buffer.
+an earlier version painted its own buttons into an image and matched clicks
+against their *labels*, and read text one `waitKey` character at a time.
 
-Tk is in the standard library, so this costs no dependency and gets real
-buttons and real entry fields. It does not run its own `mainloop`: `pump()` is
-called once per frame from the detect_dots loop, which keeps every callback on
-the main thread. That matters because the callbacks write to the serial link
-the loop is also using - one thread means no lock.
-
-The camera view stays in OpenCV: it is an image with annotations drawn in image
-coordinates, which is what cv2 drawing is for.
+It is the left panel of the main window (app_window.py), which owns the Tk
+root and calls `pump()` once per frame from the detect_dots loop. Callbacks
+run on the main thread and only queue lines on the serial link; the link's own
+worker thread does the actual port I/O (see serial_link.ErrorLink).
 """
 
 import os
@@ -24,8 +18,6 @@ from tkinter import ttk
 
 if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(__file__))
-
-from error_graph import ErrorGraphWindow
 
 # Preset gain combinations. (pan_kp, pan_ki, pan_kd), (tilt...)
 #
@@ -75,34 +67,30 @@ _ERR = "#b42318"
 _GAP = 8  # px between controls in a wrapping row
 
 
-class _Flow(ttk.Frame):
+class Flow(ttk.Frame):
     """A row of widgets that wraps onto more lines when the window is narrow.
 
     Add children with `add()`; they are laid out left to right and start a new
-    line when the next one would not fit. Call `reflow()` from `Controls.pump`.
-
-    No `<Configure>` binding on purpose: cv2.waitKey pumps this window's Win32
-    messages with the GIL released, so a Python callback fired by a resize
-    event kills the process. Polling the width from `pump()` avoids that.
+    line when the next one would not fit. Re-run on every width change.
     """
 
     def __init__(self, parent):
         super().__init__(parent)
         self._items = []
         self._layout = None
+        self.bind("<Configure>", self._on_configure)
 
     def add(self, widget):
         self._items.append(widget)
         self._layout = None
         return widget
 
-    def reflow(self):
-        width = self.winfo_width()
+    def _on_configure(self, event):
         x, row, col = 0, 0, 0
         places = []
         for w in self._items:
             need = w.winfo_reqwidth() + _GAP
-            if col and x + need > width:
+            if col and x + need > event.width:
                 row, col, x = row + 1, 0, 0
             places.append((row, col))
             col += 1
@@ -114,6 +102,11 @@ class _Flow(ttk.Frame):
             w.grid(row=r, column=c, sticky="w", padx=(0, _GAP), pady=2)
 
 
+def _wrap_to(label, parent):
+    """Make a label's text wrap to the width of `parent`."""
+    label.config(wraplength=300)   # until the first <Configure> says otherwise
+    parent.bind("<Configure>",
+                lambda e: label.config(wraplength=max(e.width - 12, 100)), add="+")
 
 
 def _pair(parent, text, var, width=7):
@@ -125,17 +118,10 @@ def _pair(parent, text, var, width=7):
 
 
 class Controls:
-    """The second window. Build it, then call `pump()` once per frame."""
+    """The left panel. Build it into `parent`; it shows its own status line."""
 
-    def __init__(self, link):
+    def __init__(self, link, parent):
         self.link = link
-        self._alive = True
-
-        self.root = tk.Tk()
-        self.root.title("gimbal controls")
-        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
-        # Off to the side, so it does not open on top of the camera view.
-        self.root.geometry("+40+40")
 
         # Telemetry defaults ON: detect_dots.run() keeps re-sending 'T 1'
         # until a tlm sample lands (the firmware itself boots with it off, and
@@ -162,46 +148,37 @@ class Controls:
             ("pan_min", 45), ("pan_max", 105),
             ("tilt_min", 85), ("tilt_max", 115))}
 
-        self._wrapped = []  # labels whose wraplength follows the window width
-        outer = ttk.Frame(self.root, padding=8)
+        outer = ttk.Frame(parent, padding=8)
         outer.pack(fill="both", expand=True)
+        self.frame = outer
         self._build_link_row(outer)
         self._build_gains(outer)
-        self._build_nudge(outer)
-        self._build_zone(outer)
         self._build_presets(outer)
+        self._build_zone(outer)
+        self._build_nudge(outer)
 
-        self.status = ttk.Label(outer, text="ready", foreground=_OK,
-                                justify="left")
+        self.status = ttk.Label(outer, text="ready", foreground=_OK, justify="left")
         self.status.pack(fill="x", pady=(8, 0))
-        self._wrapped.append(self.status)
-
-        self.error_graph = ErrorGraphWindow(outer)
-        self.error_graph.frame.pack(fill="both", expand=True)
-
-        self._flows = []
-        stack = [outer]
-        while stack:
-            w = stack.pop()
-            if isinstance(w, _Flow):
-                self._flows.append(w)
-            stack.extend(w.winfo_children())
-
-    def _relayout(self):
-        """Wrap rows and text to the current width. Polled, not event-driven."""
-        for flow in self._flows:
-            flow.reflow()
-        wrap = max(self.root.winfo_width() - 40, 100)
-        for label in self._wrapped:
-            if str(label.cget("wraplength")) != str(wrap):
-                label.config(wraplength=wrap)
+        _wrap_to(self.status, outer)
 
     # --- construction ------------------------------------------------------
 
+    def add_actions(self, flow):
+        """Put the one-shot action buttons into `flow`.
+
+        They live with FIRE under the camera view (see app_window.py), not in
+        this panel: they are things you press mid-run, while the fields here
+        are things you set. Their results still land on this panel's status.
+        """
+        flow.add(ttk.Button(flow, text="Arm / Disarm (CONTROL)",
+                            command=self._press_control))
+        flow.add(ttk.Button(flow, text="Center", command=self._center))
+        flow.add(ttk.Button(flow, text="Start Zone Tour", command=self._zone_tour))
+        flow.add(ttk.Button(flow, text="Query gains", command=self._query))
+
     def _build_link_row(self, parent):
-        row = _Flow(parent)
+        row = Flow(parent)
         row.pack(fill="x")
-        row.add(ttk.Button(row, text="Query gains", command=self._query))
         row.add(ttk.Checkbutton(row, text="Telemetry", variable=self.telemetry_on,
                                 command=self._telemetry))
         chan = row.add(ttk.Frame(row))
@@ -210,13 +187,11 @@ class Controls:
                      values=["NONE", "AUTO", "MANUAL"]).pack(side="left")
         ttk.Button(chan, text="Set", command=self._set_channel).pack(
             side="left", padx=(4, 0))
-        row.add(ttk.Button(row, text="Arm / Disarm (CONTROL)",
-                           command=self._press_control))
 
     def _build_gains(self, parent):
         box = ttk.LabelFrame(parent, text="PID gains", padding=6)
         box.pack(fill="x", pady=(8, 0))
-        flow = _Flow(box)
+        flow = Flow(box)
         flow.pack(fill="x")
         flow.add(ttk.Combobox(flow, textvariable=self.axis, width=6, state="readonly",
                               values=list(_AXES)))
@@ -227,7 +202,7 @@ class Controls:
     def _build_nudge(self, parent):
         box = ttk.LabelFrame(parent, text="Nudge physical gimbal (open loop, degrees)", padding=6)
         box.pack(fill="x", pady=(8, 0))
-        flow = _Flow(box)
+        flow = Flow(box)
         flow.pack(fill="x")
         for name, var in self.nudge.items():
             flow.add(_pair(flow, name, var))
@@ -236,12 +211,12 @@ class Controls:
                                     "wind gust, or servo slip -- so the loop can correct it."),
                          justify="left")
         note.pack(fill="x", pady=(4, 0))
-        self._wrapped.append(note)
+        _wrap_to(note, box)
 
     def _build_zone(self, parent):
         box = ttk.LabelFrame(parent, text="Working zone (deg)", padding=6)
         box.pack(fill="x", pady=(8, 0))
-        flow = _Flow(box)
+        flow = Flow(box)
         flow.pack(fill="x")
         labels = (("pan_min", "pan min"), ("pan_max", "pan max"),
                   ("tilt_min", "tilt min"), ("tilt_max", "tilt max"))
@@ -249,15 +224,11 @@ class Controls:
             flow.add(_pair(flow, label, self.zone[key]))
         flow.add(ttk.Button(flow, text="Set zone", command=self._set_zone))
         flow.add(ttk.Button(flow, text="Set Max Zone", command=self._set_max_zone))
-        flow.add(ttk.Button(flow, text="Start Zone Tour", command=self._zone_tour))
-        flow.add(ttk.Button(flow, text="Center", command=self._center))
         note = ttk.Label(box, text=("Sets the area the gimbal is allowed to move in, live -- "
-                                    "Set Max Zone opens it to the mechanical limits, Start Zone "
-                                    "Tour walks the laser around its new edges to confirm it "
-                                    "(only while DISARMED/PARKED), and Center drives straight to "
-                                    "the current zone's midpoint."), justify="left")
+                                    "Set Max Zone opens it to the mechanical limits. Start Zone "
+                                    "Tour and Center are under the view."), justify="left")
         note.pack(fill="x", pady=(4, 0))
-        self._wrapped.append(note)
+        _wrap_to(note, box)
 
     def _build_presets(self, parent):
         box = ttk.LabelFrame(parent, text="Presets", padding=6)
@@ -400,42 +371,3 @@ class Controls:
             self.gains[name].set(f"{value:g}")
         self.axis.set("pan")
         self._say(f"preset {preset['name']} applied")
-
-    # --- the loop's end ----------------------------------------------------
-
-    def record_error(self, dx, dy):
-        """Append a sample to the separate error history chart."""
-        if self.error_graph is not None and getattr(self.error_graph, "_alive", False):
-            self.error_graph.append(dx, dy)
-
-    def pump(self):
-        """Service Tk's event queue. False once the window has been closed.
-
-        `update`, not `mainloop`: the detect_dots loop owns the thread and this
-        borrows it for as long as the queued callbacks take.
-        """
-        if not self._alive:
-            return False
-        try:
-            self.root.update()
-            self._relayout()
-            if self.error_graph is not None:
-                self.error_graph.pump()
-        except tk.TclError:
-            self._alive = False
-        return self._alive
-
-    def _on_close(self):
-        self.close()
-        print("controls window closed; the camera view keeps running.")
-
-    def close(self):
-        if not self._alive:
-            return
-        self._alive = False
-        try:
-            if self.error_graph is not None:
-                self.error_graph.close()
-            self.root.destroy()
-        except tk.TclError:
-            pass

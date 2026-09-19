@@ -133,13 +133,13 @@ Good candidates:
 
 ## 10. Problems we faced on the rig
 
-| Problem | Solution | TODO |
-| --- | --- | --- |
-| Auto aim "blows up": dot runs away. It is a PID control problem, **not solved yet** | Only a workaround: small working zone (60° pan, 30° tilt) keeps the dot in the scene. Boot zone tour shows axis direction. See [`Config.hpp`](../../firmware/aim/src/Config.hpp) | Real fix: PID tuning. Add graph |
-| Wrong MIN/MAX angles on the assembled gimbal | Measured on the rig. Direction flags set (more pan = left, more tilt = down). `static_assert` keeps zone inside travel | Add the measured limits |
-| Laser blinks at startup | TODO: from `PROBLEMS_FACED.md` | Cause and fix |
-| Data stops reaching ESP32 when the PC window is resized | TODO: from `PROBLEMS_FACED.md` | Cause and fix |
-| ESP32 resets when PC disconnects UART0 | TODO: from `PROBLEMS_FACED.md` | Cause and fix |
+| # | Problem | Solution | TODO |
+| --- | --- | --- | --- |
+| 1 | Auto aim "blows up": dot runs away. It is a PID control problem, **not solved yet**. Seems caused by a large error vector. It also triggers `LINK_LOST`, reason unknown | Only a workaround: small working zone (60° pan, 30° tilt) keeps the dot in the scene. Boot zone tour shows axis direction. See [`Config.hpp`](../../firmware/aim/src/Config.hpp) | Real fix: PID tuning. Find why `LINK_LOST` happens. Add graph |
+| 2 | Wrong MIN/MAX angles on the assembled gimbal | Measured on the rig. Direction flags set (more pan = left, more tilt = down). `static_assert` keeps zone inside travel | Add the measured limits |
+| 3 | Laser blinks at startup | TODO: from `PROBLEMS_FACED.md` | Cause and fix |
+| 4 | Data stops reaching ESP32 when the PC window is resized | TODO: from `PROBLEMS_FACED.md` | Cause and fix |
+| 5 | ESP32 resets when PC disconnects UART0. Cause: DTR/RTS toggle pulses the RST/EN pin (USB-UART bridge is wired to EN/GPIO0) | `serial_link.py` forces `dtr=False, rts=False`. TODO: confirm this fixes it; a serial monitor can still trigger it | Cause and fix |
 
 ---
 
