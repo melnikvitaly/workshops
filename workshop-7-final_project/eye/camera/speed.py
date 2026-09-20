@@ -10,7 +10,7 @@ The `--fps`, `--queue-size` and `--rate` flags set the starting point; the
 | `queue_size` | at once if the camera allows it, else the camera restarts         |
 | `fps`        | the camera pipeline restarts (about a second, the view freezes)  |
 
-`SpeedSettings` only holds the numbers. `detect_dots.camera_frames` reads
+`SpeedSettings` only holds the numbers. `tracker.camera_frames` reads
 `fps`, `queue_size` and `focus` every frame and reacts when they change.
 """
 

@@ -130,6 +130,7 @@ private:
         if (stepState(now, fresh, chNone))
             _gimbal.update(config::UPDATE_PERIOD_S);
         updateLaser();
+        _ipc.pidRuns.store(_autoChannel.pidRuns());
         pushLog(now);
     }
 

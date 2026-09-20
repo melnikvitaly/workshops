@@ -269,7 +269,7 @@ def _shape_reject(dot, min_circ, max_radial, max_aspect, min_solidity,
     that trips is the answer, and they are ordered by how much they explain.
     Thresholds come from measuring rendered discs against near-misses at
     radii 7-45 px; every one is overridable from the command line (the
-    --black-* flags in detect_dots.py). Measured, disc vs. worst impostor:
+    --black-* flags in tracker.py). Measured, disc vs. worst impostor:
 
         circularity   disc 0.82-0.98   square 0.72  ellipse(0.78) 0.77
         radial_cv     disc 0.00-0.10   square 0.11  rounded rect  0.13

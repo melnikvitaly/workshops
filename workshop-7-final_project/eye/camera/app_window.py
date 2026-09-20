@@ -12,7 +12,7 @@ Everything is Tk. The camera view is a canvas showing the annotated frame as a
 PPM image (Tk reads PPM natively, so no Pillow), scaled to fit and centred.
 Clicks on it are mapped back to image pixels.
 
-There is no `mainloop`: `pump()` is called once per frame from the detect_dots
+There is no `mainloop`: `pump()` is called once per frame from the tracker
 loop, which keeps every callback on the main thread. There is also no HighGUI
 window any more, so nothing calls `cv2.waitKey`; keys arrive as Tk events and
 are queued for the loop to read with `next_key()`.
@@ -306,7 +306,7 @@ class AppWindow:
     def pump(self):
         """Service Tk's event queue. False once the window has been closed.
 
-        `update`, not `mainloop`: the detect_dots loop owns the thread and this
+        `update`, not `mainloop`: the tracker loop owns the thread and this
         borrows it for as long as the queued callbacks take.
         """
         if not self.alive:

@@ -28,7 +28,7 @@ Vision host (`EYE`, PC, Python 3):
 ```bash
 cd workshop-7-final_project/eye/camera
 py -3 -m pip install -r requirements.txt
-py -3 detect_dots.py --port --echo         # port auto-detected
+py -3 tracker.py --port --echo         # port auto-detected
 ```
 
 ## Architecture

@@ -26,12 +26,12 @@ controls.py is the gains/protocol panel, tuning.py is the threshold sliders,
 simulated_target.py turns clicks into a stand-in target dot.
 
 Usage:
-    py -3 detect_dots.py --port                          # live OAK -> ESP32 (auto-found)
-    py -3 detect_dots.py --port COM5                     # ... or name the port
-    py -3 detect_dots.py                                 # live OAK, no serial
-    py -3 detect_dots.py --source shot.jpg --debug       # tune on one image
-    py -3 detect_dots.py --source dataset/ --debug       # step through a folder
-    py -3 detect_dots.py --source 0                      # any webcam, no OAK
+    py -3 tracker.py --port                          # live OAK -> ESP32 (auto-found)
+    py -3 tracker.py --port COM5                     # ... or name the port
+    py -3 tracker.py                                 # live OAK, no serial
+    py -3 tracker.py --source shot.jpg --debug       # tune on one image
+    py -3 tracker.py --source dataset/ --debug       # step through a folder
+    py -3 tracker.py --source 0                      # any webcam, no OAK
 
 Keys (with the view focused, not a text box): q = quit, f = fire, d = toggle
 the mask view and the labelled rejections, p = print the current thresholds as
@@ -54,7 +54,7 @@ from dots import error_vector, find_black_dots, find_red_dot, pick_target
 from manual_control import ManualControl
 from recenter import LaserLostRecenter
 from overlay import _ROTATE, draw_overlay, render_masks, status_lines
-from serial_link import ErrorLink, list_ports, parse_tlm
+from serial_link import ErrorLink, list_ports, parse_tlm, parse_tlm_sys
 from simulated_target import SimulatedTargetManager
 from speed import SpeedSettings
 from tuning import Thresholds
@@ -242,6 +242,8 @@ def run(args):
 
     telemetry = None
     telemetry_at = 0.0
+    sys_tlm = None      # latest tlm.sys (1 Hz): PID rate, heap, ...
+    sys_tlm_at = 0.0
     telemetry_requested_at = 0.0
     # The simulated target manager turns clicks on the view into a stand-in
     # black dot, mapping display coordinates back through any --rotate.
@@ -324,6 +326,10 @@ def run(args):
                     telemetry_at = time.monotonic()
                     manual.note_channel(sample.get("ch"))
                     continue
+                sys_sample = parse_tlm_sys(esp_line)
+                if sys_sample is not None:
+                    sys_tlm = sys_sample
+                    sys_tlm_at = time.monotonic()
 
             # Display-only: how close counts as "on target" for the border
             # colour. Independent of the firmware's own (much tighter) deadzone,
@@ -342,7 +348,9 @@ def run(args):
                 win.set_status(status_lines(red, targets, target, dx, dy, valid,
                                             fps, frame.shape, link, telemetry,
                                             telemetry_age, shown_rejects,
-                                            recentering))
+                                            recentering, sys_tlm,
+                                            (time.monotonic() - sys_tlm_at)
+                                            if sys_tlm is not None else None))
                 view = draw_overlay(frame, red, targets, target, valid,
                                     shown_rejects)
                 if args.rotate:

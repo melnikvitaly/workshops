@@ -49,6 +49,7 @@ struct Ipc
     std::atomic<uint32_t> dropInactive{0}; // a valid frame on a non-selected channel
     std::atomic<uint32_t> uartErr{0};      // driver framing error / overrun / break
     std::atomic<uint32_t> logDropped{0};   // log_q drop-oldest
+    std::atomic<uint32_t> pidRuns{0};      // PID evaluations since boot (writer: ctrl)
 
     // Latest control sample for the tlm line. Single writer (ctrl), lossy reader
     // (link_uart) - telemetry tolerates a torn float, so no lock.

@@ -385,18 +385,28 @@ private:
 
     void emitTlmSys()
     {
-        char line[240];
+        // PID rate = evaluations since the last line / real elapsed time.
+        const uint64_t nowUs = (uint64_t)esp_timer_get_time();
+        const uint32_t runs  = _ipc.pidRuns.load();
+        float pidHz = 0.0f;
+        if (_lastPidUs != 0 && nowUs > _lastPidUs)
+            pidHz = (float)(runs - _lastPidRuns) * 1e6f / (float)(nowUs - _lastPidUs);
+        _lastPidUs   = nowUs;
+        _lastPidRuns = runs;
+
+        char line[256];
         std::snprintf(line, sizeof(line),
                       "{\"t\":\"tlm.sys\",\"up\":%llu,\"link\":{\"bad_crc\":%lu,\"overlong\":%lu,"
                       "\"unparsed\":%lu,\"oor\":%lu,\"drop_inact\":%lu,\"uart_err\":%lu},"
-                      "\"heap\":%lu,\"wdt\":0}",
-                      (unsigned long long)esp_timer_get_time(),
+                      "\"pid_hz\":%.1f,\"heap\":%lu,\"wdt\":0}",
+                      (unsigned long long)nowUs,
                       (unsigned long)_ipc.badCrc.load(),
                       (unsigned long)_ipc.overlong.load(),
                       (unsigned long)_ipc.unparsed.load(),
                       (unsigned long)_ipc.outOfRange.load(),
                       (unsigned long)_ipc.dropInactive.load(),
                       (unsigned long)_ipc.uartErr.load(),
+                      (double)pidHz,
                       (unsigned long)esp_get_free_heap_size());
         ndjson::seal(line, sizeof(line));
         _ipc.link->writeLine(line);
@@ -427,5 +437,7 @@ private:
     uint32_t _lastTlmMs   = 0;
     uint32_t _lastSysMs   = 0;
     uint32_t _lastSdMs    = 0;
+    uint64_t _lastPidUs   = 0;
+    uint32_t _lastPidRuns = 0;
     char     _valBuf[24]  = {0};
 };

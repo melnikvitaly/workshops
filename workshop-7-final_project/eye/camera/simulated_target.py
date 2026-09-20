@@ -1,4 +1,4 @@
-"""Simulated target handling extracted from detect_dots.py.
+"""Simulated target handling extracted from tracker.py.
 
 Provides SimulatedTargetManager to manage a user-created simulated black dot
 via mouse interaction. It maps display coords (the view, after any --rotate)

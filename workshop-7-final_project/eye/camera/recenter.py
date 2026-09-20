@@ -3,7 +3,7 @@
 The gimbal can point the laser outside the camera view. The red dot is then
 not found, the error is valid=0 and the firmware only holds, so nothing brings
 the laser back. This module decides when to start moving and where the next
-step goes; detect_dots.py sends it as a `P` frame (ErrorLink.move_to).
+step goes; tracker.py sends it as a `P` frame (ErrorLink.move_to).
 
 Pure logic (no serial, no Tk), so it is easy to test:
 

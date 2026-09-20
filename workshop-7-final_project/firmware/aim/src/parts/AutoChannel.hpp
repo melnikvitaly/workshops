@@ -52,8 +52,10 @@ public:
         _lastPidMs  = now;
     }
 
-    Point error() const    { return _error; }
-    bool  onTarget() const { return _onTarget; }
+    Point    error() const    { return _error; }
+    bool     onTarget() const { return _onTarget; }
+    // PID evaluations since boot (one per fresh frame) - the caller derives Hz.
+    uint32_t pidRuns() const  { return _pidRuns; }
 
     // Drive the gimbal for this tick. `fresh` is the caller's link/frame
     // freshness test (ctrl already computes it for the FSM) - false forces a
@@ -80,6 +82,7 @@ public:
         if (dt > 0.5f)   dt = 0.5f;
         _lastPidMs  = _frameMs;
         _frameReady = false;
+        ++_pidRuns;
 
         _gimbal.setVelocity({axisRate(_panPid, _error.x, dt),
                              axisRate(_tiltPid, _error.y, dt)});
@@ -121,4 +124,5 @@ private:
     bool     _onTarget      = false;
     uint32_t _frameMs       = 0;
     uint32_t _lastPidMs     = 0;
+    uint32_t _pidRuns       = 0;
 };

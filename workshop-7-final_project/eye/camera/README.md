@@ -5,7 +5,7 @@ Finds the **red dot** (where the laser points now) and the **black printed dot**
 them to the ESP32 over the COM port.
 
 ```text
-OAK-1 ──USB──> PC: detect_dots.py ──COM──> ESP32-S3 ──> gimbal + laser
+OAK-1 ──USB──> PC: tracker.py ──COM──> ESP32-S3 ──> gimbal + laser
                     red dot, black dot        E <dx> <dy> <valid>
                     error = target − laser    F  (fire)
 ```
@@ -17,7 +17,7 @@ unnecessary here because a PC can run the color filter directly.
 
 | File                  |                                                                                    |
 |-----------------------|------------------------------------------------------------------------------------|
-| `detect_dots.py`      | main script: frame sources → detection → error vector → COM, plus the command line |
+| `tracker.py`      | main script: frame sources → detection → error vector → COM, plus the command line |
 | `dots.py`             | the detection itself: red dot, black dots, target choice, error vector             |
 | `serial_link.py`      | the COM link and the wire format; also a standalone sender for bring-up            |
 | `app_window.py`       | the one Tk window: controls left, camera view + FIRE middle, tuning right          |
@@ -34,12 +34,12 @@ unnecessary here because a PC can run the color filter directly.
 ```bash
 py -3 -m pip install -r requirements.txt
 
-py -3 detect_dots.py --port                # live OAK -> ESP32, port auto-detected
-py -3 detect_dots.py --port COM5           # ... or name it
-py -3 detect_dots.py                       # live OAK, detection only, nothing sent
-py -3 detect_dots.py --source shot.jpg --debug     # tune thresholds on one image
-py -3 detect_dots.py --source frames/ --debug      # step through a folder
-py -3 detect_dots.py --source 0                    # any USB webcam, no OAK needed
+py -3 tracker.py --port                # live OAK -> ESP32, port auto-detected
+py -3 tracker.py --port COM5           # ... or name it
+py -3 tracker.py                       # live OAK, detection only, nothing sent
+py -3 tracker.py --source shot.jpg --debug     # tune thresholds on one image
+py -3 tracker.py --source frames/ --debug      # step through a folder
+py -3 tracker.py --source 0                    # any USB webcam, no OAK needed
 ```
 
 Omit `--port` entirely and the script detects and displays but sends nothing —
@@ -54,7 +54,7 @@ what is on the other end. It looks for, in order of preference, a CP210x
 (`303A:*`), a CH340 (`1A86:*`), then an FTDI (`0403:*`).
 
 ```bash
-py -3 detect_dots.py --list-ports     # or: py -3 serial_link.py --list
+py -3 tracker.py --list-ports     # or: py -3 serial_link.py --list
     COM1     ----:----  Communications Port (COM1)
   * COM10    10C4:EA60  Silicon Labs CP210x USB to UART Bridge   <- CP210x - DevKitC USB/UART
     COM7     ----:----  Standard Serial over Bluetooth link (COM7)
@@ -134,7 +134,7 @@ py -3 serial_link.py --console                                  # then type: M 2
 Console logging is on a separate UART (see `serial_link.py`'s module
 docstring), so this port carries only control ASCII and NDJSON lines.
 Telemetry is **on by default** — the firmware itself boots with it off, but
-`detect_dots.py` keeps asking with `T 1` until a sample arrives, which also
+`tracker.py` keeps asking with `T 1` until a sample arrives, which also
 recovers it after a board reset without touching anything — so there is no
 separate step to see it. Untick the checkbox in the controls panel, or send
 `T 0`, to turn it back off; the UI renders the latest `tlm` sample
@@ -142,7 +142,12 @@ separate step to see it. Untick the checkbox in the controls panel, or send
 
 ```text
 ESP T  st:ARMED ch:AUTO  ex:-0.031 ey:+0.012  v:-4.2/+1.1 deg/s  pan:92.4 tilt:78.1  0.3s ago
+PID: 29.8 Hz   0.6s ago
 ```
+
+The `PID:` line comes from the 1 Hz `tlm.sys` message (`pid_hz`): how many times
+per second the ESP itself ran the PID, measured over the last second. It is `0.0`
+while the loop is idle (no target, not armed, or link lost).
 
 That is the firmware's own view of the error you just sent, plus its state,
 channel and angles — the quickest way to catch a sign or scaling mistake. The
@@ -176,7 +181,7 @@ sender printing (or not printing) it on its own. Two independent outputs:
   sent during a run:
 
 ```bash
-py -3 detect_dots.py --port --tx-log session.log
+py -3 tracker.py --port --tx-log session.log
 py -3 serial_link.py --console --tx-log            # tx_log.txt in the cwd
 ```
 

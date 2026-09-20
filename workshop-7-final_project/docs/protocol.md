@@ -294,7 +294,7 @@ rejects with `err:"readonly"`, since there is nothing to write:
 |---|---|---|---|
 | `tlm` | `AIM` → `EYE` | `telemetry.rate_hz` | Control sample — state, error, velocity, angles |
 | `tlm.sd` | `AIM` → `EYE` | 1 Hz | Storage health and write performance |
-| `tlm.sys` | `AIM` → `EYE` | 1 Hz | Link counters, per-task CPU, heap, stack, WDT |
+| `tlm.sys` | `AIM` → `EYE` | 1 Hz | Link counters, PID rate, per-task CPU, heap, stack, WDT |
 | `evt` | `AIM` → `EYE` | on change | State transitions, faults, storage conditions, `BOOT` |
 | `estop` | either | on demand | Emergency stop — §4 |
 
@@ -304,7 +304,7 @@ on the wire, with its real checksum:
 ```text
 {"t":"tlm","up":812345,"st":"ARMED","ch":"AUTO","ex":-0.031,"ey":0.012,"vp":-4.2,"vt":1.1,"pan":92.4,"tilt":78.1}*C8
 {"t":"tlm.sd","up":812345,"pres":1,"mnt":1,"full":0,"free":7861248,"werr":0,"drop":3,"qd":11,"bps":4096,"lmax":214000,"lp95":9100}*25
-{"t":"tlm.sys","up":812345,"link":{"bad_crc":0,"overlong":0,"unparsed":2,"oor":0,"drop_inact":17},"cpu":{"ctrl":11,"logger":4,"ui":2,"idle":80},"heap":183240,"stack_min":1840,"wdt":0}*86
+{"t":"tlm.sys","up":812345,"link":{"bad_crc":0,"overlong":0,"unparsed":2,"oor":0,"drop_inact":17},"pid_hz":29.8,"cpu":{"ctrl":11,"logger":4,"ui":2,"idle":80},"heap":183240,"stack_min":1840,"wdt":0}*30
 ```
 
 **Wire keys are abbreviated; the telemetry names are not.** The names in
@@ -319,6 +319,11 @@ wire shortens them only to stay inside the cap:
 | `sd.full` | `full` | | `sd.write_bytes_per_s` | `bps` |
 | `sd.free_bytes` | `free` | | `sd.write_max_latency_us` | `lmax` |
 | `sd.write_errors` | `werr` | | `sd.write_p95_latency_us` | `lp95` |
+
+**`pid_hz`** is the measured PID rate: evaluations in the last interval divided
+by the real elapsed time. The PID runs once per fresh `E` frame, so this equals
+the camera frame rate the ESP actually receives. It reads `0.0` while the loop
+is idle (no target, not armed, or link lost).
 
 **Why three messages and not one.** A single object carrying all of this is 367
 bytes on the wire, and the line cap is 256 ⟦5.3⟧ — one telemetry sample would be

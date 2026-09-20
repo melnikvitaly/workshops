@@ -209,6 +209,19 @@ def parse_tlm(line):
     return obj
 
 
+def parse_tlm_sys(line):
+    """dict if `line` is a `tlm.sys` line (docs/protocol.md §3.4), else None.
+
+        {"t":"tlm.sys","up":..,"link":{..},"pid_hz":29.8,"heap":..,"wdt":0}*XX
+
+    Sent at 1 Hz. `pid_hz` is the PID rate the ESP measured itself.
+    """
+    obj = parse_ndjson(line)
+    if obj is None or obj.get("t") != "tlm.sys":
+        return None
+    return obj
+
+
 def parse_cfg_state(line):
     """dict if `line` is a `cfg.state` acknowledgement, else None.
 
@@ -382,7 +395,7 @@ class ErrorLink:
         self._tx_log = TxLog(tx_log_path, echo=echo)
         # Last on/off requested through telemetry() -- not the firmware's
         # actual state, which we have no way to read back. A caller that
-        # retries T 1 to survive a lost request (e.g. detect_dots.py, see its
+        # retries T 1 to survive a lost request (e.g. tracker.py, see its
         # run()) checks this first, so it never re-enables telemetry an
         # operator explicitly turned off with T 0.
         self.telemetry_wanted = True
@@ -597,7 +610,7 @@ class ErrorLink:
         """`T <0|1>` - start/stop the plottable per-frame stream.
 
         It shares this UART with the frames we are sending, but the overlay
-        renders it live (see overlay.draw_overlay), so detect_dots.py leaves
+        renders it live (see overlay.draw_overlay), so tracker.py leaves
         it on by default rather than only while tuning.
         """
         self.telemetry_wanted = bool(on)
@@ -964,7 +977,7 @@ def _main():
                     help="T: start/stop the plottable per-frame stream")
     ap.add_argument("--channel", choices=["NONE", "AUTO", "MANUAL"],
                     help="cfg.set input.channel: AUTO is what makes this "
-                         "script's own E frames (or detect_dots.py's) take "
+                         "script's own E frames (or tracker.py's) take "
                          "effect -- the firmware boots with it at NONE")
     ap.add_argument("--control", action="store_true",
                     help="cfg.set control.press: remote CONTROL-button press "

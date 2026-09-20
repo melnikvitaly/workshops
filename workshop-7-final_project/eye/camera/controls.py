@@ -6,7 +6,7 @@ an earlier version painted its own buttons into an image and matched clicks
 against their *labels*, and read text one `waitKey` character at a time.
 
 It is the left panel of the main window (app_window.py), which owns the Tk
-root and calls `pump()` once per frame from the detect_dots loop. Callbacks
+root and calls `pump()` once per frame from the tracker loop. Callbacks
 run on the main thread and only queue lines on the serial link; the link's own
 worker thread does the actual port I/O (see serial_link.ErrorLink).
 """
@@ -173,7 +173,7 @@ class Controls:
     def __init__(self, link, parent):
         self.link = link
 
-        # Telemetry defaults ON: detect_dots.run() keeps re-sending 'T 1'
+        # Telemetry defaults ON: tracker.run() keeps re-sending 'T 1'
         # until a tlm sample lands (the firmware itself boots with it off, and
         # a single request can be lost to a reboot -- see the comment at its
         # call site), so the checkbox describes the board's actual state at
@@ -190,7 +190,7 @@ class Controls:
         # Mirrors the firmware default (boot.tour off); not read back from the
         # board. Ticking it sends the value, which the board saves in NVS.
         self.boot_tour = tk.BooleanVar(value=False)
-        # PC-side only, nothing is sent: detect_dots.run() reads it every frame
+        # PC-side only, nothing is sent: tracker.run() reads it every frame
         # (see recenter.py). On by default; unticking stops the drift at once.
         self.recenter_on = tk.BooleanVar(value=True)
         # One row per axis, one entry per term. Starts at the "Default (PI)"

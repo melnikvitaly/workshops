@@ -22,14 +22,14 @@ optional `active` callback on the caller saying no text field has the keyboard
 -- without those, holding an arrow key would drive the gimbal while some other
 application (or a gain entry box) has focus.
 
-Arrow keys only, not WASD: 'd' is the debug toggle in detect_dots.py, and every
+Arrow keys only, not WASD: 'd' is the debug toggle in tracker.py, and every
 key arrives in the same stream this module's caller reads (see
 simulated_target.py's docstring for the same collision, on the same keys).
 `handle_key()` still consumes the key event for those four keys, so
 simulated_target.py's own arrow-key nudge does not also fire while keyboard
 drive is engaged; the actual commanded velocity never comes from the event.
 
-Engaging keyboard drive (`toggle()`, bound to 'm' in detect_dots.py) also
+Engaging keyboard drive (`toggle()`, bound to 'm' in tracker.py) also
 switches the firmware to MANUAL (ErrorLink.set_channel) -- the same explicit
 action as picking MANUAL + Set in the left panel, justified here because
 pressing 'm' is itself the operator's explicit request to drive by keyboard.
@@ -87,7 +87,7 @@ def _focused():
 class ManualControl:
     """Arrow keys -> `M <vpan> <vtilt>` frames while keyboard drive is engaged.
 
-    Usage (see detect_dots.py): construct once, then each loop iteration call
+    Usage (see tracker.py): construct once, then each loop iteration call
     `handle_key(raw_key)` for the key just read (only consumes arrow keys, and
     only while engaged) and `tick()` unconditionally, whether or not a key
     arrived -- `tick()` decides for itself whether anything needs to be sent.

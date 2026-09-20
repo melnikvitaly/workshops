@@ -1,4 +1,4 @@
-"""Frame drawing for detect_dots: detections, error vector, and the mask image.
+"""Frame drawing for tracker: detections, error vector, and the mask image.
 
 Everything here is display-only. Detection coordinates are always in original
 camera space, so the overlay is drawn BEFORE any --rotate is applied to the
@@ -84,8 +84,11 @@ def draw_overlay(frame, red, targets, target, valid, rejects=()):
 
 def status_lines(red, targets, target, dx, dy, valid, fps, frame_shape, link,
                  telemetry=None, telemetry_age=None, rejects=(),
-                 recentering=False):
+                 recentering=False, sys_tlm=None, sys_age=None):
     """The status text for the left panel, one string per line.
+
+    `sys_tlm` is a parsed `tlm.sys` line (serial_link.parse_tlm_sys, 1 Hz);
+    its `pid_hz` is shown below the ESP T block, with its own age.
 
     `telemetry` is a parsed `tlm` sample (serial_link.parse_tlm) or None if
     none has arrived yet. `telemetry_age` is seconds since it was received -
@@ -118,6 +121,8 @@ def status_lines(red, targets, target, dx, dy, valid, fps, frame_shape, link,
             f"v:{telemetry['vp']:+.1f}/{telemetry['vt']:+.1f} deg/s",
             f"pan:{telemetry['pan']:.1f} tilt:{telemetry['tilt']:.1f}",
         ]
+    if sys_tlm is not None and "pid_hz" in sys_tlm:
+        lines.append(f"PID: {sys_tlm['pid_hz']:.1f} Hz   {_age_text(sys_age)}")
     return lines
 
 

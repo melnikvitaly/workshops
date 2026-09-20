@@ -60,7 +60,7 @@
 
 - Detector can lose the dot for a few frames, then find it again ("blink").
 - Effect: error jumps or drops out, so aim can twitch or stop for a moment.
-- Code: [`detect_dots.py`](../../eye/camera/detect_dots.py).
+- Code: [`tracker.py`](../../eye/camera/tracker.py).
 
 ### Solution 8
 
@@ -76,7 +76,7 @@
 ### Solution 9
 
 - New [`recenter.py`](../../eye/camera/recenter.py), used from
-  [`detect_dots.py`](../../eye/camera/detect_dots.py).
+  [`tracker.py`](../../eye/camera/tracker.py).
 - Red dot missing for `--recenter-ms` (default 1500): the gimbal moves in small
   `P` steps toward the centre of the working zone (`--recenter-speed`, deg/s).
 - It stops as soon as the red dot is seen again, then normal tracking resumes.
@@ -94,13 +94,13 @@
 - Effect: image gets blurry, dot size and brightness change, so detection
   is less stable.
 - Related: [problem 8](#8-dot-detection-is-not-reliable).
-- Code: [`detect_dots.py`](../../eye/camera/detect_dots.py).
+- Code: [`tracker.py`](../../eye/camera/tracker.py).
 
 ### Solution 10
 
 - Autofocus is always off. The OAK lens is set to a fixed position
   (`--focus`, 0–255, default 130) when the pipeline starts, in
-  [`detect_dots.py`](../../eye/camera/detect_dots.py).
+  [`tracker.py`](../../eye/camera/tracker.py).
 - The **Lens focus** field in the Speed box ([`speed.py`](../../eye/camera/speed.py))
   changes it live, with no camera restart.
 - Bench test (1280×720): sharpness was 28 at lens 130, but 15–17 at 0, 80, 180
