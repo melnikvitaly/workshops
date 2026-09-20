@@ -66,3 +66,43 @@
 
 - TODO: cause and fix (for example: hold last position for a short time,
   filter jumps, tune thresholds).
+
+## 9. Laser moves outside the camera view zone
+
+- The gimbal can point the laser outside what the camera sees.
+- The dot is not detected, so no error is sent and aim cannot correct itself.
+- Related: [problem 8](#8-dot-detection-is-not-reliable) (dot lost for a few frames).
+
+### Solution 9
+
+- New [`recenter.py`](../../eye/camera/recenter.py), used from
+  [`detect_dots.py`](../../eye/camera/detect_dots.py).
+- Red dot missing for `--recenter-ms` (default 1500): the gimbal moves in small
+  `P` steps toward the centre of the working zone (`--recenter-speed`, deg/s).
+- It stops as soon as the red dot is seen again, then normal tracking resumes.
+  If the centre is reached first, it holds there.
+- On by default. Off with the **Recenter if laser lost** checkbox in the left
+  panel or `--recenter-ms 0`.
+- Centre is used because it is inside the camera view, so the dot can be found again.
+- Zone limits: [`Config.hpp`](../../firmware/aim/src/Config.hpp).
+- TODO: verify on the rig.
+
+## 10. Camera autofocus
+
+- The camera has autofocus turned on.
+- Focus can change while the rig moves or the laser dot appears.
+- Effect: image gets blurry, dot size and brightness change, so detection
+  is less stable.
+- Related: [problem 8](#8-dot-detection-is-not-reliable).
+- Code: [`detect_dots.py`](../../eye/camera/detect_dots.py).
+
+### Solution 10
+
+- Autofocus is always off. The OAK lens is set to a fixed position
+  (`--focus`, 0–255, default 130) when the pipeline starts, in
+  [`detect_dots.py`](../../eye/camera/detect_dots.py).
+- The **Lens focus** field in the Speed box ([`speed.py`](../../eye/camera/speed.py))
+  changes it live, with no camera restart.
+- Bench test (1280×720): sharpness was 28 at lens 130, but 15–17 at 0, 80, 180
+  and 255, and 18 with autofocus. It stayed stable with the lens held.
+- TODO: tune the value on the rig for the real wall distance.

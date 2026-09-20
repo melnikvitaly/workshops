@@ -21,7 +21,7 @@
 // The laser interlock. Pure atomic reads, so ctrl and ui
 // can call it directly. The WDT-healthy term is added in task #6.
 //
-//   ZONE_TOUR - beam lit for the boot geometry check; there is no link yet
+//   ZONE_TOUR - beam lit for the geometry check; there is no link needed
 //   ARMED     - beam lit only while the selected channel is fresh
 //   anything else, or E-stop latched - forced off
 inline bool laserPermitted(const Ipc &ipc)

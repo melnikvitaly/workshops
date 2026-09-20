@@ -14,6 +14,7 @@ Downlink (PC -> ESP32):
                                control.press is a remote CONTROL-button press -> press_control
                                zone.{pan,tilt}.{min,max} -> set_zone
                                control.zone_tour restarts ZONE_TOUR on demand -> zone_tour
+                               boot.tour (tour after SELFTEST, NVS) -> set_boot_tour
 
 Uplink (ESP32 -> PC):
 
@@ -65,6 +66,7 @@ And the tuning console:
     py -3 serial_link.py --control                   # cfg.set control.press (arm/disarm toggle)
     py -3 serial_link.py --zone 40 110 80 120        # cfg.set zone.{pan,tilt}.{min,max}
     py -3 serial_link.py --zone-tour                 # cfg.set control.zone_tour
+    py -3 serial_link.py --boot-tour on              # cfg.set boot.tour (tour after SELFTEST)
     py -3 serial_link.py --zone-limits                # cfg.get zone.limit.* (mechanical travel)
     py -3 serial_link.py --move-to 75 100             # P 75 100 (absolute degrees)
     py -3 serial_link.py --center                     # move to the current working zone's centre
@@ -746,6 +748,15 @@ class ErrorLink:
         """
         return self.cfg_set("control.zone_tour", True)
 
+    def set_boot_tour(self, enabled):
+        """cfg.set `boot.tour` - whether the board runs ZONE_TOUR after
+        SELFTEST at every reset (off: SELFTEST goes straight to DISARMED).
+
+        Stored config, not an action: saved in NVS, applies at the next
+        reset. The `cfg.state` reply confirms the value.
+        """
+        return self.cfg_set("boot.tour", bool(enabled))
+
     def send_raw(self, line):
         self._write(line)
 
@@ -970,6 +981,10 @@ def _main():
                          "bench sweep of the current working zone, laser lit, "
                          "without a reboot. No-ops outside DISARMED/PARKED "
                          "(see st: in the telemetry)")
+    ap.add_argument("--boot-tour", choices=("on", "off"),
+                    help="cfg.set boot.tour: run the ZONE_TOUR sweep after "
+                         "SELFTEST at every reset. Saved in NVS; applies at "
+                         "the next reset")
     ap.add_argument("--zone-limits", action="store_true",
                     help="cfg.get zone.limit.{pan,tilt}.{min,max}: print the "
                          "gimbal's hard mechanical travel, read live from the "
@@ -997,7 +1012,7 @@ def _main():
     if (args.query or args.gains or args.nudge or args.manual
             or args.telemetry is not None or args.channel or args.control
             or args.zone or args.zone_tour or args.zone_limits
-            or args.move_to or args.center):
+            or args.boot_tour or args.move_to or args.center):
         link = ErrorLink(args.port, args.baud, echo=False, tx_log_path=args.tx_log)
         try:
             if args.channel:
@@ -1008,6 +1023,8 @@ def _main():
                 link.set_zone(*args.zone)
             if args.zone_tour:
                 link.zone_tour()
+            if args.boot_tour:
+                link.set_boot_tour(args.boot_tour == "on")
             if args.zone_limits:
                 limits = link.read_zone_limits()
                 print("  zone limits:", limits or "(no reply)")

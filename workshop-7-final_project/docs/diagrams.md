@@ -34,9 +34,12 @@ stateDiagram-v2
     BOOT --> SELFTEST: boot
 
     SELFTEST --> FAULT: selftest.fail
-    SELFTEST --> ZONE_TOUR: selftest.ok
+    SELFTEST --> DISARMED: selftest.ok
+    SELFTEST --> ZONE_TOUR: selftest.ok (boot.tour on)
 
-    ZONE_TOUR --> DISARMED: tour.done / tour.skip
+    ZONE_TOUR --> DISARMED: tour.done
+    DISARMED --> ZONE_TOUR: cfg.tour
+    PARKED --> ZONE_TOUR: cfg.tour
 
     DISARMED --> ARMED: btn.control
     ARMED --> DISARMED: btn.control
@@ -66,7 +69,7 @@ stateDiagram-v2
 | ----------- | --------------------------------------------------------------------------------- |
 | `BOOT`      | Power-on, before `SELFTEST` runs. No laser, no motion.                           |
 | `SELFTEST`  | Hardware gate — I2C scan, SD mount, servo sweep, camera handshake. Fail goes to `FAULT`. |
-| `ZONE_TOUR` | Boot geometry sweep. Laser lit (no link needed). Runs once, then `DISARMED`.      |
+| `ZONE_TOUR` | Geometry sweep. Laser lit (no link needed). After `SELFTEST` if `boot.tour` is on, or on demand. Then `DISARMED`. |
 | `DISARMED`  | Idle, not driving the gimbal. Laser off. Waits for `btn.control` (arm) or a channel select. |
 | `ARMED`     | Closed-loop tracking live. Laser permitted. Motion driven by the selected input channel. |
 | `PARKED`    | Idle timeout (30 s) from `DISARMED`/`ARMED` with no channel selected. Servos detached, laser off. |

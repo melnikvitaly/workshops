@@ -1,7 +1,8 @@
 stateDiagram-v2
     [*] --> BOOT
     BOOT --> SELFTEST
-    SELFTEST --> ZONE_TOUR: ok
+    SELFTEST --> DISARMED: ok
+    SELFTEST --> ZONE_TOUR: ok, boot.tour on
     SELFTEST --> FAULT: fail
     ZONE_TOUR --> DISARMED
     DISARMED --> ARMED: button

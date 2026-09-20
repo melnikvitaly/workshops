@@ -20,10 +20,15 @@ to GPIO21 / 38 and update this table.
 | `SERVO_PAN` | 35 | LEDC out | Servo A, horizontal |
 | `SERVO_TILT` | 36 | LEDC out | Servo B, vertical |
 | `LASER_GATE` | 6 | out, pull-up | MOSFET gate. External pull-up required |
-| `SD_CS` | 10 | SPI2 out | FSPICS0 — IOMUX |
-| `SD_MOSI` | 11 | SPI2 out | FSPID — IOMUX |
-| `SD_SCK` | 12 | SPI2 out | FSPICLK — IOMUX |
-| `SD_MISO` | 13 | SPI2 in | FSPIQ — IOMUX |
+| `SD_CS` | 10 | SPI2 out | SD pin 1 (`DAT3`). FSPICS0 — IOMUX. 10 kΩ pull-up to 3V3 |
+| `SD_MOSI` | 11 | SPI2 out | SD pin 2 (`CMD`). FSPID — IOMUX. 10 kΩ pull-up to 3V3 |
+| `SD_VSS1` | GND | power | SD pin 3 |
+| `SD_VDD` | 3V3 | power | SD pin 4. 100 nF + 10 µF close to the pin |
+| `SD_SCK` | 12 | SPI2 out | SD pin 5 (`CLK`). FSPICLK — IOMUX |
+| `SD_VSS2` | GND | power | SD pin 6 |
+| `SD_MISO` | 13 | SPI2 in | SD pin 7 (`DAT0`). FSPIQ — IOMUX. 10 kΩ pull-up to 3V3 |
+| `SD_DAT1` | — | not connected | SD pin 8. 10 kΩ pull-up to 3V3 |
+| `SD_DAT2` | — | not connected | SD pin 9. 10 kΩ pull-up to 3V3 |
 | `OLED_SDA` | 15 | I²C0 open-drain | External 4.7 kΩ pull-up to 3V3 |
 | `OLED_SCL` | 16 | I²C0 open-drain | External 4.7 kΩ pull-up to 3V3 |
 | `LINK_TX` | 17 | UART1 out | To the USB-TTL adapter's RX |
@@ -77,20 +82,8 @@ No adapter module, no level shifter: the card runs at 3V3.
 
 ### 4.1 Card pinout
 
-Numbers are the pins of the full-size SD card, counted from the notched
-corner.
-
-| Card pin | SD name | SPI-mode name | ESP32-S3 | Notes |
-|---|---|---|---|---|
-| 1 | `DAT3` | `CS` | GPIO10 (`SD_CS`) | 10 kΩ pull-up to 3V3 |
-| 2 | `CMD` | `MOSI` | GPIO11 (`SD_MOSI`) | 10 kΩ pull-up to 3V3 |
-| 3 | `VSS1` | `GND` | GND | |
-| 4 | `VDD` | `3V3` | 3V3 | 100 nF + 10 µF close to the pin |
-| 5 | `CLK` | `SCK` | GPIO12 (`SD_SCK`) | |
-| 6 | `VSS2` | `GND` | GND | |
-| 7 | `DAT0` | `MISO` | GPIO13 (`SD_MISO`) | 10 kΩ pull-up to 3V3 |
-| 8 | `DAT1` | — | not connected | 10 kΩ pull-up to 3V3 |
-| 9 | `DAT2` | — | not connected | 10 kΩ pull-up to 3V3 |
+All 9 card pins (`SD_*` rows) are in the [pin map](#1-pin-map). Card pins are
+counted from the notched corner of the full-size SD card.
 
 - Pull-ups keep the lines defined when the card is missing or idle.
 - Pins 8 and 9 are unused in SPI mode. Pull them up so the card never

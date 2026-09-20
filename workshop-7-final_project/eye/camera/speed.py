@@ -5,12 +5,13 @@ The `--fps`, `--queue-size` and `--rate` flags set the starting point; the
 
 | Setting      | Applied                                                           |
 |--------------|-------------------------------------------------------------------|
+| `focus`      | at once (control message to the camera, no restart)               |
 | `rate`       | at once (`ErrorLink.set_rate`)                                    |
 | `queue_size` | at once if the camera allows it, else the camera restarts         |
 | `fps`        | the camera pipeline restarts (about a second, the view freezes)  |
 
 `SpeedSettings` only holds the numbers. `detect_dots.camera_frames` reads
-`fps` and `queue_size` every frame and reacts when they change.
+`fps`, `queue_size` and `focus` every frame and reacts when they change.
 """
 
 import tkinter as tk
@@ -19,6 +20,7 @@ from tkinter import ttk
 FPS_RANGE = (5, 120)
 QUEUE_RANGE = (1, 8)
 RATE_RANGE = (1, 100)
+FOCUS_RANGE = (0, 255)
 
 
 class SpeedSettings:
@@ -28,6 +30,7 @@ class SpeedSettings:
         self.fps = float(args.fps)
         self.queue_size = int(args.queue_size)
         self.rate = float(args.rate)
+        self.focus = int(args.focus)
         self._link = link
 
     def build(self, parent):
@@ -39,10 +42,12 @@ class SpeedSettings:
             "fps": tk.StringVar(value=f"{self.fps:g}"),
             "queue_size": tk.StringVar(value=str(self.queue_size)),
             "rate": tk.StringVar(value=f"{self.rate:g}"),
+            "focus": tk.StringVar(value=str(self.focus)),
         }
         rows = (
             ("Camera fps (restarts camera)", "fps", FPS_RANGE),
             ("Frame queue (1 = newest)", "queue_size", QUEUE_RANGE),
+            ("Lens focus (autofocus off)", "focus", FOCUS_RANGE),
             ("Send rate, Hz", "rate", RATE_RANGE),
         )
         for row, (label, name, (lo, hi)) in enumerate(rows):
@@ -65,16 +70,18 @@ class SpeedSettings:
             fps = float(self._vars["fps"].get())
             queue = int(self._vars["queue_size"].get())
             rate = float(self._vars["rate"].get())
+            focus = int(self._vars["focus"].get())
         except ValueError:
             self._say("numbers only", ok=False)
             return
         for name, value, (lo, hi) in (("fps", fps, FPS_RANGE),
                                       ("queue", queue, QUEUE_RANGE),
-                                      ("rate", rate, RATE_RANGE)):
+                                      ("rate", rate, RATE_RANGE),
+                                      ("focus", focus, FOCUS_RANGE)):
             if not lo <= value <= hi:
                 self._say(f"{name} must be {lo}..{hi}", ok=False)
                 return
-        self.fps, self.queue_size, self.rate = fps, queue, rate
+        self.fps, self.queue_size, self.rate, self.focus = fps, queue, rate, focus
         self._link.set_rate(rate)
         self._say("applied", ok=True)
 

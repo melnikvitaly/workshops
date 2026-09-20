@@ -75,15 +75,15 @@ public:
         {
             _sm.set(State::Fault, "selftest.fail");
         }
-        else if (config::ZONE_TOUR_AT_BOOT)
+        else if (_cfg.boot_tour)
         {
             _sm.set(State::ZoneTour, "selftest.ok");
             _tour.begin();
         }
         else
         {
-            _sm.set(State::ZoneTour, "selftest.ok");
-            _sm.set(State::Disarmed, "tour.skip");
+            resetLoop(nowMs());
+            _sm.set(State::Disarmed, "selftest.ok");
         }
 
         TickType_t last = xTaskGetTickCount();

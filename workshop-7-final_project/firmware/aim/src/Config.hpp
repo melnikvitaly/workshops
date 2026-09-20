@@ -98,12 +98,12 @@ namespace config
     constexpr bool TILT_ANGLE_AIMS_DOWN = true;  // increasing tilt aims DOWN
     constexpr bool PAN_ANGLE_AIMS_RIGHT = false; // increasing pan aims LEFT
 
-    // --- Boot zone tour ------------------------------------------------------
-    // At startup the laser walks the perimeter of the working zone, so the
-    // operator can see where it can reach before the loop takes over. It also
-    // shows which way each axis moves, which is the thing you most want to know
-    // before raising the gains.
-    constexpr bool ZONE_TOUR_AT_BOOT = true;
+    // --- Zone tour -----------------------------------------------------------
+    // The laser walks the perimeter of the working zone, so the operator can
+    // see where it can reach before the loop takes over. It also shows which
+    // way each axis moves, which is the thing you most want to know before
+    // raising the gains. It runs after SELFTEST only if the `boot.tour` config
+    // key is on (default off), or on demand via `control.zone_tour`.
     constexpr float ZONE_TOUR_RATE_DEG_S = 40.0f; // slow enough to follow by eye
     constexpr uint32_t ZONE_TOUR_DWELL_MS = 250;  // pause on each corner
 
@@ -329,7 +329,7 @@ namespace config
     // Bumped whenever ConfigBlob's layout or semantics change. A stored blob
     // with a different version is rejected and the compiled defaults reloaded -
     // a stale blob is never reinterpreted.
-    constexpr uint16_t SCHEMA_VERSION = 1;
+    constexpr uint16_t SCHEMA_VERSION = 2;
 
     // The persisted configuration. POD and trivially copyable: written to NVS
     // as one blob and copied out under the config mutex by ctrl each step.
@@ -346,6 +346,7 @@ namespace config
         uint8_t log_sd_enabled;        // 0/1
         uint8_t telemetry_wifi_enabled; // 0/1
         uint8_t telemetry_ble_enabled;  // 0/1
+        uint8_t boot_tour;              // 0/1 - run ZONE_TOUR after SELFTEST
     };
 
     // Safe defaults: transmission off, logging on, channel NONE, laser off.
@@ -359,6 +360,7 @@ namespace config
         /* log_sd_enabled         */ 1,
         /* telemetry_wifi_enabled */ 0,
         /* telemetry_ble_enabled  */ 0,
+        /* boot_tour              */ 0,
     };
 
     // Field bounds for validation.

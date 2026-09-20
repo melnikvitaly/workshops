@@ -9,7 +9,7 @@ is in [`../README.md`](../README.md).
 
 **Contents**
 
-1. [Node responsibilities](#1-node-responsibilities)
+1. [Nodes](#1-nodes)
 2. [Task architecture — `AIM`](#2-task-architecture--aim)
 3. [Communications](#3-communications)
 4. [Input channels](#4-input-channels)
@@ -19,13 +19,41 @@ is in [`../README.md`](../README.md).
 
 ---
 
-## 1. Node responsibilities
+## 1. Nodes
 
-Each node has a **role name** that does not mention its silicon, so a node can be
-re-hosted on different hardware without a rename cascade. The role table and the
-namespace mapping are in [`nodes.md`](./nodes.md).
+Each node has a **role name** that does not mention its silicon — the role is
+what the design commits to, the chip is how it happens to be hosted. The names are
+the namespace used throughout the project — log tags, source directories — so a
+node can be re-hosted on different hardware without a rename cascade.
 
-### EYE — vision and operator console *(PC)*
+Phase 0 has two nodes.
+
+**Schematic first, then layout.** Phase 0 draws and routes one board —
+`AIM`, the graded board.
+
+| Name | Role | Runs on | Board |
+|------|------|---------|-------|
+| **EYE** | Sees. Detection, error vector, operator console | PC | — (host PC) |
+| **AIM** | Decides and acts. Control loop, laser, storage | ESP32-S3 | ESP32-S3-WROOM-1; USB-C input, BQ24040 Li-Ion charger and TLV758P LDO; servo power rail; MOSFET laser driver; micro-SD on SPI; OLED I²C header; UART1 header; E-stop, `MODE` and control buttons |
+
+```text
+log tag   chip        source directory
+EYE       PC          eye/
+AIM       ESP32-S3    firmware/aim/
+```
+
+### `AIM` board requirements — *the graded board*
+
+| Requirement | How this board answers it |
+|---|---|
+| Power filtering | Bulk electrolytic on the servo rail sized for stall current, 10 µF + 100 nF per rail, 100 nF at every IC pin, ferrite between servo rail and logic, RC on analog inputs |
+| Power/logic separation | Servos are a noisy inductive 5–6 V load with amp-level stall transients; the 3.3 V logic and the SD card are not. Separate pours, single-point star ground, servo return never shared with SD or ADC ground |
+| High-speed routing | USB D± as a 90 Ω differential pair, length-matched, no stubs or vias on the pair; SD SPI kept short with a continuous return path directly beneath it; RF keep-out under the module |
+| Test points | 3V3, VSERVO, VBAT, GND ×2, laser gate, SD SCK/MOSI/MISO/CS, UART1 TX/RX — labelled |
+
+### Node responsibilities
+
+#### EYE — vision and operator console *(PC)*
 
 - Detects the red laser dot and the black target dot, computes the error vector.
 - Detection is encapsulated behind one interface: OpenCV threshold + shape gate.
@@ -34,7 +62,7 @@ namespace mapping are in [`nodes.md`](./nodes.md).
   NDJSON configuration lines that select the input channel.
 - A separate script drives the gimbal manually from the mouse.
 
-### AIM — gimbal controller *(ESP32-S3; the core of the project)*
+#### AIM — gimbal controller *(ESP32-S3; the core of the project)*
 
 - Runs the two PIDs and drives the servos by velocity.
 - Owns the **SD card** over SPI, and owns **timestamps** for every record.
@@ -100,7 +128,8 @@ writer changed the channel.
 
 ### State machine
 
-States: `BOOT → SELFTEST → ZONE_TOUR → DISARMED → ARMED → …`, with
+States: `BOOT → SELFTEST → DISARMED → ARMED → …` (with `boot.tour` on, a
+`ZONE_TOUR` runs between `SELFTEST` and `DISARMED`), plus
 `PARKED` (idle), `LINK_LOST` (selected channel silent) and a latched `FAULT` that
 requires operator acknowledgement. The laser is forced off in `BOOT`, `SELFTEST`,
 `DISARMED`, `LINK_LOST`, `PARKED` and `FAULT`; it is permitted only in `ZONE_TOUR`
@@ -214,8 +243,8 @@ removes it.
 
 `zone.{pan,tilt}.{min,max}` is regular config: set over `cfg.set` like any
 other key, validated, persisted and applied live — no reboot needed. But the
-zone only ever gets *walked* automatically once, at boot
-(`ZONE_TOUR_AT_BOOT`). `control.zone_tour` is an action key, the same shape as
+zone is only *walked* automatically at boot if `boot.tour` is on (default
+off). `control.zone_tour` is an action key, the same shape as
 `control.press`, that re-enters `ZONE_TOUR` on demand: set new bounds, send
 `control.zone_tour`, and watch the beam trace the new rectangle rather than
 guessing whether it covers the scene. It no-ops outside `DISARMED`/`PARKED`,
@@ -246,7 +275,7 @@ One versioned, flat key space rather than ad-hoc settings:
 ```text
 input.channel                    pid.pan.{kp,ki,kd}      pid.tilt.{kp,ki,kd}
 zone.{pan,tilt}.{min,max}        laser.brightness        telemetry.rate_hz
-log.sd.enabled
+log.sd.enabled                   boot.tour
 zone.limit.{pan,tilt}.{min,max}  (read-only - the mechanical travel, cfg.get only)
 ```
 
@@ -367,9 +396,11 @@ telemetry, `Q` query) and now **persist in NVS** rather than reverting on reboot
 The `N` nudge is a repeatable, known open-loop disturbance the controller is not
 told about — the only way to compare two gain sets meaningfully.
 
-### Boot zone tour
+### Zone tour
 
-At startup the lit laser walks the perimeter of the working zone clockwise from the
+Set `boot.tour` (NVS, default off, changeable from `EYE` — "Tour on boot" or
+`serial_link.py --boot-tour on`) and after `SELFTEST` the lit laser walks the
+perimeter of the working zone clockwise from the
 top-left, then parks in the centre. **The direction is the test:** a
 counter-clockwise trace means an axis-geometry flag is wrong, and that same wrong
 flag is what would send the tracking loop running *away* from the target. Reading

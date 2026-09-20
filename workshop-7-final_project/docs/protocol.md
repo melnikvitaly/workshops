@@ -264,6 +264,15 @@ persisted config, applied live by `ctrl` on the next step — can be checked by
 eye without a reboot: send the new bounds, then this key, and watch the beam
 trace the new rectangle.
 
+**`boot.tour`** is stored config (bool, default `false`), not an action key.
+When `true`, the boot sequence is `SELFTEST → ZONE_TOUR → DISARMED`; when
+`false`, `SELFTEST → DISARMED`. It is saved in NVS and read once at boot, so a
+change applies at the next reset.
+
+```text
+{"t":"cfg.set","k":"boot.tour","v":true,"id":10}
+```
+
 `zone.limit.{pan,tilt}.{min,max}` are **read-only** — the compiled-in
 mechanical travel (`GIMBAL_PAN_MIN/MAX`, `GIMBAL_TILT_MIN/MAX`), the widest
 `zone.*` can ever be widened to. `cfg.get` returns the value; `cfg.set`

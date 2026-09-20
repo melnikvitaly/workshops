@@ -83,7 +83,8 @@ def draw_overlay(frame, red, targets, target, valid, rejects=()):
 
 
 def status_lines(red, targets, target, dx, dy, valid, fps, frame_shape, link,
-                 telemetry=None, telemetry_age=None, rejects=()):
+                 telemetry=None, telemetry_age=None, rejects=(),
+                 recentering=False):
     """The status text for the left panel, one string per line.
 
     `telemetry` is a parsed `tlm` sample (serial_link.parse_tlm) or None if
@@ -107,6 +108,8 @@ def status_lines(red, targets, target, dx, dy, valid, fps, frame_shape, link,
         f"sent {link.sent}   fired {link.fired}",
         f"port: {link.port or 'no port'}",
     ]
+    if recentering:
+        lines.insert(1, "laser lost - moving toward centre")
     if telemetry is not None:
         lines += [
             f"ESP T  st:{telemetry['st']} ch:{telemetry['ch']}   "

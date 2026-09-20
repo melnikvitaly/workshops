@@ -4,7 +4,10 @@
 
 // The AIM control FSM.
 //
-//   BOOT -> SELFTEST -> ZONE_TOUR -> DISARMED -> ARMED
+//   BOOT -> SELFTEST -> DISARMED -> ARMED
+//
+// ZONE_TOUR sits between SELFTEST and DISARMED only when the `boot.tour` config
+// key is on; it can also be entered on demand from DISARMED / PARKED.
 //
 // plus PARKED (idle: servos detached, laser off), LINK_LOST (the selected
 // channel went stale) and a latched FAULT that only an explicit operator

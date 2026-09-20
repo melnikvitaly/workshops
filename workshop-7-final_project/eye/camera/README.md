@@ -26,7 +26,7 @@ unnecessary here because a PC can run the color filter directly.
 | `manual_control.py`   | keyboard-driven `MANUAL` channel: arrow keys → `M <vpan> <vtilt>` frames           |
 | `tx_log.py`           | the one place every line sent to the ESP32 is logged (console and/or file)         |
 | `tuning.py`           | the threshold sliders (right panel), and printing them back out as a command line  |
-| `speed.py`            | the Speed box (right panel): camera fps, frame queue, send rate                    |
+| `speed.py`            | the Speed box (right panel): camera fps, frame queue, lens focus, send rate        |
 | `simulated_target.py` | click or arrow-key a stand-in target dot when no black dot is printed              |
 
 ## Install and run
@@ -259,6 +259,23 @@ hand from wherever it landed. Results — and any refusal from the link — appe
 on the status line at the bottom; `Q`'s reply comes back on the `esp32 |` line
 over on the view.
 
+### Laser lost: move toward the centre
+
+The gimbal can point the laser outside the camera view. The red dot is then
+not found, so there is no error to correct and the firmware only holds.
+
+| Item       | Behaviour                                                            |
+|------------|----------------------------------------------------------------------|
+| Trigger    | red dot missing for `--recenter-ms` (default 1500). Black dot missing does not trigger it |
+| Motion     | small `P` steps toward the zone centre at `--recenter-speed` deg/s (default 30) |
+| Stop       | as soon as the red dot is seen again, or when the centre is reached  |
+| Default    | on. Untick **Recenter if laser lost** in the left panel, or use `--recenter-ms 0` |
+| Not active | while keyboard MANUAL drive is on, or with no serial port            |
+
+The start position comes from the `tlm` sample. With no fresh sample the
+gimbal jumps to the centre in one `P` move instead, which cannot be stopped
+half way. Code: [`recenter.py`](recenter.py).
+
 ### Working zone and zone tour
 
 The **Working zone** box sets the four `zone.pan.min/max`,
@@ -272,8 +289,10 @@ mechanical travel live from the board (`zone.limit.{pan,tilt}.{min,max}`, a
 read-only `cfg.get` — see `docs/protocol.md` §3.3) and applies it in one
 click; it briefly waits for the board's reply, so it needs a connected,
 responding board. **Start Zone Tour** re-enters the `ZONE_TOUR` state — the
-same walk around the zone's perimeter, laser lit, that runs once at boot —
-so a new zone can be watched without power-cycling the board. It only
+same walk around the zone's perimeter, laser lit, that runs at boot when
+**Tour on boot** is ticked (`--boot-tour on|off`; saved in the board's NVS,
+default off, applies at the next reset) — so a new zone can be watched
+without power-cycling the board. It only
 starts while the gimbal is `DISARMED`/`PARKED` (check `st:` in the
 telemetry readout); requesting it from any other state is silently
 ignored. **Center** reads the *current* working zone live (not the entry
@@ -281,7 +300,8 @@ fields) and drives straight to its midpoint with a `P <pan> <tilt>`
 absolute-position frame — `Gimbal::moveTo()`, bypassing the PID and the
 selected channel entirely, the same primitive `N` (nudge) uses but for an
 absolute angle instead of an offset. The equivalent from `serial_link.py` is
-`--zone PAN_MIN PAN_MAX TILT_MIN TILT_MAX`, `--zone-tour`, `--move-to PAN
+`--zone PAN_MIN PAN_MAX TILT_MIN TILT_MAX`, `--zone-tour`,
+`--boot-tour on|off`, `--move-to PAN
 TILT`, and `--center`.
 
 The whole window is Tk rather than a painted OpenCV one, which is why it has
@@ -418,6 +438,7 @@ Bad numbers are refused and shown in the box.
 | Send rate    | at once                                                           |
 | Frame queue  | at once if the camera allows it, otherwise the camera restarts    |
 | Camera fps   | the camera restarts (about a second, the view freezes)           |
+| Lens focus   | at once (autofocus is always off, the lens stays at this value)  |
 
 The OAK-1 sensor (IMX378, up to 4056×3040) only offers some size and fps
 pairs. Measured on this camera:
@@ -439,6 +460,7 @@ shows which fps is in use.
 | `--fps`        | 60      | OAK sensor frame rate                                                   |
 | `--queue-size` | 1       | OAK frames buffered; 1 = always the newest frame (lowest latency)       |
 | `--rate`       | 50      | max `E` frames per second put on the wire                               |
+| `--focus`      | 130     | OAK lens position 0–255, autofocus off. Tune for the wall distance      |
 
 Detection time per frame can still cap the real rate; the `fps` readout on
 the view shows what the loop actually reaches.

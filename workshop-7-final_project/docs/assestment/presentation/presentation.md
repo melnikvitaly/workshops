@@ -89,7 +89,7 @@ TODO: graph — error vs time for different gains.
 
 Why: an SD card can stall a write for 100–250 ms. That must never reach `ctrl`.
 
-Source: [`architecture.md`](../architecture.md#2-task-architecture--aim)
+Source: [`architecture.md`](../../architecture.md#2-task-architecture--aim)
 
 ---
 
@@ -102,7 +102,7 @@ Source: [`architecture.md`](../architecture.md#2-task-architecture--aim)
   no E-stop, beam requested.
 - No data for 300 ms → `LINK_LOST`, motors stop.
 - E-stop: ISR → task notification → `safety`. No work in the ISR.
-- Source: [`StateMachine.hpp`](../../firmware/aim/src/StateMachine.hpp)
+- Source: [`StateMachine.hpp`](../../../firmware/aim/src/StateMachine.hpp)
 
 ---
 
@@ -114,10 +114,10 @@ Source: [`architecture.md`](../architecture.md#2-task-architecture--aim)
 | 2 | Two rate limits: hard limit in `Gimbal`, PID clamp below it | Anti-windup can see the real limit (`static_assert`) |
 | 3 | Log queue drops oldest, never blocks | Telemetry may be lost. Control may not |
 | 4 | NDJSON + CRC-8, 256-byte line limit, `NaN` rejected | A `NaN` in the PID would break the integrator |
-| 5 | Boot zone tour: laser draws the zone clockwise | Wrong direction = wrong axis flag, seen in 4 s |
+| 5 | Zone tour (`boot.tour` on, or on demand): laser draws the zone clockwise | Wrong direction = wrong axis flag, seen in 4 s |
 
-Code: [`Gimbal.hpp`](../../firmware/aim/src/parts/Gimbal.hpp),
-[`Ctrl.hpp`](../../firmware/aim/src/tasks/Ctrl.hpp)
+Code: [`Gimbal.hpp`](../../../firmware/aim/src/parts/Gimbal.hpp),
+[`Ctrl.hpp`](../../../firmware/aim/src/tasks/Ctrl.hpp)
 
 ---
 
@@ -126,8 +126,8 @@ Code: [`Gimbal.hpp`](../../firmware/aim/src/parts/Gimbal.hpp),
 TODO: pick one 10–20 line snippet.
 Good candidates:
 
-- PID clamp + `static_assert` in [`Gimbal.hpp`](../../firmware/aim/src/parts/Gimbal.hpp)
-- `laserPermitted()` in [`Safety.hpp`](../../firmware/aim/src/tasks/Safety.hpp)
+- PID clamp + `static_assert` in [`Gimbal.hpp`](../../../firmware/aim/src/parts/Gimbal.hpp)
+- `laserPermitted()` in [`Safety.hpp`](../../../firmware/aim/src/tasks/Safety.hpp)
 
 ---
 
@@ -135,7 +135,7 @@ Good candidates:
 
 | # | Problem | Solution | TODO |
 | --- | --- | --- | --- |
-| 1 | Auto aim "blows up": dot runs away and `LINK_LOST` follows. Likely cause: the error can reach `±2` (`±1` is half a frame), but the firmware rejected anything above `±1`. Rejected frames did not refresh link liveness, and the gimbal kept its last rate | Error is now clamped to `±1` in [`dots.py`](../../eye/camera/dots.py) and in [`Protocol.hpp`](../../firmware/aim/src/transport/Protocol.hpp). Small working zone (60° pan, 30° tilt) stays as a safety bound. See [`Config.hpp`](../../firmware/aim/src/Config.hpp) | Verify on the rig (`oor` counter, no `LINK_LOST`). PID tuning if it still oscillates |
+| 1 | Auto aim "blows up": dot runs away and `LINK_LOST` follows. Likely cause: the error can reach `±2` (`±1` is half a frame), but the firmware rejected anything above `±1`. Rejected frames did not refresh link liveness, and the gimbal kept its last rate | Error is now clamped to `±1` in [`dots.py`](../../../eye/camera/dots.py) and in [`Protocol.hpp`](../../../firmware/aim/src/transport/Protocol.hpp). Small working zone (60° pan, 30° tilt) stays as a safety bound. See [`Config.hpp`](../../../firmware/aim/src/Config.hpp) | Verify on the rig (`oor` counter, no `LINK_LOST`). PID tuning if it still oscillates |
 | 2 | Wrong MIN/MAX angles on the assembled gimbal | Measured on the rig. Direction flags set (more pan = left, more tilt = down). `static_assert` keeps zone inside travel | Add the measured limits |
 | 3 | Laser blinks at startup | TODO: from `PROBLEMS_FACED.md` | Cause and fix |
 | 4 | Data stops reaching ESP32 when the PC window is resized | TODO: from `PROBLEMS_FACED.md` | Cause and fix |

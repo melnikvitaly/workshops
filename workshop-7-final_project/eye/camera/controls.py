@@ -187,6 +187,12 @@ class Controls:
         # to press Set. AUTO is only the default shown here, since it is what
         # this script's own E frames need -- the firmware itself boots at NONE.
         self.channel = tk.StringVar(value="AUTO")
+        # Mirrors the firmware default (boot.tour off); not read back from the
+        # board. Ticking it sends the value, which the board saves in NVS.
+        self.boot_tour = tk.BooleanVar(value=False)
+        # PC-side only, nothing is sent: detect_dots.run() reads it every frame
+        # (see recenter.py). On by default; unticking stops the drift at once.
+        self.recenter_on = tk.BooleanVar(value=True)
         # One row per axis, one entry per term. Starts at the "Default (PI)"
         # preset, the firmware's own gains.
         default = next(p for p in PRESETS if p["name"] == "Default (PI)")
@@ -243,7 +249,16 @@ class Controls:
         row.pack(fill="x")
         row.add(ttk.Checkbutton(row, text="Telemetry", variable=self.telemetry_on,
                                 command=self._telemetry))
-        chan = row.add(ttk.Frame(row))
+        tour = row.add(ttk.Checkbutton(row, text="Tour on boot", variable=self.boot_tour,
+                                       command=self._boot_tour))
+        Tooltip(tour, "Saved on the board. When on, the zone tour runs after "
+                      "the self-test at every reset. Applies at the next reset.")
+        recenter = row.add(ttk.Checkbutton(row, text="Recenter if laser lost",
+                                           variable=self.recenter_on))
+        Tooltip(recenter, "When the red dot is not seen for a while, move the "
+                          "gimbal toward the zone centre until it is found "
+                          "again. PC side only.")
+        chan =row.add(ttk.Frame(row))
         ttk.Label(chan, text="Channel").pack(side="left", padx=(0, 4))
         ttk.Combobox(chan, textvariable=self.channel, width=8, state="readonly",
                      values=["NONE", "AUTO", "MANUAL"]).pack(side="left")
@@ -419,6 +434,15 @@ class Controls:
                       "ZONE_TOUR -- no-ops unless the gimbal is DISARMED/PARKED")
         except Exception as exc:
             self._say(f"zone tour failed: {exc}", ok=False)
+
+    def _boot_tour(self):
+        try:
+            on = self.boot_tour.get()
+            cid = self.link.set_boot_tour(on)
+            self._say(f"tour on boot -> {'on' if on else 'off'} (cfg.set id {cid}); "
+                      "saved on the board, applies at the next reset")
+        except Exception as exc:
+            self._say(f"tour on boot failed: {exc}", ok=False)
 
     def _center(self):
         # Reads the current working zone live (see ErrorLink.center()) rather

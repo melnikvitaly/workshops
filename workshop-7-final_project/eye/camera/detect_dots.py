@@ -52,6 +52,7 @@ import cv2
 from app_window import AppWindow
 from dots import error_vector, find_black_dots, find_red_dot, pick_target
 from manual_control import ManualControl
+from recenter import LaserLostRecenter
 from overlay import _ROTATE, draw_overlay, render_masks, status_lines
 from serial_link import ErrorLink, list_ports, parse_tlm
 from simulated_target import SimulatedTargetManager
@@ -64,8 +65,16 @@ _VID_EXT = (".mp4", ".avi", ".mov", ".mkv")
 
 # --- frame sources ---------------------------------------------------------
 
-def _start_pipeline(dai, resolution, fps, queue_size):
-    """(running pipeline, its frame queue). RuntimeError if the sensor refuses."""
+def _set_focus(dai, control_queue, focus):
+    """Autofocus off, lens fixed at `focus` (0..255). Applied at once."""
+    ctrl = dai.CameraControl()
+    ctrl.setAutoFocusMode(dai.CameraControl.AutoFocusMode.OFF)
+    ctrl.setManualFocus(int(focus))
+    control_queue.send(ctrl)
+
+
+def _start_pipeline(dai, resolution, fps, queue_size, focus):
+    """(running pipeline, frame queue, control queue). RuntimeError if the sensor refuses."""
     pipeline = dai.Pipeline()
     try:
         cam = pipeline.create(dai.node.Camera).build()
@@ -73,14 +82,16 @@ def _start_pipeline(dai, resolution, fps, queue_size):
                                        fps=fps)
         video_queue = camera_out.createOutputQueue(maxSize=queue_size,
                                                    blocking=False)
+        control_queue = cam.inputControl.createInputQueue()
         pipeline.start()
+        _set_focus(dai, control_queue, focus)
     except RuntimeError:
         try:
             pipeline.stop()
         except RuntimeError:
             pass
         raise
-    return pipeline, video_queue
+    return pipeline, video_queue, control_queue
 
 
 def camera_frames(resolution, speed):
@@ -95,13 +106,16 @@ def camera_frames(resolution, speed):
                     the camera. 1 always gives the newest (lowest latency).
                     Changed on the running queue when the camera allows it,
                     otherwise by rebuilding the pipeline.
+      focus      -- fixed lens position 0..255. Autofocus is always off: it
+                    hunts and blurs the dot. Changed live, no restart.
     """
     import depthai as dai
     good_fps = None   # last fps that actually started
     while True:
-        fps, queue_size = speed.fps, speed.queue_size
+        fps, queue_size, focus = speed.fps, speed.queue_size, speed.focus
         try:
-            pipeline, video_queue = _start_pipeline(dai, resolution, fps, queue_size)
+            pipeline, video_queue, control_queue = _start_pipeline(
+                dai, resolution, fps, queue_size, focus)
         except RuntimeError as exc:
             # The sensor only offers some size/fps pairs (12 MP tops out at
             # 30 fps). Refusing one must not end the run: go back to the last
@@ -123,6 +137,9 @@ def camera_frames(resolution, speed):
                 if speed.fps != fps:
                     restart = True
                     break
+                if speed.focus != focus:
+                    _set_focus(dai, control_queue, speed.focus)
+                    focus = speed.focus
                 if speed.queue_size != queue_size:
                     try:
                         video_queue.setMaxSize(speed.queue_size)
@@ -191,6 +208,31 @@ def open_source(args, speed):
 
 # --- main loop -------------------------------------------------------------
 
+def _recenter_step(link, recenter, telemetry, telemetry_at):
+    """Send the next waypoint toward the zone centre (a `P` frame).
+
+    The centre is read from the board once per lost event and the start
+    position comes from the last `tlm` sample. Without a fresh sample the
+    position is unknown, so this falls back to one jump to the centre
+    (link.center()) that cannot be cancelled. Raises RuntimeError if the board
+    does not answer.
+    """
+    if not recenter.started:
+        if telemetry is None or time.monotonic() - telemetry_at > 1.0:
+            centre = link.center()
+            recenter.begin(centre, centre)      # already there: no more steps
+            return
+        zone = link.read_zone()
+        if any(k not in zone for k in ("pan_min", "pan_max", "tilt_min", "tilt_max")):
+            raise RuntimeError("zone not readable - is the board connected?")
+        recenter.begin((telemetry["pan"], telemetry["tilt"]),
+                       ((zone["pan_min"] + zone["pan_max"]) / 2.0,
+                        (zone["tilt_min"] + zone["tilt_max"]) / 2.0))
+    wp = recenter.step(time.monotonic())
+    if wp is not None:
+        link.move_to(*wp)
+
+
 def run(args):
     link = ErrorLink(args.port, args.baud, max_rate=args.rate, echo=args.echo,
                      tx_log_path=args.tx_log)
@@ -214,6 +256,8 @@ def run(args):
     manual = ManualControl(link, speed_deg_s=args.manual_speed,
                            active=win.keys_ready if win else None)
     drive_shown = False
+    recenter = LaserLostRecenter(args.recenter_ms, args.recenter_speed)
+    recentering = False
 
     print("Press 'q' to quit, 'f' or the FIRE button to flash the laser, "
           "'m' to toggle keyboard MANUAL drive (arrow keys)."
@@ -236,6 +280,22 @@ def run(args):
             dx, dy, valid = error_vector(red, target, frame.shape)
             if win is not None:
                 win.record_error(dx, dy)
+            # Laser outside the camera view: nothing to correct, so drift toward
+            # the zone centre until the red dot is seen again. Runs after the
+            # detection above and stops with it -- see recenter.py.
+            recenter_wanted = (win.controls.recenter_on.get() if win is not None
+                               else True)
+            if (recenter_wanted and not manual.engaged and link.port is not None
+                    and recenter.update(red is not None, time.monotonic())):
+                recentering = True
+                try:
+                    _recenter_step(link, recenter, telemetry, telemetry_at)
+                except RuntimeError as exc:
+                    print(f"recenter: {exc}")
+            else:
+                recentering = False
+                if not recenter_wanted or manual.engaged:
+                    recenter.reset()
             # On by default, and kept that way: re-ask for telemetry (at most
             # once a second) whenever no tlm sample has landed in the last 2s
             # and nobody has asked for it to be off. A single T 1 right after
@@ -281,7 +341,8 @@ def run(args):
                 shown_rejects = rejects if debug else ()
                 win.set_status(status_lines(red, targets, target, dx, dy, valid,
                                             fps, frame.shape, link, telemetry,
-                                            telemetry_age, shown_rejects))
+                                            telemetry_age, shown_rejects,
+                                            recentering))
                 view = draw_overlay(frame, red, targets, target, valid,
                                     shown_rejects)
                 if args.rotate:
@@ -356,6 +417,10 @@ def main():
     ap.add_argument("--queue-size", type=int, default=1,
                     help="OAK frames buffered for us; 1 = always the newest "
                          "frame (lowest latency), higher = older frames")
+    ap.add_argument("--focus", type=int, default=130,
+                    help="OAK lens position 0..255. Autofocus is off, the lens "
+                         "stays here. Tune for the wall distance (the Speed box "
+                         "changes it live)")
     ap.add_argument("--rotate", type=int, default=0, choices=[0, 90, 180, 270],
                     help="rotate the DISPLAY N degrees CCW (detection unaffected)")
 
@@ -389,6 +454,12 @@ def main():
                          "arrival on its own, tighter deadzone")
 
     # --- which black dot is the target ---
+    ap.add_argument("--recenter-ms", type=float, default=1500.0,
+                    help="red dot missing this long -> move the gimbal toward "
+                         "the zone centre until the dot is seen again. "
+                         "0 = off. The window also has a checkbox for it")
+    ap.add_argument("--recenter-speed", type=float, default=30.0,
+                    help="deg/s of that move toward the centre")
     ap.add_argument("--target", default="center",
                     choices=["center", "largest", "nearest"],
                     help="pick the black dot nearest the frame centre (default), "

@@ -264,6 +264,7 @@ private:
         if (!std::strcmp(key, "log.sd.enabled"))        return checkBool(v, _blob.log_sd_enabled);
         if (!std::strcmp(key, "telemetry.wifi.enabled")) return checkBool(v, _blob.telemetry_wifi_enabled);
         if (!std::strcmp(key, "telemetry.ble.enabled"))  return checkBool(v, _blob.telemetry_ble_enabled);
+        if (!std::strcmp(key, "boot.tour"))              return checkBool(v, _blob.boot_tour);
 
         // zone.limit.* mirrors the compiled-in mechanical travel
         // (GIMBAL_PAN_MIN/MAX, GIMBAL_TILT_MIN/MAX) for cfg.get only - there
@@ -302,6 +303,7 @@ private:
         if (!std::strcmp(key, "log.sd.enabled"))        { fmtBool(out, cap, _blob.log_sd_enabled);        return; }
         if (!std::strcmp(key, "telemetry.wifi.enabled")) { fmtBool(out, cap, _blob.telemetry_wifi_enabled); return; }
         if (!std::strcmp(key, "telemetry.ble.enabled"))  { fmtBool(out, cap, _blob.telemetry_ble_enabled);  return; }
+        if (!std::strcmp(key, "boot.tour"))              { fmtBool(out, cap, _blob.boot_tour);              return; }
         std::snprintf(out, cap, "null");
     }
 
