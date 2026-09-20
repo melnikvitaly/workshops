@@ -7,7 +7,6 @@ referenced across directories; nothing in the build reaches outside this folder.
 workshop-7-final_project/
   README.md              overview/plan of the project
   TASKS.md               list of tasks to implement
-  REVIEW.md              temporal review of this project by AI
   firmware/
     aim/                 gimbal controller — ESP32-S3 (ESP-IDF / PlatformIO)
       src/
@@ -30,13 +29,16 @@ workshop-7-final_project/
     architecture.md      documentation of the project
     coding.md            coding conventions
     …                    interfaces, protocol, bringup
-  VERIFICATION/          how project will be evaluated — requirements sheet + coverage
+    assestment/          material for project assessment
+      PROBLEMS_FACED.md  problems found and their solutions
+      REVIEW.md          temporal review of this project by AI
+      VERIFICATION/      how project will be evaluated — requirements sheet + coverage
+      presentation.md, diagrams/, …
 ```
 
 **Isolation rules:**
 - `TASKS.md` MUST NOT be referenced from other files.
-- `REVIEW.md` MUST NOT be referenced from other files.
-- `VERIFICATION/` MUST NOT be referenced by other parts of project.
+- Nothing outside `docs/assestment/` MUST reference files in `docs/assestment/`.
 
 ## Build & Development Commands
 - **Build project:** `pio run`

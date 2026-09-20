@@ -1,14 +1,14 @@
 # Final Project — Plan Review
 
 Reviewer role: experienced embedded developer, reviewing the plan in
-[`README.md`](./README.md) against the course verification sheet
+[`README.md`](../../README.md) against the course verification sheet
 ([`VERIFICATION/Requirements.html`](./VERIFICATION/Requirements.html)) and against
 the topics actually covered in workshops 1–6 of this repo.
 
 **Revision 6** — **R-25 accepted (demo shot list). No findings open.** Q-5, Q-8 and
 Q-9 answered; Phase 0 reaches **41 / 42 (97.6%)**, the ceiling with fabrication
 deliberately unspent.
-[`README.md`](./README.md) matches.
+[`README.md`](../../README.md) matches.
 
 **How to use this document.** Every point has a stable ID (`R-nn` findings,
 `F-nn` feature proposals, `S-nn` scope decisions, `Q-nn` questions).
@@ -299,7 +299,7 @@ Decision: [x] accept   [ ] reject   [ ] discuss
 Notes: shoot to the list rather than improvising
 ```
 
-**Accepted.** The list lives in [`TASKS.md`](./TASKS.md) §11 as the working shot
+**Accepted.** The list lives in [`TASKS.md`](../../TASKS.md) §11 as the working shot
 list — ten shots now, the nine above plus the broker-down `MODE` button shot that
 came out of Q-9. Each carries the requirement IDs it scores, so the recording
 session is checked off against the sheet rather than judged afterwards. Block 9
@@ -664,4 +664,4 @@ channel at `spi_bus_initialize` in the standard example — confirm it holds in 
 IDF version. If it does not, 6.2 waits for `PILOT`'s `adc_continuous` in Phase 1 and
 Phase 0 is 38 / 42 (90.5%), still well clear.
 
-**Task list:** [`TASKS.md`](./TASKS.md).
+**Task list:** [`TASKS.md`](../../TASKS.md).

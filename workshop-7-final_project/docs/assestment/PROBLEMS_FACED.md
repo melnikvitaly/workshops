@@ -8,10 +8,10 @@
 
 ### Solution 1
 
-- Error is clamped to `±1` in [`dots.py`](eye/camera/dots.py) and in
-  [`Protocol.hpp`](firmware/aim/src/transport/Protocol.hpp).
+- Error is clamped to `±1` in [`dots.py`](../../eye/camera/dots.py) and in
+  [`Protocol.hpp`](../../firmware/aim/src/transport/Protocol.hpp).
 - Small working zone (60° pan, 30° tilt) stays as a safety bound. See
-  [`Config.hpp`](firmware/aim/src/Config.hpp).
+  [`Config.hpp`](../../firmware/aim/src/Config.hpp).
 - TODO: verify on the rig. PID tuning if it still oscillates.
 
 ## 2. Wrong MIN/MAX angles on the assembled gimbal
@@ -60,7 +60,7 @@
 
 - Detector can lose the dot for a few frames, then find it again ("blink").
 - Effect: error jumps or drops out, so aim can twitch or stop for a moment.
-- Code: [`detect_dots.py`](eye/camera/detect_dots.py).
+- Code: [`detect_dots.py`](../../eye/camera/detect_dots.py).
 
 ### Solution 8
 
