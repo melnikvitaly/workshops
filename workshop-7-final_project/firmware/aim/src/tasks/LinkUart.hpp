@@ -18,6 +18,7 @@
 #include "ITransport.hpp"
 #include "Protocol.hpp"
 #include "Ndjson.hpp"
+#include "PerfStat.hpp"
 
 // The link_uart task. Reads the EYE
 // link, tells the two traffic classes apart by the first byte, produces cmd_q
@@ -40,7 +41,10 @@ public:
         for (;;)
         {
             if (_ipc.link->readLine(line, sizeof(line))) // blocks up to ~10 ms when idle
+            {
+                ScopedPerf _perf(_ipc.perf.frameParse);
                 handleLine(line);
+            }
             maybeEmitTelemetry();
         }
     }
@@ -359,6 +363,7 @@ private:
         {
             _lastSysMs = now;
             emitTlmSys();
+            emitTlmPerf();
         }
         if (_lastSdMs == 0 || now - _lastSdMs >= SYS_PERIOD_MS)
         {
@@ -394,11 +399,16 @@ private:
         _lastPidUs   = nowUs;
         _lastPidRuns = runs;
 
+        // Lossy read of ui's 1 Hz report - see Ipc::TaskLoad.
+        const Ipc::TaskLoad &load = _ipc.taskLoad;
+
         char line[256];
         std::snprintf(line, sizeof(line),
                       "{\"t\":\"tlm.sys\",\"up\":%llu,\"link\":{\"bad_crc\":%lu,\"overlong\":%lu,"
                       "\"unparsed\":%lu,\"oor\":%lu,\"drop_inact\":%lu,\"uart_err\":%lu},"
-                      "\"pid_hz\":%.1f,\"heap\":%lu,\"wdt\":0}",
+                      "\"pid_hz\":%.1f,\"heap\":%lu,"
+                      "\"cpu\":{\"ctrl\":%.0f,\"logger\":%.0f,\"ui\":%.0f,\"idle\":%.0f},"
+                      "\"stack_min\":%lu,\"wdt\":0}",
                       (unsigned long long)nowUs,
                       (unsigned long)_ipc.badCrc.load(),
                       (unsigned long)_ipc.overlong.load(),
@@ -407,7 +417,38 @@ private:
                       (unsigned long)_ipc.dropInactive.load(),
                       (unsigned long)_ipc.uartErr.load(),
                       (double)pidHz,
-                      (unsigned long)esp_get_free_heap_size());
+                      (unsigned long)esp_get_free_heap_size(),
+                      (double)load.cpuCtrl, (double)load.cpuLogger,
+                      (double)load.cpuUi, (double)load.cpuIdle,
+                      (unsigned long)load.stackMinWords);
+        ndjson::seal(line, sizeof(line));
+        _ipc.link->writeLine(line);
+    }
+
+    // Min/max/EWMA of the control step, one incoming line's parse, and one
+    // OLED render - the three spans instrumented with esp_timer_get_time()
+    // (see Ipc::Perf). A separate message rather than folding into tlm.sys
+    // for the same reason tlm/tlm.sd/tlm.sys are already split: one object
+    // carrying everything would not fit the 256-byte line cap.
+    void emitTlmPerf()
+    {
+        const Ipc::Perf &p = _ipc.perf; // lossy read, telemetry only
+        char line[220];
+        std::snprintf(line, sizeof(line),
+                      "{\"t\":\"tlm.perf\",\"up\":%llu,"
+                      "\"pid\":{\"min\":%lu,\"max\":%lu,\"ema\":%lu},"
+                      "\"parse\":{\"min\":%lu,\"max\":%lu,\"ema\":%lu},"
+                      "\"render\":{\"min\":%lu,\"max\":%lu,\"ema\":%lu}}",
+                      (unsigned long long)esp_timer_get_time(),
+                      (unsigned long)p.pidStep.minUsOrZero(),
+                      (unsigned long)p.pidStep.maxUs,
+                      (unsigned long)p.pidStep.emaUs(),
+                      (unsigned long)p.frameParse.minUsOrZero(),
+                      (unsigned long)p.frameParse.maxUs,
+                      (unsigned long)p.frameParse.emaUs(),
+                      (unsigned long)p.render.minUsOrZero(),
+                      (unsigned long)p.render.maxUs,
+                      (unsigned long)p.render.emaUs());
         ndjson::seal(line, sizeof(line));
         _ipc.link->writeLine(line);
     }

@@ -54,7 +54,7 @@ namespace pinout
 
     // --- Misc -------------------------------------------------------------------
     constexpr gpio_num_t VBAT_SENSE = GPIO_NUM_2;  // ADC1_CH1, 2:1 divider - task #10
-    constexpr gpio_num_t SCOPE      = GPIO_NUM_47; // toggled across the control step - task #5
+    constexpr gpio_num_t SCOPE      = GPIO_NUM_47; // toggled across the control step, for a logic analyser
     constexpr gpio_num_t STATUS_LED = GPIO_NUM_48; // onboard WS2812
 
     // Free and uncommitted: 1, 9, 14 (21/33/34/37/38 held for the Phase 1 SPI slave link).

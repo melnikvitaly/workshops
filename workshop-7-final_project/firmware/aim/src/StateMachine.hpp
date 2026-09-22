@@ -45,9 +45,11 @@ inline const char *stateName(State s)
     return "?";
 }
 
-// The state half of the laser interlock. safety adds the
-// link-fresh, no-E-stop and WDT-healthy terms. The beam is forced off in BOOT,
-// SELFTEST, DISARMED, LINK_LOST, PARKED and FAULT.
+// The state half of the laser interlock. safety adds the link-fresh and
+// no-E-stop terms (see laserPermitted() in tasks/Safety.hpp) - a WDT-healthy
+// term is unnecessary there, since a stalled ctrl/safety trips esp_task_wdt
+// and resets the board instead of leaving it in some half-alive state. The
+// beam is forced off in BOOT, SELFTEST, DISARMED, LINK_LOST, PARKED and FAULT.
 inline bool stateAllowsLaser(State s)
 {
     return s == State::ZoneTour || s == State::Armed;

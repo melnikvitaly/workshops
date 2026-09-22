@@ -143,11 +143,40 @@ public:
         xSemaphoreGive(_mutex);
     }
 
+    // --- WDT-reset counter ---------------------------------------------------
+    // Deliberately outside the versioned ConfigBlob: bumping it must never
+    // need a schema bump, and it is never touched by the normal
+    // validate/apply/persist cfg.set path.
+
+    uint32_t wdtResetCount()
+    {
+        uint32_t count = 0;
+        nvs_get_u32(_nvs, KEY_WDT_CNT, &count); // NOT_FOUND leaves count at 0
+        return count;
+    }
+
+    // Called once at boot, before any task starts, when esp_reset_reason()
+    // says the previous reset was a watchdog. Returns the new count.
+    uint32_t bumpWdtResetCount()
+    {
+        if (_nvsMutex)
+            xSemaphoreTake(_nvsMutex, portMAX_DELAY);
+        uint32_t count = 0;
+        nvs_get_u32(_nvs, KEY_WDT_CNT, &count);
+        ++count;
+        nvs_set_u32(_nvs, KEY_WDT_CNT, count);
+        nvs_commit(_nvs);
+        if (_nvsMutex)
+            xSemaphoreGive(_nvsMutex);
+        return count;
+    }
+
 private:
-    static constexpr char TAG[]       = "CFG";
-    static constexpr char NAMESPACE[] = "aimcfg";
-    static constexpr char KEY_BLOB[]  = "blob";
-    static constexpr char KEY_VER[]   = "ver";
+    static constexpr char TAG[]        = "CFG";
+    static constexpr char NAMESPACE[]  = "aimcfg";
+    static constexpr char KEY_BLOB[]   = "blob";
+    static constexpr char KEY_VER[]    = "ver";
+    static constexpr char KEY_WDT_CNT[] = "wdtcnt";
 
     SemaphoreHandle_t  _mutex    = nullptr; // guards _blob (from app_main)
     SemaphoreHandle_t  _nvsMutex = nullptr; // serialises the NVS handle

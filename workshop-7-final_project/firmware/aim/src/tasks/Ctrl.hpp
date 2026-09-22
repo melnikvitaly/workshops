@@ -9,6 +9,8 @@
 #include <freertos/queue.h>
 #include <esp_timer.h>
 #include <esp_log.h>
+#include <esp_task_wdt.h>
+#include <driver/gpio.h>
 
 #include "Ipc.hpp"
 #include "CmdQueue.hpp"
@@ -19,6 +21,7 @@
 #include "Safety.hpp"
 #include "ITransport.hpp"
 #include "Ndjson.hpp"
+#include "PerfStat.hpp"
 
 #include "PWM.hpp"
 #include "Servo.hpp"
@@ -52,6 +55,8 @@ public:
     // Hardware + config-derived setup. Runs in app_main, before the task starts.
     void init()
     {
+        initScopePin(); // logic-analyser probe, toggled across step()
+
         _gimbal.init();      // parks at the working-zone centre
         _laser.init();       // boot-safe: gate driven inactive before it is an output
 
@@ -70,6 +75,10 @@ public:
 
     void run()
     {
+        // step() is non-blocking and runs every 20 ms, comfortably inside the
+        // 1 s TWDT timeout - feed it right after step() below.
+        ESP_ERROR_CHECK(esp_task_wdt_add(nullptr));
+
         _sm.set(State::SelfTest, "boot");
         if (!selfTest())
         {
@@ -90,6 +99,7 @@ public:
         for (;;)
         {
             step();
+            esp_task_wdt_reset();
             vTaskDelayUntil(&last, pdMS_TO_TICKS(config::UPDATE_PERIOD_MS));
         }
     }
@@ -99,9 +109,25 @@ private:
 
     static uint32_t nowMs() { return pdTICKS_TO_MS(xTaskGetTickCount()); }
 
+    // SCOPE (GPIO47) is driven high for the duration of step() and nothing
+    // else, so a logic analyser sees the control step's real wall-clock cost
+    // - queue drains, the FSM dispatch and the PID all included - as one
+    // pulse per 20 ms tick.
+    static void initScopePin()
+    {
+        gpio_config_t io = {};
+        io.pin_bit_mask = 1ULL << pinout::SCOPE;
+        io.mode         = GPIO_MODE_OUTPUT;
+        gpio_config(&io);
+        gpio_set_level(pinout::SCOPE, 0);
+    }
+
     // --- one control step --------------------------------------------------
     void step()
     {
+        gpio_set_level(pinout::SCOPE, 1);
+        ScopedPerf _perf(_ipc.perf.pidStep);
+
         const uint32_t now = nowMs();
 
         _ipc.config->snapshot(_cfg);
@@ -132,6 +158,8 @@ private:
         updateLaser();
         _ipc.pidRuns.store(_autoChannel.pidRuns());
         pushLog(now);
+
+        gpio_set_level(pinout::SCOPE, 0);
     }
 
     // Task #10 (F-19) makes this a real gate: I2C scan, SD mount, servo sweep,

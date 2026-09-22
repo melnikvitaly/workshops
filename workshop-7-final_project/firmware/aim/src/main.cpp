@@ -9,6 +9,7 @@
 #include <esp_log.h>
 #include <esp_rom_sys.h>
 #include <esp_heap_caps.h>
+#include <esp_task_wdt.h>
 
 #include "Config.hpp"
 #include "Pinout.hpp"
@@ -109,14 +110,23 @@ static const char *resetReasonStr(esp_reset_reason_t r)
     }
 }
 
-static void emitBootEvent(bool usedDefaults)
+// A hardware/software watchdog reset, as opposed to a plain power-on or SW
+// (esp_restart()) reset. ESP_RST_PANIC is deliberately excluded here -
+// it also fires for asserts/aborts unrelated to a stalled task, so it is not
+// a reliable "the watchdog got us" signal even though TWDT itself panics.
+static bool isWatchdogReset(esp_reset_reason_t r)
+{
+    return r == ESP_RST_TASK_WDT || r == ESP_RST_INT_WDT || r == ESP_RST_WDT;
+}
+
+static void emitBootEvent(bool usedDefaults, uint32_t wdtResets)
 {
     const char *reason = resetReasonStr(esp_reset_reason());
 
     char line[160];
     std::snprintf(line, sizeof(line),
-                  "{\"t\":\"evt\",\"e\":\"boot\",\"up\":0,\"reason\":\"%s\",\"ver\":%u,\"wdt_resets\":0}",
-                  reason, (unsigned)config::SCHEMA_VERSION);
+                  "{\"t\":\"evt\",\"e\":\"boot\",\"up\":0,\"reason\":\"%s\",\"ver\":%u,\"wdt_resets\":%lu}",
+                  reason, (unsigned)config::SCHEMA_VERSION, (unsigned long)wdtResets);
     ndjson::seal(line, sizeof(line));
     uart.writeLine(line);
 
@@ -146,6 +156,18 @@ extern "C" void app_main(void)
 
     ESP_ERROR_CHECK(heap_caps_register_failed_alloc_callback(onHeapAllocFailed));
 
+    // ~1 s TWDT. ctrl and safety subscribe themselves at the top of their own
+    // run() (tasks/Ctrl.hpp, tasks/Safety.hpp); this just sets the timeout and
+    // turns a timeout into a panic-reset instead of a warning - a stalled
+    // task must reset the board, not leave it wedged with the laser possibly
+    // still lit.
+    const esp_task_wdt_config_t twdtConfig = {
+        .timeout_ms     = config::WDT_TIMEOUT_MS,
+        .idle_core_mask = (1u << 0) | (1u << 1), // both cores' idle tasks
+        .trigger_panic  = true,
+    };
+    ESP_ERROR_CHECK(esp_task_wdt_reconfigure(&twdtConfig));
+
     esp_err_t nvs = nvs_flash_init();
     if (nvs == ESP_ERR_NVS_NO_FREE_PAGES || nvs == ESP_ERR_NVS_NEW_VERSION_FOUND)
     {
@@ -160,6 +182,24 @@ extern "C" void app_main(void)
     ipc.cfgMutex = xSemaphoreCreateMutexStatic(&s_cfgMutexBuf);
     const bool usedDefaults = configStore.load(ipc.cfgMutex);
     ipc.config = &configStore;
+
+    // A watchdog reset means ctrl or safety hung mid-loop, possibly while
+    // armed. Never resume tracking silently - force the channel back to
+    // NONE (persisted, same path as an NDJSON cfg.set) so an operator has to
+    // consciously re-arm. The FSM itself always boots into SELFTEST then
+    // DISARMED/ZONE_TOUR regardless (see StateMachine.hpp / Ctrl::run), so
+    // this only has to answer for the *channel*, not the state.
+    const esp_reset_reason_t resetReason = esp_reset_reason();
+    uint32_t                 wdtResets   = configStore.wdtResetCount();
+    if (isWatchdogReset(resetReason))
+    {
+        wdtResets = configStore.bumpWdtResetCount();
+        const ConfigStore::Result r =
+            configStore.set("input.channel", ConfigStore::Value::string("NONE"));
+        ESP_LOGW(TAG, "watchdog reset (reason=%s) - channel forced to NONE (%s), wdt_resets=%lu",
+                 resetReasonStr(resetReason), r.ok ? "ok" : (r.err ? r.err : "?"),
+                 (unsigned long)wdtResets);
+    }
 
     uart.setCounters(&ipc.overlong, &ipc.uartErr);
     uart.init();
@@ -177,7 +217,7 @@ extern "C" void app_main(void)
         &SafetyTask::entry, "safety", config::STACK_SAFETY, &safetyTask,
         config::PRIO_SAFETY, s_safetyStack, &s_safetyTcb, config::CORE_SAFETY);
     installEstopIsr(ipc);
-    emitBootEvent(usedDefaults);
+    emitBootEvent(usedDefaults, wdtResets);
 
     s_hLogger = xTaskCreateStaticPinnedToCore(
         &LoggerTask::entry, "logger", config::STACK_LOGGER, &loggerTask,
@@ -192,10 +232,18 @@ extern "C" void app_main(void)
         &CtrlTask::entry, "ctrl", config::STACK_CTRL, &ctrlTask,
         config::PRIO_CTRL, s_ctrlStack, &s_ctrlTcb, config::CORE_CTRL);
 
+    // Published for ui's 1 Hz CPU% / stack high-water report. Set once,
+    // after every task exists - ui's report guards against a null handle so
+    // it can never race this assignment.
+    ipc.ctrlTask   = s_hCtrl;
+    ipc.linkTask   = s_hLink;
+    ipc.loggerTask = s_hLogger;
+    ipc.uiTask     = s_hUi;
+
     ESP_LOGI(TAG, "tasks up - ctrl@c%d/p%d, safety@c%d/p%d, io tasks@c%d",
              config::CORE_CTRL, config::PRIO_CTRL, config::CORE_SAFETY, config::PRIO_SAFETY,
              config::CORE_IO);
 
     vTaskDelay(pdMS_TO_TICKS(3000)); // let the tasks reach steady state
-    dumpStackHighWater();            // one-shot; 1 Hz logging is task #5
+    dumpStackHighWater();            // one-shot early read; ui repeats this at 1 Hz
 }

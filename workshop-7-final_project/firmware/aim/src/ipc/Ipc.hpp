@@ -5,6 +5,7 @@
 #include <freertos/semphr.h>
 #include <freertos/task.h>
 #include "StateMachine.hpp"
+#include "PerfStat.hpp"
 
 // Shared handles and cross-task state, created once in app_main and passed to
 // every task by pointer.
@@ -23,8 +24,8 @@ struct Ipc
     TaskHandle_t      safetyTask = nullptr; // target of the E-stop notification
 
     // Set once in app_main as each task is created. ui reads all five for the
-    // 1 Hz CPU% / stack high-water report (task #5) - nullptr until app_main
-    // finishes creating them.
+    // 1 Hz CPU% / stack high-water report - nullptr until app_main finishes
+    // creating them.
     TaskHandle_t ctrlTask   = nullptr;
     TaskHandle_t linkTask   = nullptr;
     TaskHandle_t loggerTask = nullptr;
@@ -77,4 +78,27 @@ struct Ipc
         uint32_t writeP95LatencyUs = 0;
     };
     Sd sd{};
+
+    // Performance instrumentation: esp_timer_get_time() spans around the
+    // control step, one incoming line, and one OLED render. Single writer
+    // each (ctrl / link_uart / ui) - same no-lock rule as TelemSample and Sd
+    // above.
+    struct Perf
+    {
+        PerfStat pidStep;    // writer: ctrl      - CtrlTask::step()
+        PerfStat frameParse; // writer: link_uart - one handleLine() call
+        PerfStat render;     // writer: ui         - Ui::render()
+    };
+    Perf perf{};
+
+    // Per-task CPU% (uxTaskGetSystemState) and the tightest stack
+    // high-water mark (uxTaskGetStackHighWaterMark) across the five tasks,
+    // refreshed at 1 Hz. Single writer (ui, the only task with every task
+    // handle - see below), lossy reader (link_uart, for tlm.sys).
+    struct TaskLoad
+    {
+        float    cpuCtrl = 0, cpuLogger = 0, cpuUi = 0, cpuIdle = 0;
+        uint32_t stackMinWords = 0;
+    };
+    TaskLoad taskLoad{};
 };

@@ -16,6 +16,7 @@ is in [`../README.md`](../README.md).
 5. [Configuration and storage](#5-configuration-and-storage)
 6. [Control](#6-control)
 7. [Safety](#7-safety)
+8. [Performance instrumentation](#8-performance-instrumentation)
 
 ---
 
@@ -80,7 +81,7 @@ AIM       ESP32-S3    firmware/aim/
 | Task | Core | Prio | Period | Owns | Talks via |
 |------|------|------|--------|------|-----------|
 | `ctrl` | 1 | high | 20 ms, `vTaskDelayUntil` | PIDs, gimbal, servo PWM | reads `cmd_q`, writes `log_q` |
-| `safety` | 1 | realtime | blocks on notify | E-stop, laser interlock, WDT arbiter | ISR → task notification |
+| `safety` | 1 | realtime | bounded wait (250 ms), notify or timeout | E-stop, laser interlock, TWDT subscriber | ISR → task notification |
 | `link_uart` | 0 | normal | event | UART1 RX/TX, framing | writes `cmd_q` |
 | `logger` | 0 | **low** | drains `log_q` | SD card, FatFs | reads `log_q` |
 | `ui` | 0 | low | 100 ms | OLED render | reads shared state under mutex |
@@ -95,6 +96,10 @@ Rules that make this structure work, and that the write-up must state explicitly
 - **Config is guarded by a mutex.** `ctrl` takes a local copy at the top of each
   step and never holds the mutex across the PID.
 - **E-stop is ISR → `vTaskNotifyGiveFromISR` → `safety`.** No work in the ISR.
+- **`ctrl` and `safety` subscribe to the task watchdog (TWDT), ~1 s, panic on
+  timeout.** `ctrl` feeds it every 20 ms step; `safety` no longer blocks
+  `portMAX_DELAY` on the E-stop notify — it waits in 250 ms slices so it can
+  feed the TWDT between notifications. See §7.
 - **Static allocation** (`xQueueCreateStatic`, `xTaskCreateStatic`), plus
   `vApplicationMallocFailedHook` and `vApplicationStackOverflowHook`. No `malloc`
   after init, never in an ISR.
@@ -165,22 +170,11 @@ no line merely *starting* with `F` can trigger a shot.
 
 ### Wire formats
 
-Split by traffic class:
-
-| Class | Path | Format |
-|-------|------|--------|
-| Control (error vector, at frame rate) | UART1 | compact ASCII — `E <dx> <dy> <valid>` |
-| Config, commands, telemetry | UART1 | **NDJSON**, one object per line |
-
-The framing contract, which is required in writing:
-
-- **Maximum line length 256 bytes.** Overflow → discard to the next newline and
-  **count it**. Never grow the buffer, never truncate-and-parse.
-- Every numeric field range-checked before use. `NaN` and `inf` rejected explicitly
-  — a `NaN` error reaching the PID poisons the integrator permanently.
-- **CRC-8 on NDJSON lines.** Mismatches counted, not fatal.
-- Counters (`bad_crc`, `overlong`, `unparsed`, `out_of_range`) exposed in telemetry
-  and on the OLED.
+Two traffic classes share UART1: compact ASCII for the control path (frame
+rate), NDJSON for everything else. The full grammar, the 256-byte line cap,
+range checks and the CRC-8 are specified in
+[`protocol.md`](./protocol.md) — this document is the wire contract's
+source of truth.
 
 ---
 
@@ -419,6 +413,143 @@ a level, so the pin is briefly driven into the energised state.
 as an output, and an internal pull-up so the pre-`init()` window rests off. About
 five lines, and it removes the code-side path entirely.
 
-The interlock: the beam may be lit only when **all** of — state is `ARMED`,
-link fresh, WDT healthy, no E-stop latch, beam requested — hold. One
-`bool laserPermitted()` in the `safety` task, with the reason for any denial logged.
+The interlock: the beam may be lit only when **all** of — state is `ARMED` (or
+`ZONE_TOUR`), link fresh, no E-stop latch — hold. One `bool laserPermitted()`
+in `tasks/Safety.hpp`, read by `ctrl` and `ui`, with the reason for any denial
+logged.
+
+### Watchdog ⟦5.1⟧
+
+`ctrl` and `safety` subscribe to `esp_task_wdt`, reconfigured at boot to a
+~1 s timeout with `trigger_panic = true`. A "WDT healthy" term never needs a
+place in `laserPermitted()`: a stalled task trips the watchdog and resets the
+whole board, so there is no state where the loop is wedged but the laser
+stays lit — the interlock only ever has to reason about a system that is
+either running normally or rebooting.
+
+- `main.cpp` logs `esp_reset_reason()` on every boot (`evt boot` line +
+  `LOG.CSV` `BOOT` marker) and, on a reset caused by the TWDT or the
+  interrupt/hardware WDT, increments a counter persisted in NVS
+  (`ConfigStore::bumpWdtResetCount()`, key separate from the versioned config
+  blob) and reports it as `wdt_resets` in the boot event.
+- The same watchdog-reset branch forces `input.channel` back to `NONE`
+  (through the normal `ConfigStore::set` path, so it persists) before `ctrl`
+  ever reads its first config snapshot. The FSM already always boots into
+  `SELFTEST` → `DISARMED`/`ZONE_TOUR` regardless of the reset reason, so this
+  is what stops tracking from resuming unattended after a crash — an operator
+  has to re-select a channel and re-arm.
+
+---
+
+## 8. Performance instrumentation
+
+### The data path — one copy of the error at a time
+
+Every hop the error vector makes between the camera sensor and the servo horn,
+in order:
+
+1. The OAK-1 sensor captures a frame; DepthAI moves it over USB into `tracker.py`
+   on the PC.
+2. `dots.py` runs the red-dot and black-dot detectors on that frame (host-side
+   OpenCV) and computes `error = target_position − laser_dot_position`,
+   normalised to `[-1, 1]`.
+3. `serial_link.py` formats the error as the compact ASCII frame
+   `E <dx> <dy> <valid>` and writes it to UART1.
+4. `AIM`'s `link_uart` task reads the line, and `protocol::parse()` tokenises
+   and range-checks it into a `protocol::Frame` (§3).
+5. `handleAscii()` turns the `Frame` into a `CmdItem` and copies it onto
+   `cmd_q`.
+6. `ctrl` drains `cmd_q`; `AutoChannel::onErrorSample()` copies the vector
+   into its own `_error` member, sign-corrected for the mounting
+   (`PAN_INVERT`/`TILT_INVERT`).
+7. `AutoChannel::update()` runs each axis's `Pid::update(error, dt)`, turning
+   the error into a commanded rate in deg/s.
+8. `Gimbal::setVelocity()` clamps the rate to the hardware ceiling;
+   `Gimbal::update()` integrates it into a target angle and calls
+   `Servo::write(angle)`, clamped to the working zone.
+9. `Servo::write()` maps the angle linearly to a pulse width in microseconds
+   and calls `PWM::writeMicroseconds()`, which converts that to an LEDC duty
+   count and programs it with `ledc_set_duty()`/`ledc_update_duty()`.
+10. The LEDC peripheral free-runs the 50 Hz waveform in hardware from that
+    duty count alone — no further CPU involvement until the next update — and
+    the servo horn moves. The next captured frame closes the loop.
+
+Steps 4–5 are the `link_uart` span instrumented below as **parse**; steps
+6–9, run inside one `ctrl` step, are the **pid** span — the same span the
+`SCOPE` GPIO brackets, so the software timing and the logic-analyser trace
+describe the identical piece of work.
+
+### Timer and hardware-event configuration
+
+Two hardware time sources are in use, and nothing else generates a periodic
+interrupt in Phase 0:
+
+- **LEDC** drives both servos: `LEDC_TIMER_0`, `LEDC_LOW_SPEED_MODE`, 50 Hz,
+  `LEDC_TIMER_16_BIT` resolution, one channel per axis (`LEDC_CHANNEL_0`
+  pan, `LEDC_CHANNEL_1` tilt) — full detail in
+  [`interfaces.md` §5](./interfaces.md#5-ledc--servo-pwm). Once
+  `ledc_set_duty`/`ledc_update_duty` programs a duty count, the peripheral
+  free-runs the waveform in hardware; `ctrl` never touches it again until the
+  next control step changes the angle.
+- **`esp_timer`** is the one clock every timestamp in the firmware reads:
+  every `t_mono_us`/`up` field on the wire and in `LOG.CSV`, and every span
+  below, is `esp_timer_get_time()` — a free-running 64-bit microsecond
+  counter, read on demand from ordinary task code. Nothing schedules an
+  `esp_timer` callback or alarm anywhere in Phase 0; every use is a snapshot,
+  never a timer ISR. `CONFIG_FREERTOS_RUN_TIME_STATS_USING_ESP_TIMER` wires
+  FreeRTOS's own per-task runtime accounting (§8.2 below) to the same
+  counter, so every "when" and "how long" figure the firmware produces
+  shares one clock.
+
+### 8.1 Step timing — `esp_timer_get_time()` spans
+
+Three spans are timed with a scope-exit sampler (`ScopedPerf`,
+`utils/PerfStat.hpp`) that tracks min, max and an EWMA (α = 0.2) in
+microseconds, never resetting — the same "worst case ever, plus a live
+trend" shape as the SD write-latency stats in §5:
+
+| Span | Task | What it covers | `tlm.perf` key |
+|---|---|---|---|
+| `pid` | `ctrl` | One whole `step()` — queue drain, FSM dispatch, the PID, the gimbal integration | `pid` |
+| `parse` | `link_uart` | One `handleLine()` call — NDJSON or ASCII, whichever the line is | `parse` |
+| `render` | `ui` | One `Ui::render()` — building and flushing the OLED frame | `render` |
+
+`link_uart` publishes all three at 1 Hz as `tlm.perf`, a message of its own
+rather than folded into `tlm.sys` — the same reason `tlm`, `tlm.sd` and
+`tlm.sys` are already split: one object carrying everything would not fit
+the 256-byte line cap
+([`protocol.md` §3.4](./protocol.md#34-telemetry-and-events)).
+
+### 8.2 Per-task CPU% and stack high-water
+
+`ui` — the one task `Ipc` collects every task handle into — calls
+`uxTaskGetSystemState()` once a second, requiring
+`CONFIG_FREERTOS_USE_TRACE_FACILITY` and
+`CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS` (`sdkconfig.defaults`). For each of
+the five tasks it computes that task's share of the runtime-counter delta
+since the previous second — summed across both cores, so busy time across
+every task (both idle tasks included) always totals to ~100% regardless of
+core count — and reads `uxTaskGetStackHighWaterMark()` for the same five.
+
+All five tasks' CPU% and stack high-water are logged locally with `ESP_LOGI`
+every second, per [`coding.md`](./coding.md#memory). Only `ctrl`, `logger`,
+`ui` and the idle remainder go out over the wire in `tlm.sys.cpu` — `safety`
+and `link_uart` sit near 0% in normal operation and are left off the wire
+message to keep its byte budget for the rest of it — alongside
+`tlm.sys.stack_min`, the tightest of the five high-water marks. That is
+deliberately the one number worth alarming on remotely: whichever task is
+closest to a stack overflow, not which one.
+
+### 8.3 The `SCOPE` probe
+
+`GPIO47` (`pinout::SCOPE`) is driven high for the exact duration of `ctrl`'s
+`step()` and low otherwise — nothing else touches it — so a logic analyser
+sees one pulse per 20 ms control tick whose width is the real wall-clock cost
+of the same span the `pid` entry in `tlm.perf` measures in software.
+
+**Pending:** the code is in place
+(`CtrlTask::initScopePin()` in
+[`Ctrl.hpp`](../firmware/aim/src/tasks/Ctrl.hpp)), but no capture has been
+taken yet — that needs the board on the bench with a logic analyser clipped
+to `GPIO47`, which this pass did not have access to. The screenshot belongs
+in [`../README.md`](../README.md) once it exists.

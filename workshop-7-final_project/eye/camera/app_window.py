@@ -200,7 +200,7 @@ class AppWindow:
         self.sliders = thresholds.build(parent)
         self.sliders.pack(fill="x", padx=8, pady=(6, 0))
 
-        self.error_graph = ErrorGraphWindow(parent)
+        self.error_graph = ErrorGraphWindow(parent, gains_label=self.controls.gains_label)
         self.error_graph.frame.pack(fill="both", expand=True, padx=8, pady=8)
         # Let the plot shrink to the panel instead of forcing it wide.
         self.error_graph.canvas.get_tk_widget().config(width=200, height=160)

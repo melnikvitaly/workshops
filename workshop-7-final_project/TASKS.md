@@ -91,34 +91,34 @@ Nodes: `EYE` + `AIM`. Ends on a fixed date (**still unset — decide this first*
 
 ### 5. Performance instrumentation ⟦2.5 6.1 6.3 6.4⟧
 
-- [ ] `esp_timer_get_time()` around the PID step, frame parse and render; min / max / EWMA ⟦6.1⟧
-- [ ] `CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS` + `uxTaskGetSystemState()` → per-task CPU % ⟦6.4⟧
-- [ ] `uxTaskGetStackHighWaterMark()` per task, logged at 1 Hz
-- [ ] Toggle a spare GPIO across the control step; capture on the logic analyser, put the screenshot in the README ⟦6.1⟧
-- [ ] Write the "data path" paragraph — every copy from camera pixel to servo angle ⟦6.3⟧
-- [ ] State the timer/hardware-event configuration explicitly (LEDC, `esp_timer`) ⟦2.5⟧
+- [x] `esp_timer_get_time()` around the PID step, frame parse and render; min / max / EWMA ⟦6.1⟧
+- [x] `CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS` + `uxTaskGetSystemState()` → per-task CPU % ⟦6.4⟧
+- [x] `uxTaskGetStackHighWaterMark()` per task, logged at 1 Hz
+- [ ] Toggle a spare GPIO across the control step; capture on the logic analyser, put the screenshot in the README ⟦6.1⟧ — toggle done in code, capture still pending bench access
+- [x] Write the "data path" paragraph — every copy from camera pixel to servo angle ⟦6.3⟧
+- [x] State the timer/hardware-event configuration explicitly (LEDC, `esp_timer`) ⟦2.5⟧
 - [x] Say **why not** DMA on UART1 — 6.2 rewards judgement, not usage
 
 ### 6. Watchdog *(pulled forward — one evening, worth a full item)* ⟦5.1⟧
 
-- [ ] `esp_task_wdt` with `ctrl` and `safety` **subscribed**, ~1 s timeout ⟦5.1⟧
-- [ ] Log `esp_reset_reason()` at boot
-- [ ] Persist a WDT-reset counter in NVS
-- [ ] Laser comes up **off**/**DISARMED** after any watchdog reset
+- [x] `esp_task_wdt` with `ctrl` and `safety` **subscribed**, ~1 s timeout ⟦5.1⟧
+- [x] Log `esp_reset_reason()` at boot
+- [x] Persist a WDT-reset counter in NVS
+- [x] Laser comes up **off**/**DISARMED** after any watchdog reset
 
 ### 7. Documentation ⟦8.1 8.2 8.3 8.4 8.5 1.4 3.4⟧
 
 > S-04 #3, which you accepted: written *before* the port it changes the port;
 > written after, it is transcription.
 
-- [ ] `README.md` — problem, what it does, quick start ⟦8.1 8.4⟧
-- [ ] `docs/architecture.md` — node roles, task table, FSM, data path, decisions ⟦8.3⟧
-- [ ] Mermaid block diagram + FSM diagram ⟦8.2 1.4⟧
-- [ ] **Name which variables cross task boundaries and what protects each one** ⟦3.4⟧
+- [x] `README.md` — problem, what it does, quick start ⟦8.1 8.4⟧
+- [x] `docs/architecture.md` — node roles, task table, FSM, data path, decisions ⟦8.3⟧
+- [x] Mermaid block diagram + FSM diagram ⟦8.2 1.4⟧
+- [x] **Name which variables cross task boundaries and what protects each one** ⟦3.4⟧
 - [x] `docs/interfaces.md` — every interface: pins, speed, **why chosen**, failure behaviour ⟦8.5⟧
 - [x] `docs/protocol.md` — control ASCII + NDJSON framing and the config plane (MQTT topics land in Phase 1) ⟦8.5⟧
-- [ ] `docs/bringup.md` — flash order, first-run checks, expected LED/OLED states ⟦8.4⟧
-- [ ] Document the clamps, anti-windup and the `static_assert` — an examiner will not find them in `Config.hpp` ⟦4.4⟧
+- [x] `docs/bringup.md` — flash order, first-run checks, expected LED/OLED states ⟦8.4⟧
+- [x] Document the clamps, anti-windup and the `static_assert` — an examiner will not find them in `Config.hpp` ⟦4.4⟧
 
 ### 8. Schematic — the `AIM` board ⟦7.1 7.3⟧
 

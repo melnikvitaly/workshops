@@ -74,7 +74,7 @@ its edge; the tuning panel on the right starts folded.
 |--------|-------------------------------------------------------------------------------------------------|
 | Left   | the settings: telemetry, channel, PID gain table + presets, working zone, nudge, status         |
 | Middle | the camera view, and under it **FIRE**, keyboard drive and the action buttons (see below)       |
-| Right  | **Debug view**, the mask image, the red / black threshold sliders, the tracking-error graph     |
+| Right  | **Debug view**, the mask image, the red / black threshold sliders, the tracking-error graph, **Pin left edge** / **Snapshot** |
 
 Under the view: **FIRE** (red border colour = on target, green = converging),
 **Keyboard drive**, **Arm / Disarm (CONTROL)**, **Center**, **Start Zone Tour**
@@ -101,6 +101,24 @@ time, in the direction it moves on screen even under `--rotate`; with no dot yet
 the first arrow puts one at the frame centre. While keyboard `MANUAL` drive is
 engaged, the arrow keys drive the gimbal instead (see below) and no longer
 touch the simulated target.
+
+### The tracking-error graph
+
+The right panel plots pan/tilt error against sample number. By default it
+slides, always showing the last 300 samples.
+
+- **Pin left edge** — freezes the left edge at whatever sample is on screen
+  when you tick it. New samples keep growing the plot to the right instead of
+  scrolling old ones off, so a whole run stays visible from that point.
+  Untick to go back to the sliding 300-sample window. The plot still keeps
+  20000 samples in memory; past that the pinned edge follows the oldest
+  sample still held.
+- **Snapshot** — saves the plot as a PNG into `eye/camera/snapshots/`
+  (git-ignored), named with the date/time and the pan/tilt gains last sent
+  with **Apply** in the left panel (`gains-unset` if none have been applied
+  yet), e.g. `error_20260922-143012_pan-P40-I4-D6_tilt-P35-I4-D5.png`. The
+  same gains and timestamp are also written into the saved image's title, so
+  the file is self-describing once it leaves this folder.
 
 ### Driving the gimbal from the keyboard
 

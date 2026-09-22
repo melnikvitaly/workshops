@@ -9,6 +9,7 @@ sdkconfig.old
 __pycache__/
 .venv/
 .cache/
+eye/camera/snapshots/
 
 # Editor / tooling
 node_modules/

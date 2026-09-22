@@ -1,7 +1,0 @@
-flowchart LR
-    camera([Camera]) --> EYE["EYE (PC)<br/>find laser dot + target"]
-    EYE -->|"error vector<br/>UART1"| AIM["AIM (ESP32-S3)<br/>PID per axis"]
-    AIM -->|velocity| GIMBAL[Gimbal]
-    GIMBAL --> SERVOS([Servos + laser])
-    SERVOS -.->|dot moves| camera
-    AIM --> SD([SD card log])

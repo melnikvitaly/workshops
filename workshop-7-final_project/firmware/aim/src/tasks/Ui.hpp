@@ -14,6 +14,7 @@
 #include "Pinout.hpp"
 #include "ITransport.hpp"
 #include "Ndjson.hpp"
+#include "PerfStat.hpp"
 
 #include "Button.h"
 #include "StatusLed.hpp"
@@ -70,6 +71,14 @@ public:
                 n = 0;
                 render();
             }
+
+            const uint32_t now = pdTICKS_TO_MS(xTaskGetTickCount());
+            if (now - _lastPerfMs >= PERF_PERIOD_MS)
+            {
+                _lastPerfMs = now;
+                reportTaskLoad();
+            }
+
             vTaskDelayUntil(&last, pdMS_TO_TICKS(POLL_MS));
         }
     }
@@ -79,6 +88,9 @@ private:
     static constexpr uint32_t POLL_MS      = 20; // 50 Hz button poll
     static constexpr uint8_t  RENDER_EVERY = 5;  // -> 100 ms OLED refresh
     static constexpr uint8_t  BLINK_TICKS  = 8;  // 160 ms per LED blink phase
+    static constexpr uint32_t PERF_PERIOD_MS = 1000; // CPU% / stack report period
+    static constexpr int      LOAD_TASK_COUNT = 5;    // safety, ctrl, link_uart, logger, ui
+    static constexpr int      MAX_SYSTEM_TASKS = 16;  // headroom over 5 app + 2 idle + system tasks
 
     // --- buttons -> actions ------------------------------------------------
     void cycleChannel(config::Channel next)
@@ -169,11 +181,77 @@ private:
         }
     }
 
+    // --- performance instrumentation -----------------------------------------
+    //
+    // uxTaskGetSystemState() needs every task's handle; ui is the one task
+    // Ipc collects all five into (see Ipc.hpp), so it is the one that
+    // computes this and publishes ipc.taskLoad for link_uart's tlm.sys.
+    // Percentages are each task's share of *total* runtime-counter ticks
+    // summed across both cores, so busy+idle across every task (including
+    // both IDLE0/IDLE1) always sums to ~100% regardless of core count -
+    // "idle" below is simply the remainder, not a named task lookup.
+    void reportTaskLoad()
+    {
+        const TaskHandle_t handles[LOAD_TASK_COUNT] = {
+            _ipc.safetyTask, _ipc.ctrlTask, _ipc.linkTask, _ipc.loggerTask, _ipc.uiTask,
+        };
+        for (TaskHandle_t h : handles)
+            if (!h)
+                return; // main.cpp has not finished publishing the handles yet
+
+        static TaskStatus_t status[MAX_SYSTEM_TASKS];
+        uint32_t             totalRuntime = 0;
+        const UBaseType_t    n = uxTaskGetSystemState(status, MAX_SYSTEM_TASKS, &totalRuntime);
+
+        static const char *NAMES[LOAD_TASK_COUNT] =
+            {"safety", "ctrl", "link_uart", "logger", "ui"};
+
+        uint32_t rt[LOAD_TASK_COUNT]  = {0};
+        uint32_t hwm[LOAD_TASK_COUNT] = {0};
+        for (UBaseType_t i = 0; i < n; ++i)
+            for (int t = 0; t < LOAD_TASK_COUNT; ++t)
+                if (status[i].xHandle == handles[t])
+                {
+                    rt[t]  = status[i].ulRunTimeCounter;
+                    hwm[t] = (uint32_t)status[i].usStackHighWaterMark;
+                }
+
+        const uint32_t dTotal = totalRuntime - _prevTotalRt;
+        _prevTotalRt = totalRuntime;
+
+        float    pct[LOAD_TASK_COUNT];
+        float    known  = 0.0f;
+        uint32_t minHwm = UINT32_MAX;
+        for (int t = 0; t < LOAD_TASK_COUNT; ++t)
+        {
+            const uint32_t d = rt[t] - _prevRt[t];
+            _prevRt[t] = rt[t];
+            pct[t]     = dTotal ? (100.0f * (float)d / (float)dTotal) : 0.0f;
+            known += pct[t];
+            if (hwm[t] < minHwm)
+                minHwm = hwm[t];
+            ESP_LOGI(TAG, "cpu %-9s %5.1f%%  stack free %lu words",
+                     NAMES[t], (double)pct[t], (unsigned long)hwm[t]);
+        }
+        const float idle = known < 100.0f ? 100.0f - known : 0.0f;
+        ESP_LOGI(TAG, "cpu %-9s %5.1f%%", "idle", (double)idle);
+
+        // ctrl/logger/ui + idle only - safety and link_uart stay console-only
+        // (both near-0% in normal operation), to leave the wire message's
+        // 256-byte line cap room for the rest of it.
+        _ipc.taskLoad.cpuCtrl       = pct[1];
+        _ipc.taskLoad.cpuLogger     = pct[3];
+        _ipc.taskLoad.cpuUi         = pct[4];
+        _ipc.taskLoad.cpuIdle       = idle;
+        _ipc.taskLoad.stackMinWords = (minHwm == UINT32_MAX) ? 0 : minHwm;
+    }
+
     // --- OLED ------------------------------------------------------------------
     void render()
     {
         if (!_oledOk)
             return;
+        ScopedPerf _perf(_ipc.perf.render);
 
         config::ConfigBlob c;
         _ipc.config->snapshot(c);
@@ -234,4 +312,8 @@ private:
     uint8_t     _blinkTickAcc    = 0;
     bool        _blinkOn         = false;
     config::Rgb _blinkColour{0, 0, 0};
+
+    uint32_t _lastPerfMs   = 0;
+    uint32_t _prevTotalRt  = 0;
+    uint32_t _prevRt[LOAD_TASK_COUNT] = {0};
 };

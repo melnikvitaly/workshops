@@ -282,6 +282,19 @@ namespace config
     constexpr int CORE_SAFETY    = 1;
     constexpr int CORE_IO        = 0;  // link_uart, ui, logger
 
+    // --- Watchdog --------------------------------------------------------------
+    // ctrl (hard 20 ms loop) and safety (blocks on the E-stop notify) are the
+    // two tasks whose stall would leave the gimbal/laser in an unknown state,
+    // so they are the ones subscribed to esp_task_wdt - see tasks/Ctrl.hpp and
+    // tasks/Safety.hpp. Reconfigured at boot with trigger_panic=true: a stall
+    // resets the board outright rather than leaving it wedged with the laser
+    // possibly still lit.
+    constexpr uint32_t WDT_TIMEOUT_MS = 1000;
+    // How often safety re-arms the watchdog while idle-waiting on the E-stop
+    // notification - well under WDT_TIMEOUT_MS so a scheduling hiccup alone
+    // never trips it.
+    constexpr uint32_t WDT_SAFETY_FEED_MS = 250;
+
     // --- Queue depths --------------------------------------------------------
     constexpr int CMD_Q_LEN = 24;
     constexpr int LOG_Q_LEN = 64; // deep, drop-oldest with a counter

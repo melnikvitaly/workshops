@@ -124,19 +124,39 @@ Duty is written with `ledc_set_duty` + `ledc_update_duty` from `ctrl` only.
 
 ---
 
-## 6. USB — console and flash
+## 6. `esp_timer` — the monotonic clock
+
+| | |
+|---|---|
+| **API** | `esp_timer_get_time()` — free-running 64-bit microsecond counter |
+| **Mode** | Read-only snapshot. No `esp_timer` alarm or periodic callback is armed anywhere in Phase 0 |
+| **Used for** | Every `t_mono_us` / `up` timestamp (wire and `LOG.CSV`); the three `esp_timer_get_time()` spans in `tlm.perf`; the FreeRTOS runtime-stats counters behind `tlm.sys.cpu` (`CONFIG_FREERTOS_RUN_TIME_STATS_USING_ESP_TIMER`) |
+
+One clock backs every "when" and "how long" figure the firmware produces —
+see [`architecture.md` §8](./architecture.md#8-performance-instrumentation).
+
+---
+
+## 7. USB — console and flash
 
 Native USB on GPIO19/20, differential pair. UART0 on GPIO43/44 is the
 ESP-IDF console (`ESP_LOG` output only). **No data ever crosses UART0.**
 
 ---
 
-## 7. Laser gate
+## 8. Laser gate
 
 Gate pin is undriven from power-on until firmware configures it. Firmware
 calls `gpio_set_level()` to the inactive level **before** `gpio_config()`, and
 enables the internal pull-up.
 
-Interlock (in `safety`): beam may be lit only when state is `ARMED`, link is
-fresh, WDT is healthy, no E-stop latched, and beam is requested. Every denial
-is logged with its reason.
+Interlock (in `safety`): beam may be lit only when state is `ARMED` (or
+`ZONE_TOUR`), link is fresh, no E-stop latched, and beam is requested. Every
+denial is logged with its reason.
+
+`ctrl` and `safety` are subscribed to the ~1 s task watchdog
+(`esp_task_wdt`, panic-on-timeout, see [`architecture.md`
+§7](./architecture.md#7-safety)), so there is no runtime "WDT healthy" flag to
+check here: a stalled task resets the board instead. On a watchdog-caused
+reset, `input.channel` is forced to `NONE` at boot so tracking cannot resume
+without an operator re-arming.

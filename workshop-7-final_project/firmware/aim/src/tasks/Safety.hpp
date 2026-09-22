@@ -3,8 +3,10 @@
 #include <driver/gpio.h>
 #include <esp_attr.h>
 #include <esp_log.h>
+#include <esp_task_wdt.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include "Config.hpp"
 #include "Ipc.hpp"
 #include "Pinout.hpp"
 #include "StateMachine.hpp"
@@ -19,7 +21,11 @@
 // FAULT and emits the evt. Nothing here writes the UART or the FSM.
 
 // The laser interlock. Pure atomic reads, so ctrl and ui
-// can call it directly. The WDT-healthy term is added in task #6.
+// can call it directly. A "WDT-healthy" term is unnecessary here: ctrl or
+// safety stalling trips esp_task_wdt with trigger_panic=true
+// (see main.cpp), which resets the whole board rather than leaving it wedged
+// with the laser possibly still lit - there is no "alive but not feeding the
+// watchdog" state for this function to observe.
 //
 //   ZONE_TOUR - beam lit for the geometry check; there is no link needed
 //   ARMED     - beam lit only while the selected channel is fresh
@@ -77,11 +83,20 @@ public:
 
     void run()
     {
+        ESP_ERROR_CHECK(esp_task_wdt_add(nullptr));
         ESP_LOGI(TAG, "safety task up - waiting on E-stop");
         for (;;)
         {
-            // Blocks forever until the ISR or link_uart gives the notification.
-            ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+            // Bounded, not forever: a plain portMAX_DELAY wait would never
+            // let this task feed the TWDT it just subscribed to. The bound is
+            // well under WDT_TIMEOUT_MS, so a zero here (no notification yet)
+            // is the normal case, not a sign anything is wrong.
+            const uint32_t notified =
+                ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(config::WDT_SAFETY_FEED_MS));
+            esp_task_wdt_reset();
+            if (!notified)
+                continue;
+
             _ipc.estopLatched.store(true);
             ESP_LOGW(TAG, "E-STOP latched (src=%d)",
                      (int)_ipc.estopSource.load());

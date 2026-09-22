@@ -98,8 +98,11 @@ and the consequence here is a laser:
 - A rejected line is discarded whole. There is no partial application of a frame.
 
 `F` requests a shot; it does not fire one. The beam lights only if
-`laserPermitted()` in `safety` agrees — `ARMED`, link fresh, WDT healthy, no
-E-stop latched ([`interfaces.md` §7](./interfaces.md#7-laser-gate--the-boot-safe-requirement)).
+`laserPermitted()` in `safety` agrees — `ARMED` (or `ZONE_TOUR`), link fresh, no
+E-stop latched ([`interfaces.md` §8](./interfaces.md#8-laser-gate)). A stalled
+`ctrl`/`safety` never reaches this check in a half-alive state — both are on
+the ~1 s task watchdog, which resets the board outright on timeout (see
+[`architecture.md` §7](./architecture.md#7-safety)).
 
 ### 2.3 Range checks ⟦4.4⟧
 
@@ -294,17 +297,19 @@ rejects with `err:"readonly"`, since there is nothing to write:
 |---|---|---|---|
 | `tlm` | `AIM` → `EYE` | `telemetry.rate_hz` | Control sample — state, error, velocity, angles |
 | `tlm.sd` | `AIM` → `EYE` | 1 Hz | Storage health and write performance |
-| `tlm.sys` | `AIM` → `EYE` | 1 Hz | Link counters, PID rate, per-task CPU, heap, stack, WDT |
+| `tlm.sys` | `AIM` → `EYE` | 1 Hz | Link counters, PID rate, heap, per-task CPU, tightest stack margin, WDT |
+| `tlm.perf` | `AIM` → `EYE` | 1 Hz | min/max/EWMA timing of the control step, one line parse, one OLED render |
 | `evt` | `AIM` → `EYE` | on change | State transitions, faults, storage conditions, `BOOT` |
 | `estop` | either | on demand | Emergency stop — §4 |
 
-All three are gated on the `T` frame. Each line is shown here exactly as it goes
+All four are gated on the `T` frame. Each line is shown here exactly as it goes
 on the wire, with its real checksum:
 
 ```text
 {"t":"tlm","up":812345,"st":"ARMED","ch":"AUTO","ex":-0.031,"ey":0.012,"vp":-4.2,"vt":1.1,"pan":92.4,"tilt":78.1}*C8
 {"t":"tlm.sd","up":812345,"pres":1,"mnt":1,"full":0,"free":7861248,"werr":0,"drop":3,"qd":11,"bps":4096,"lmax":214000,"lp95":9100}*25
-{"t":"tlm.sys","up":812345,"link":{"bad_crc":0,"overlong":0,"unparsed":2,"oor":0,"drop_inact":17},"pid_hz":29.8,"cpu":{"ctrl":11,"logger":4,"ui":2,"idle":80},"heap":183240,"stack_min":1840,"wdt":0}*30
+{"t":"tlm.sys","up":812345,"link":{"bad_crc":0,"overlong":0,"unparsed":2,"oor":0,"drop_inact":17,"uart_err":0},"pid_hz":29.8,"heap":183240,"cpu":{"ctrl":11,"logger":4,"ui":2,"idle":80},"stack_min":1840,"wdt":0}*1C
+{"t":"tlm.perf","up":812345,"pid":{"min":180,"max":2400,"ema":420},"parse":{"min":40,"max":310,"ema":85},"render":{"min":900,"max":4100,"ema":1800}}*AC
 ```
 
 **Wire keys are abbreviated; the telemetry names are not.** The names in
@@ -325,13 +330,21 @@ by the real elapsed time. The PID runs once per fresh `E` frame, so this equals
 the camera frame rate the ESP actually receives. It reads `0.0` while the loop
 is idle (no target, not armed, or link lost).
 
-**Why three messages and not one.** A single object carrying all of this is 367
-bytes on the wire, and the line cap is 256 ⟦5.3⟧ — one telemetry sample would be
-discarded as `overlong` by its own receiver. Splitting it is also the better
-design: the control sample is the only part worth sending at frame rate, and
-health and system statistics change on the order of a second. As sent above the
-three lines are 117, 134 and 187 bytes, leaving room for fields to be added
-without revisiting the cap.
+**Why four messages and not one.** A single object carrying all of this would run
+well past the 256-byte line cap ⟦5.3⟧ — one telemetry sample would be discarded
+as `overlong` by its own receiver. Splitting it is also the better design: the
+control sample is the only part worth sending at frame rate, health and system
+statistics change on the order of a second, and step-timing (`tlm.perf`) is a
+third, independent concern from either. As sent above the four lines are 117,
+134, 213 and 151 bytes — comfortably under the cap, with room for more fields.
+
+**`tlm.perf`** carries the same min/max/EWMA shape for three spans timed with
+`esp_timer_get_time()`: `pid` (one whole `ctrl` step — the same span the
+`SCOPE` GPIO brackets for a logic analyser), `parse` (one `link_uart`
+`handleLine()` call) and `render` (one OLED `Ui::render()`). All three
+figures are in microseconds and never reset — `min`/`max` are the extremes
+since boot, `ema` is a live trend (α = 0.2). See
+[`architecture.md` §8](./architecture.md#8-performance-instrumentation).
 
 `up` is `t_mono_us`, microseconds since boot — the same monotonic clock the SD
 records carry, and the field that joins the three messages into one sample.

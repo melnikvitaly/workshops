@@ -200,6 +200,10 @@ class Controls:
                              for t, v in zip(_TERMS, default[axis])}
                       for axis, _ in _AXES}
         self.preset_var = tk.StringVar(value=default["name"])
+        # Set only by a successful Apply -- what the firmware actually got,
+        # not whatever is sitting unsent in the table. error_graph.py reads
+        # this for its snapshot filenames.
+        self.applied_gains = None
         self.nudge = {k: tk.StringVar(value="5") for k in ("dpan", "dtilt")}
         # Starting point only, not read back from the board -- there is no
         # cfg.get sender. Values are firmware's compiled defaults
@@ -386,9 +390,19 @@ class Controls:
         except Exception as exc:
             self._say(f"set gains failed: {exc}", ok=False)
             return
+        self.applied_gains = values
         self._say("gains applied: " + "; ".join(
             f"{axis} {', '.join(f'{v:g}' for v in values[axis])}"
             for axis, _ in _AXES))
+
+    def gains_label(self):
+        """Short filename-safe tag of the last applied gains, or None."""
+        if self.applied_gains is None:
+            return None
+        return "_".join(
+            f"{axis}-P{p:g}-I{i:g}-D{d:g}"
+            for axis, _ in _AXES
+            for p, i, d in [self.applied_gains[axis]])
 
     def _do_nudge(self):
         try:

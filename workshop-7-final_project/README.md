@@ -44,9 +44,10 @@ and wire formats are in [`docs/architecture.md`](./docs/architecture.md).
 | File | Contents |
 |------|----------|
 | [`docs/architecture.md`](./docs/architecture.md) | Node roster and per-board hardware, task set, link contracts, wire formats, storage, control and safety |
-| [`docs/diagrams.md`](./docs/diagrams.md) | Data flow and other visuals |
+| [`docs/diagrams/`](./docs/diagrams/README.md) | Data flow, AIM states and FreeRTOS task diagrams |
 | [`docs/interfaces.md`](./docs/interfaces.md) | The authoritative pin map, plus every bus with its speed, its rationale and its failure behaviour |
 | [`docs/protocol.md`](./docs/protocol.md) | The wire contract both ends implement: control ASCII, NDJSON, CRC-8 and the config plane |
+| [`docs/bringup.md`](./docs/bringup.md) | Flash order, first-boot sequence, OLED and status-LED reference, first-run checklist |
 | [`docs/coding.md`](./docs/coding.md) | The firmware rules |
 
 ## Technology Stack

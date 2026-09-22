@@ -30,7 +30,6 @@ workshop-7-final_project/
     coding.md            coding conventions
     …                    interfaces, protocol, bringup
     assestment/          material for project assessment
-      PROBLEMS_FACED.md  problems found and their solutions
       REVIEW.md          temporal review of this project by AI
       VERIFICATION/      how project will be evaluated — requirements sheet + coverage
       presentation/      presentation.md, instructions, template, diagrams/
