@@ -62,6 +62,10 @@ and wire formats are in [`docs/architecture.md`](./docs/architecture.md).
 
 TODO: attach video
 
+![EYE app tracking a target](./images/eye-app-snapshot.png)
+
+![EYE app, second view](./images/eye-app-snapshot-2.png)
+
 ---
 
 ## Author
