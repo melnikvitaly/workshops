@@ -61,6 +61,7 @@ and wire formats are in [`docs/architecture.md`](./docs/architecture.md).
 | [`docs/protocol.md`](./docs/protocol.md) | The wire contract both ends implement: control ASCII, NDJSON, CRC-8 and the config plane |
 | [`docs/bringup.md`](./docs/bringup.md) | Flash order, first-boot sequence, OLED and status-LED reference, first-run checklist |
 | [`docs/coding.md`](./docs/coding.md) | The firmware rules |
+| [Presentation](https://docs.google.com/presentation/d/1Klg6IOpmaWiSyaLLHMPq90PuFa_aec4n/edit?usp=sharing&ouid=106385802231175482249&rtpof=true&sd=true) | Project overview slides |
 
 ## Technology Stack
 
