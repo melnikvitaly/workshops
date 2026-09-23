@@ -10,8 +10,9 @@ Downlink (PC -> ESP32):
     P <pan> <tilt>            absolute position, in degrees -> move_to/center
     T <0|1>                   telemetry stream off / on
     Q\\n                       report gains and arm state
+    {"t":"arm",...}*XX        remote CONTROL-button press while DISARMED/PARKED -> arm
+    {"t":"disarm",...}*XX     remote CONTROL-button press while ARMED/LINK_LOST -> disarm
     {"t":"cfg.set",...}*XX    NDJSON config write, e.g. input.channel -> cfg_set/set_channel
-                               control.press is a remote CONTROL-button press -> press_control
                                zone.{pan,tilt}.{min,max} -> set_zone
                                control.zone_tour restarts ZONE_TOUR on demand -> zone_tour
                                boot.tour (tour after SELFTEST, NVS) -> set_boot_tour
@@ -63,7 +64,8 @@ And the tuning console:
     py -3 serial_link.py --gains b 40 4 0            # K b 40 4 0
     py -3 serial_link.py --telemetry 1 --nudge 8 0   # T 1 then N 8 0
     py -3 serial_link.py --channel AUTO              # cfg.set input.channel AUTO
-    py -3 serial_link.py --control                   # cfg.set control.press (arm/disarm toggle)
+    py -3 serial_link.py --arm                       # {"t":"arm"}
+    py -3 serial_link.py --disarm                    # {"t":"disarm"}
     py -3 serial_link.py --zone 40 110 80 120        # cfg.set zone.{pan,tilt}.{min,max}
     py -3 serial_link.py --zone-tour                 # cfg.set control.zone_tour
     py -3 serial_link.py --boot-tour on              # cfg.set boot.tour (tour after SELFTEST)
@@ -399,7 +401,8 @@ class ErrorLink:
         # run()) checks this first, so it never re-enables telemetry an
         # operator explicitly turned off with T 0.
         self.telemetry_wanted = True
-        self._cfg_id = 0     # id counter for cfg.set/cfg.get, matched in cfg.state
+        self._cfg_id = 0     # id counter for cfg.set/cfg.get (matched in cfg.state)
+                             # and arm/disarm (unmatched -- log correlation only)
         # Last channel asked for through set_channel() (None = never). Lets
         # manual_control.py stop streaming `M` as soon as the operator picks
         # another channel, without waiting for a tlm sample to confirm it.
@@ -717,21 +720,31 @@ class ErrorLink:
         self.channel_requested = c
         return self.cfg_set("input.channel", c)
 
-    def press_control(self):
-        """cfg.set `control.press` - the remote equivalent of pressing the
-        board's physical CONTROL button.
+    def arm(self):
+        """`{"t":"arm"}` - the remote equivalent of pressing the board's
+        physical CONTROL button while DISARMED/PARKED (docs/protocol.md §5).
 
-        Same toggle the button gives: arms from DISARMED/PARKED, disarms from
-        ARMED/LINK_LOST, acknowledges a latched FAULT, no-ops during
-        BOOT/SELFTEST/ZONE_TOUR. AUTO-channel `E` frames only move the gimbal
-        once `st:` (the telemetry readout) reads ARMED -- selecting the
-        channel alone is not enough.
-
-        This is the one command that is not gated by input.channel: it works
-        regardless of which channel is selected, same as the physical button.
-        Watch `st:` after sending it to see which of the above happened.
+        Not a cfg.set: nothing is persisted, and there is no cfg.state ack.
+        No-ops unless the FSM is DISARMED/PARKED -- watch `st:` in telemetry
+        to see whether it actually armed. AUTO-channel `E` frames only move
+        the gimbal once `st:` reads ARMED -- selecting the channel alone is
+        not enough. Like the physical button, this is not gated by
+        input.channel. Does not clear a latched FAULT -- see fault.ack.
         """
-        return self.cfg_set("control.press", True)
+        self._cfg_id += 1
+        self.send_ndjson({"t": "arm", "id": self._cfg_id})
+        return self._cfg_id
+
+    def disarm(self):
+        """`{"t":"disarm"}` - the remote equivalent of pressing the board's
+        physical CONTROL button while ARMED/LINK_LOST (docs/protocol.md §5).
+
+        Same shape and same no-ack trade as arm(): no-ops unless the FSM is
+        ARMED/LINK_LOST -- watch `st:` in telemetry to confirm it disarmed.
+        """
+        self._cfg_id += 1
+        self.send_ndjson({"t": "disarm", "id": self._cfg_id})
+        return self._cfg_id
 
     def set_zone(self, pan_min, pan_max, tilt_min, tilt_max):
         """cfg.set the four `zone.{pan,tilt}.{min,max}` keys - the working
@@ -754,7 +767,7 @@ class ErrorLink:
         """cfg.set `control.zone_tour` - restart the ZONE_TOUR bench sweep of
         the *current* working zone, laser lit, without a reboot.
 
-        Same action-key trade as press_control(): no-ops outside
+        Same no-ack, state-gated trade as arm()/disarm(): no-ops outside
         DISARMED/PARKED (a tour must not hijack the gimbal from an active
         operator), always acks ok:true regardless, so watch `st:` in
         telemetry for ZONE_TOUR to confirm it actually started.
@@ -971,7 +984,7 @@ def _main():
     ap.add_argument("--manual", nargs=2, type=float, metavar=("VPAN", "VTILT"),
                     help="M: one direct velocity command, deg/s - only moves "
                          "the gimbal once input.channel=MANUAL and ARMED "
-                         "(--channel MANUAL --control); see manual_control.py "
+                         "(--channel MANUAL --arm); see manual_control.py "
                          "for the keyboard-driven version")
     ap.add_argument("--telemetry", type=int, choices=[0, 1], metavar="0|1",
                     help="T: start/stop the plottable per-frame stream")
@@ -979,11 +992,15 @@ def _main():
                     help="cfg.set input.channel: AUTO is what makes this "
                          "script's own E frames (or tracker.py's) take "
                          "effect -- the firmware boots with it at NONE")
-    ap.add_argument("--control", action="store_true",
-                    help="cfg.set control.press: remote CONTROL-button press "
-                         "-- arm/disarm toggle, or fault.ack if latched. "
-                         "Selecting AUTO alone does not move the gimbal; it "
-                         "also has to be ARMED (see st: in the telemetry)")
+    ap.add_argument("--arm", action="store_true",
+                    help="{\"t\":\"arm\"}: remote CONTROL-button press. "
+                         "No-ops unless DISARMED/PARKED. Selecting AUTO "
+                         "alone does not move the gimbal; it also has to be "
+                         "ARMED (see st: in the telemetry)")
+    ap.add_argument("--disarm", action="store_true",
+                    help="{\"t\":\"disarm\"}: remote CONTROL-button press. "
+                         "No-ops unless ARMED/LINK_LOST (see st: in the "
+                         "telemetry)")
     ap.add_argument("--zone", nargs=4, type=float,
                     metavar=("PAN_MIN", "PAN_MAX", "TILT_MIN", "TILT_MAX"),
                     help="cfg.set zone.{pan,tilt}.{min,max}: the working area, "
@@ -1023,15 +1040,18 @@ def _main():
     # answer, print whatever came back. They compose, so `--gains ... --nudge ...`
     # runs a whole experiment in one line.
     if (args.query or args.gains or args.nudge or args.manual
-            or args.telemetry is not None or args.channel or args.control
+            or args.telemetry is not None or args.channel
+            or args.arm or args.disarm
             or args.zone or args.zone_tour or args.zone_limits
             or args.boot_tour or args.move_to or args.center):
         link = ErrorLink(args.port, args.baud, echo=False, tx_log_path=args.tx_log)
         try:
             if args.channel:
                 link.set_channel(args.channel)
-            if args.control:
-                link.press_control()
+            if args.arm:
+                link.arm()
+            if args.disarm:
+                link.disarm()
             if args.zone:
                 link.set_zone(*args.zone)
             if args.zone_tour:

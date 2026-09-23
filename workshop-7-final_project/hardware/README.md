@@ -7,6 +7,5 @@ KiCad projects for the boards, one directory per board.
 | `aim-board/`  | ESP32-S3 gimbal controller     | 0     | schematic + layout, tasks 8–9 |
 | `pilot-board/`| ESP32-C3 wireless remote       | 1     | not started                |
 
-The `aim-board/` design extends the power section from `workshop-5-1` (USB-C +
-BQ24040 + TLV758P), **copied in**, not referenced. See
+The `aim-board/` design is **copied in**, not referenced. See
 [`../docs/interfaces.md`](../docs/interfaces.md) for the pin map.

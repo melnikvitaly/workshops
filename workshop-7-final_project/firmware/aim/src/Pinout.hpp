@@ -14,7 +14,7 @@ namespace pinout
     constexpr gpio_num_t SERVO_TILT = GPIO_NUM_36; // servo B (above) - vertical
 
     // --- Laser gate ------------------------------------------------------------
-    // MOSFET gate. Internal pull-up + level-before-config so the pre-init window
+    // Relay gate. Internal pull-up + level-before-config so the pre-init window
     // rests off. External pull-up is the Phase 1 board fix.
     constexpr gpio_num_t LASER_GATE = GPIO_NUM_6;
 

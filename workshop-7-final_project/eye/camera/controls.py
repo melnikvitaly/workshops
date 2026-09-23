@@ -193,6 +193,11 @@ class Controls:
         # PC-side only, nothing is sent: tracker.run() reads it every frame
         # (see recenter.py). On by default; unticking stops the drift at once.
         self.recenter_on = tk.BooleanVar(value=True)
+        # Last-seen `st` from a tlm sample (see note_state()), fed by
+        # tracker.py's poll loop the same way manual.note_channel() tracks
+        # `ch`. arm/disarm are separate wire commands now, so the single
+        # Arm/Disarm button needs this to know which one to send.
+        self._last_state = None
         # One row per axis, one entry per term. Starts at the "Default (PI)"
         # preset, the firmware's own gains.
         default = next(p for p in PRESETS if p["name"] == "Default (PI)")
@@ -234,7 +239,7 @@ class Controls:
         are things you set. Their results still land on this panel's status.
         """
         for text, command, tip in (
-                ("Arm / Disarm (CONTROL)", self._press_control,
+                ("Arm / Disarm (CONTROL)", self._control_pressed,
                  "Same as the board's CONTROL button: toggles ARMED / DISARMED, "
                  "or acknowledges a FAULT. Check 'st:' in the status."),
                 ("Center", self._center,
@@ -364,11 +369,29 @@ class Controls:
         except Exception as exc:
             self._say(f"channel failed: {exc}", ok=False)
 
-    def _press_control(self):
+    def note_state(self, st):
+        """Feed the `st` field of each tlm sample (see manual.note_channel()
+        for the same pattern) so _control_pressed() can pick arm vs. disarm
+        without a round trip to the board."""
+        self._last_state = st
+
+    def _control_pressed(self):
+        # Mirrors Ui::controlPressed() on the board: fault.ack while FAULT,
+        # otherwise arm from DISARMED/PARKED or disarm from ARMED/LINK_LOST.
+        # arm/disarm are separate, un-acked wire commands now (docs/protocol.md
+        # §5), so this client-side toggle is what makes the one button work.
+        st = self._last_state
         try:
-            cid = self.link.press_control()
-            self._say(f"CONTROL pressed (cfg.set id {cid}); check 'st:' in the "
-                      "overlay -- toggles ARMED/DISARMED, or acks a FAULT")
+            if st == "FAULT":
+                cid = self.link.cfg_set("fault.ack", True)
+                self._say(f"fault.ack sent (cfg.set id {cid}); check 'st:' "
+                          "in the overlay")
+            elif st in ("ARMED", "LINK_LOST"):
+                self.link.disarm()
+                self._say("disarm sent; check 'st:' in the overlay")
+            else:
+                self.link.arm()
+                self._say("arm sent; check 'st:' in the overlay")
         except Exception as exc:
             self._say(f"CONTROL press failed: {exc}", ok=False)
 

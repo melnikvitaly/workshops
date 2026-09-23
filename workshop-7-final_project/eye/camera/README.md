@@ -128,7 +128,7 @@ picking `MANUAL` + **Set** in the left panel — then the arrow keys send
 `M <vpan> <vtilt>` frames (`docs/protocol.md`) for as long as they are held,
 at `--manual-speed` deg/s per axis (default 40). Turning it off sends one
 immediate zero-velocity frame and stops sending; the gimbal still needs
-`ARMED` (`--control`, or the **Arm / Disarm** button) to actually
+`ARMED` (`--arm`, or the **Arm / Disarm** button) to actually
 move, same as `AUTO`.
 
 MANUAL fails safe the same way AUTO does — 300 ms without a fresh `M` frame
@@ -143,7 +143,7 @@ Driving one frame at a time, without the keyboard, from the command line or
 the interactive console:
 
 ```bash
-py -3 serial_link.py --channel MANUAL --control --manual 20 0   # one M frame
+py -3 serial_link.py --channel MANUAL --arm --manual 20 0       # one M frame
 py -3 serial_link.py --console                                  # then type: M 20 0
 ```
 
@@ -248,23 +248,26 @@ watching `ch:` in the telemetry readout on the view.
 
 Selecting `AUTO` is still not enough — the gimbal only moves while the
 firmware's own state machine is `ARMED` (check `st:` in the telemetry
-readout). Arming used to be physical-button-only; `control.press` is a
-`cfg.set` action key that does exactly what the board's `CONTROL` button does,
-so `EYE` can arm remotely too:
+readout). Arming used to be physical-button-only; `arm`/`disarm` are their
+own wire commands (not `cfg.set`, no ack — same shape as `estop`) that do
+exactly what the board's `CONTROL` button does, so `EYE` can arm or disarm
+remotely too:
 
 ```bash
-py -3 serial_link.py --control     # cfg.set control.press: arm/disarm toggle
+py -3 serial_link.py --arm       # {"t":"arm"}    - DISARMED/PARKED -> ARMED
+py -3 serial_link.py --disarm    # {"t":"disarm"} - ARMED/LINK_LOST -> DISARMED
 ```
 
-or the **Arm / Disarm (CONTROL)** button under the view. It is a
-**toggle**, same as the physical button — it arms from `DISARMED`/`PARKED`,
-disarms from `ARMED`/`LINK_LOST`, acknowledges a latched `FAULT` instead of
-either, and no-ops during boot/self-test/zone-tour. There is no separate
-"arm" vs. "disarm" command, so watch `st:` after pressing it to see which one
-just happened. This trades away the safety property physical-button-only
-arming gave (nobody can arm the gimbal without standing at the board) for
-bench-testing convenience — see `docs/protocol.md` §3.3 before wiring it into
-anything unattended.
+Each no-ops outside its matching state, and neither clears a latched `FAULT`
+— that stays `fault.ack`. Watch `st:` in the telemetry readout to confirm
+what happened; see `docs/protocol.md` §5.
+
+The **Arm / Disarm (CONTROL)** button under the view is still one button: it
+tracks the last-seen `st:` and picks `arm`, `disarm` or `fault.ack` itself,
+the same decision `Ui::controlPressed()` makes on the board. This trades away
+the safety property physical-button-only arming gave (nobody can arm the
+gimbal without standing at the board) for bench-testing convenience — see
+`docs/protocol.md` §5 before wiring it into anything unattended.
 
 ### The controls
 

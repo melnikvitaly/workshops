@@ -122,7 +122,7 @@ Nodes: `EYE` + `AIM`. Ends on a fixed date (**still unset — decide this first*
 
 ### 8. Schematic — the `AIM` board ⟦7.1 7.3⟧
 
-- [ ] `AIM` board: ESP32-S3-WROOM-1, USB-C + BQ24040 + TLV758P (from `workshop-5-1`), servo rail, MOSFET laser driver, micro-SD, OLED header, UART1 header, E-stop + **`MODE`** + control buttons (`MODE` on a non-strapping GPIO, pull-up + RC) ⟦7.1⟧
+- [ ] `AIM` board: ESP32-S3-WROOM-1, USB-C input, SG90 servo rail, 1-channel relay laser driver, micro-SD, OLED header, UART1 header, E-stop + **`MODE`** + control buttons (`MODE` on a non-strapping GPIO, pull-up + RC) ⟦7.1⟧
 - [ ] Power filtering: bulk on the servo rail sized for stall current, 10 µF + 100 nF per rail, 100 nF at every IC pin, ferrite between servo rail and logic, RC on analog ⟦7.3⟧
 
 ### 9. `AIM` board layout — LAST ⟦7.2 7.4 7.5 7.6⟧

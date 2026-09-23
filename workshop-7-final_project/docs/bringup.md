@@ -126,7 +126,7 @@ and [**Arming**](../eye/camera/README.md#arming).
       acknowledges it back to `DISARMED`.
 - [ ] With `EYE` connected and `--echo`: `cfg.set input.channel AUTO` gets a
       `cfg.state ... OK` reply, and `CH:` on the OLED updates to `AUTO`.
-- [ ] Arm (`CONTROL` button or `serial_link.py --control`); `st:` in the
+- [ ] Arm (`CONTROL` button or `serial_link.py --arm`); `st:` in the
       `EYE` telemetry readout reads `ARMED`, LED turns green.
 - [ ] Unplug the `UART1` adapter: within 300 ms the board reports
       `LINK_LOST` (amber LED), and the `MODE` button still cycles channels

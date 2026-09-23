@@ -120,9 +120,13 @@ private:
         CmdItem c{};
         c.t_ms = pdTICKS_TO_MS(xTaskGetTickCount());
         c.i    = 0;
-        c.kind = (_ipc.state.load() == State::Fault)
-                     ? CmdKind::FaultAck
-                     : CmdKind::Arm;
+        const State s = _ipc.state.load();
+        if (s == State::Fault)
+            c.kind = CmdKind::FaultAck;
+        else if (s == State::Armed || s == State::LinkLost)
+            c.kind = CmdKind::Disarm;
+        else
+            c.kind = CmdKind::Arm; // no-op in ctrl unless DISARMED/PARKED
         xQueueSend(_ipc.cmdQ, &c, pdMS_TO_TICKS(5));
     }
 

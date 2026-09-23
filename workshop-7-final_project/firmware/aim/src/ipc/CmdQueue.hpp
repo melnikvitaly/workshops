@@ -17,7 +17,8 @@ enum class CmdKind : uint8_t
     Nudge,          // vec = (dpan, dtilt) deg - open-loop disturbance
     MoveTo,         // vec = (pan, tilt) deg - absolute position, a P frame
     FireLaser,      // request one blank pulse (granted only if safety agrees)
-    Arm,            // toggle DISARMED <-> ARMED (CONTROL button)
+    Arm,            // DISARMED/PARKED -> ARMED (CONTROL button, `arm` command)
+    Disarm,         // ARMED/LINK_LOST -> DISARMED (CONTROL button, `disarm` command)
     FaultAck,       // clear the latched FAULT (CONTROL button or cfg.set fault.ack)
     ZoneTourStart,  // re-enter ZONE_TOUR on demand (cfg.set control.zone_tour)
 };

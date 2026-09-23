@@ -19,7 +19,7 @@ to GPIO21 / 38 and update this table.
 |---|---|---|---|
 | `SERVO_PAN` | 35 | LEDC out | Servo A, horizontal |
 | `SERVO_TILT` | 36 | LEDC out | Servo B, vertical |
-| `LASER_GATE` | 6 | out, pull-up | MOSFET gate. External pull-up required |
+| `LASER_GATE` | 6 | out, pull-up | Relay gate. External pull-up required |
 | `SD_CS` | 10 | SPI2 out | SD pin 1 (`DAT3`). FSPICS0 — IOMUX. 10 kΩ pull-up to 3V3 |
 | `SD_MOSI` | 11 | SPI2 out | SD pin 2 (`CMD`). FSPID — IOMUX. 10 kΩ pull-up to 3V3 |
 | `SD_VSS1` | GND | power | SD pin 3 |

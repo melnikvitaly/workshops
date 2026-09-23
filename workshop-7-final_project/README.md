@@ -55,8 +55,8 @@ and wire formats are in [`docs/architecture.md`](./docs/architecture.md).
 - **`AIM`** — ESP32-S3, ESP-IDF via PlatformIO, FreeRTOS, SPI (SD card /
   FatFs), I²C (SSD1306 OLED), UART, PWM (servos, laser)
 - **`EYE`** — Python 3, OpenCV, DepthAI (OAK camera), pyserial, matplotlib, Tk
-- **Hardware** — KiCad (`AIM` board: ESP32-S3, BQ24040 Li-Ion charger,
-  TLV758P LDO, MOSFET laser driver)
+- **Hardware** — KiCad (`AIM` board: ESP32-S3-WROOM-1 DevKit, SG90 servos,
+  1-channel relay laser driver)
 
 ## Results
 

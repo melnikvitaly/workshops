@@ -89,6 +89,10 @@ private:
             doCfgReset(id);
         else if (!std::strcmp(t, "estop"))
             doEstop();
+        else if (!std::strcmp(t, "arm"))
+            doControlArm();
+        else if (!std::strcmp(t, "disarm"))
+            doControlDisarm();
         else
             _ipc.unparsed.fetch_add(1);
     }
@@ -111,27 +115,9 @@ private:
             return;
         }
 
-        // control.press is an action too: the remote equivalent of a physical
-        // CONTROL button press, dispatched exactly as Ui::controlPressed()
-        // does -- FaultAck while latched, otherwise the Arm toggle (arm from
-        // DISARMED/PARKED, disarm from ARMED/LINK_LOST, no-op during
-        // BOOT/SELFTEST/ZONE_TOUR). This is a deliberate trade: it drops the
-        // "must be physically at the board" property the button gave arming,
-        // in exchange for being able to arm from the EYE side during bench
-        // testing.
-        if (!std::strcmp(key, "control.press"))
-        {
-            const bool     faulted = _ipc.state.load() == State::Fault;
-            const CmdKind  kind    = faulted ? CmdKind::FaultAck : CmdKind::Arm;
-            postAction(kind, nowMs());
-            ESP_LOGI(TAG, "cfg.set control.press -> %s", faulted ? "fault.ack" : "arm");
-            emitCfgState("control.press", "true", id, true, nullptr, "uart");
-            return;
-        }
-
         // control.zone_tour re-enters ZONE_TOUR on demand, so the working
         // zone set via zone.* can be watched without a reboot. No-ops
-        // outside DISARMED/PARKED, same trade as control.press: always acks
+        // outside DISARMED/PARKED, same trade as arm/disarm: always acks
         // ok:true, and st: in telemetry is how the caller sees what happened.
         if (!std::strcmp(key, "control.zone_tour"))
         {
@@ -199,6 +185,14 @@ private:
         _ipc.estopSource.store(EstopSource::Uart);
         xTaskNotifyGive(_ipc.safetyTask); // ctrl emits the evt when it sees the latch
     }
+
+    // arm/disarm are their own top-level commands, not cfg.set keys: they
+    // change nothing persisted, so there is nothing to validate or store.
+    // Same shape as estop: no ack line, fire-and-forget -- the outcome is
+    // already visible in the evt state-transition line and tlm's st field.
+    // No-ops outside the matching state (see Ctrl.hpp handleCmd<Arm/Disarm>).
+    void doControlArm()    { postAction(CmdKind::Arm, nowMs()); }
+    void doControlDisarm() { postAction(CmdKind::Disarm, nowMs()); }
 
     // --- control-path ASCII -----------------------------------------------
     void handleAscii(const char *line)

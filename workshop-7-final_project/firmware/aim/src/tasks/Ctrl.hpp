@@ -505,13 +505,24 @@ inline void CtrlTask::handleCmd<CmdKind::Arm>(uint32_t now, const CmdItem & /*c*
         resetLoop(now);
         _sm.set(State::Armed, "btn.control");
         break;
+    default:
+        break; // already ARMED, or BOOT/SELFTEST/ZONE_TOUR/FAULT: no-op
+    }
+}
+
+template <>
+inline void CtrlTask::handleCmd<CmdKind::Disarm>(uint32_t now, const CmdItem & /*c*/)
+{
+    _lastActivityMs = now;
+    switch (_sm.state())
+    {
     case State::Armed:
     case State::LinkLost:
         _gimbal.stop();
         _sm.set(State::Disarmed, "btn.control");
         break;
     default:
-        break; // BOOT / SELFTEST / ZONE_TOUR / FAULT ignore arm
+        break; // already DISARMED, or BOOT/SELFTEST/ZONE_TOUR/FAULT: no-op
     }
 }
 
@@ -565,6 +576,7 @@ inline void CtrlTask::drainCmds(uint32_t now)
         AIM_CMD_CASE(MoveTo);
         AIM_CMD_CASE(FireLaser);
         AIM_CMD_CASE(Arm);
+        AIM_CMD_CASE(Disarm);
         AIM_CMD_CASE(FaultAck);
         AIM_CMD_CASE(ZoneTourStart);
         }

@@ -77,7 +77,7 @@ its stops even if the requested value is outside that range.
 
 Frames for the non-selected channel (an `E` frame while `MANUAL` is active, or an
 `M` frame while `AUTO` is active) are still parsed and counted as `drop_inact`,
-then dropped before the controller (§5).
+then dropped before the controller (§6).
 
 Per-frame telemetry has moved to NDJSON (§3.4); the `T` frame now only toggles the
 stream on and off.
@@ -242,25 +242,17 @@ failed write leaves the sender's view correct rather than merely negative.
 **Rejection reasons** (`err`): `range`, `type`, `unknown_key`, `readonly`,
 `nvs_write`, `schema`.
 
-**Action keys.** Two `cfg.set` keys are not stored config — they trigger the
-same action a physical button does, skip persistence, and always ack `ok:true`:
+**Action keys.** One `cfg.set` key is not stored config — it triggers the
+same action a physical button does, skips persistence, and always acks `ok:true`:
 
 | Key | Effect | Physical equivalent |
 |---|---|---|
 | `fault.ack` | Clears a latched `FAULT` (see §4) | `CONTROL` button while `FAULT` |
-| `control.press` | Arm/disarm toggle, or `fault.ack` if `FAULT` — dispatched exactly like the button (`Ui::controlPressed()`) | `CONTROL` button |
 | `control.zone_tour` | Re-enters `ZONE_TOUR`, sweeping the *current* working zone with the laser lit. No-op outside `DISARMED`/`PARKED`, so a PC-triggered tour can never hijack an active operator | *(none — PC-only, no button)* |
 
-`control.press` is a deliberate trade: arming used to require standing at the
-board (the `CONTROL` button was the only path to `ARMED`); this key lets `EYE`
-arm the gimbal remotely instead, for bench testing. Selecting `input.channel`
-does not by itself move the gimbal — the FSM must also be `ARMED` (see `st` in
-the `tlm` sample, §3.4).
-
-```text
-{"t":"cfg.set","k":"control.press","v":true,"id":3}*EA
-{"t":"cfg.state","k":"control.press","v":true,"id":3,"ok":true,"err":null,"src":"uart","ver":1}*AE
-```
+Arming/disarming remotely is not a `cfg.set` key — see §5, `arm` and `disarm`.
+Selecting `input.channel` does not by itself move the gimbal — the FSM must
+also be `ARMED` (see `st` in the `tlm` sample, §3.4).
 
 `control.zone_tour` exists so the `zone.{pan,tilt}.{min,max}` bounds — already
 persisted config, applied live by `ctrl` on the next step — can be checked by
@@ -386,7 +378,37 @@ than left to the implementation.
 
 ---
 
-## 5. Receiver counters
+## 5. Arm and disarm
+
+| `t` | Direction | Fields | Meaning |
+|---|---|---|---|
+| `arm` | `EYE` → `AIM` | `id` (unused, kept for log correlation) | Remote equivalent of the `CONTROL` button while `DISARMED`/`PARKED` |
+| `disarm` | `EYE` → `AIM` | `id` (unused, kept for log correlation) | Remote equivalent of the `CONTROL` button while `ARMED`/`LINK_LOST` |
+
+```text
+{"t":"arm","id":3}*C5
+{"t":"evt","e":"state","up":1204,"from":"DISARMED","to":"ARMED","why":"btn.control"}*95
+```
+
+Like `estop`, these are their own top-level commands, not `cfg.set` keys —
+arming/disarming changes nothing persisted, so there is nothing to validate,
+apply or store. Also like `estop`, neither gets an ack: the outcome is
+already visible in the `evt` state-transition line above and in `tlm`'s `st`
+field (§3.4), so a `cfg.state`-shaped reply would only duplicate that.
+
+Each is a no-op outside its matching state: `arm` does nothing unless the FSM
+is `DISARMED`/`PARKED`; `disarm` does nothing unless it is `ARMED`/`LINK_LOST`;
+both are ignored during `BOOT`/`SELFTEST`/`ZONE_TOUR`/`FAULT`. Neither clears
+a latched `FAULT` — send `{"t":"cfg.set","k":"fault.ack","v":true}` first (§3.3).
+
+This is a deliberate trade: arming used to require standing at the board (the
+`CONTROL` button was the only path to `ARMED`); `arm`/`disarm` let `EYE` do it
+remotely instead, for bench testing. Neither is gated by `input.channel` — they
+work regardless of which channel is selected, same as the physical button.
+
+---
+
+## 6. Receiver counters
 
 Exposed in `tlm.sys.link` and on the OLED. All are monotonic since boot; none of
 them is ever fatal.

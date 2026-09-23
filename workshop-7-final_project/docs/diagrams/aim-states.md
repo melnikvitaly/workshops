@@ -65,7 +65,7 @@ stateDiagram-v2
 | `selftest.ok`   | Self-test passed; goes to `ZONE_TOUR` if `boot.tour` is on, else `DISARMED`. |
 | `tour.done`     | Zone-tour sweep finished.                                            |
 | `cfg.tour`      | Zone tour requested on demand (from `DISARMED` or `PARKED`).         |
-| `btn.control`   | Arm/disarm button pressed.                                           |
+| `btn.control`   | `CONTROL` button pressed, or the remote `arm`/`disarm` command (`docs/protocol.md` §5). |
 | `cfg.channel`   | An input channel was selected.                                       |
 | `idle`          | Idle timeout (30 s) with no channel selected.                        |
 | `link.stale`    | Selected channel's link went stale (over 300 ms with no data).       |
@@ -80,5 +80,7 @@ Notes:
   forced off in every other state.
 - `estop` preempts every state except `FAULT` itself — it is checked once per
   20 ms control step, ahead of the rest of the FSM.
-- `ARM`/`btn.control` is ignored in `BOOT`, `SELFTEST`, `ZONE_TOUR` and
-  `FAULT`.
+- `btn.control` (arm or disarm, from the button or the wire command) is
+  ignored in `BOOT`, `SELFTEST`, `ZONE_TOUR` and `FAULT`; arm also no-ops
+  while already `ARMED`/`LINK_LOST`, and disarm while already `DISARMED`/
+  `PARKED`.

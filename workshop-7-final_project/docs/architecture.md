@@ -35,7 +35,7 @@ Phase 0 has two nodes.
 | Name | Role | Runs on | Board |
 |------|------|---------|-------|
 | **EYE** | Sees. Detection, error vector, operator console | PC | — (host PC) |
-| **AIM** | Decides and acts. Control loop, laser, storage | ESP32-S3 | ESP32-S3-WROOM-1; USB-C input, BQ24040 Li-Ion charger and TLV758P LDO; servo power rail; MOSFET laser driver; micro-SD on SPI; OLED I²C header; UART1 header; E-stop, `MODE` and control buttons |
+| **AIM** | Decides and acts. Control loop, laser, storage | ESP32-S3 | ESP32-S3-WROOM-1 DevKit; USB-C input; SG90 servo power rail; 1-channel relay laser driver; micro-SD on SPI; OLED I²C header; UART1 header; E-stop, `MODE` and control buttons (planned) |
 
 ```text
 log tag   chip        source directory
@@ -238,8 +238,8 @@ removes it.
 `zone.{pan,tilt}.{min,max}` is regular config: set over `cfg.set` like any
 other key, validated, persisted and applied live — no reboot needed. But the
 zone is only *walked* automatically at boot if `boot.tour` is on (default
-off). `control.zone_tour` is an action key, the same shape as
-`control.press`, that re-enters `ZONE_TOUR` on demand: set new bounds, send
+off). `control.zone_tour` is a `cfg.set` action key that re-enters
+`ZONE_TOUR` on demand: set new bounds, send
 `control.zone_tour`, and watch the beam trace the new rectangle rather than
 guessing whether it covers the scene. It no-ops outside `DISARMED`/`PARKED`,
 so it can never take over the gimbal from an operator mid-session — see

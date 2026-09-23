@@ -3,7 +3,7 @@
 ErrorLink (serial_link.py) already has one low-level write path -- _write()
 -- so this hooks there instead of duplicating a print/log call at each of the
 half-dozen higher-level senders (send, manual, fire, send_raw -- and
-set_gains/nudge/telemetry/query/cfg_set/set_channel/press_control all go
+set_gains/nudge/telemetry/query/cfg_set/set_channel/arm/disarm all go
 through send_raw). Before this module existed, fire() and send_raw() each
 carried their own ad-hoc print, and the streamed E/M frames (send()/manual())
 were not logged at all: three different behaviours for what is really one

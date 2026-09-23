@@ -325,6 +325,8 @@ def run(args):
                     telemetry = sample
                     telemetry_at = time.monotonic()
                     manual.note_channel(sample.get("ch"))
+                    if win is not None:
+                        win.controls.note_state(sample.get("st"))
                     continue
                 sys_sample = parse_tlm_sys(esp_line)
                 if sys_sample is not None:
