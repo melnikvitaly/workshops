@@ -224,11 +224,15 @@ firmware's own state and channel instead.
 ### Making the PC the active channel
 
 Sending `E` frames is not enough by itself. The firmware picks exactly one
-input channel at a time (`input.channel`: `NONE` / `AUTO` / `MANUAL`) and
-boots at `NONE`, so `E` frames are parsed, counted as `drop_inact`, and thrown
-away until something sets it to `AUTO` — that is this script's channel, not
-`MANUAL` (the keyboard-driven `M <vpan> <vtilt>` channel, see
-[Driving the gimbal from the keyboard](#driving-the-gimbal-from-the-keyboard)).
+input channel at a time (`input.channel`: `NONE` / `AUTO` / `MANUAL` /
+`AUTO_POS`) and boots at `NONE`, so `E` frames are parsed, counted as
+`drop_inact`, and thrown away until something sets it to `AUTO` — that is
+this script's channel, not `MANUAL` (the keyboard-driven `M <vpan> <vtilt>`
+channel, see
+[Driving the gimbal from the keyboard](#driving-the-gimbal-from-the-keyboard))
+or `AUTO_POS` (the same `E` frames, driven through a direct-position PID
+instead of `AUTO`'s velocity-form one — see
+[`docs/servo-control-strategies.md`](../../docs/servo-control-strategies.md)).
 
 Unlike telemetry, this is never sent automatically — forcing the channel over
 can take control away from whatever else is driving the gimbal (another PC

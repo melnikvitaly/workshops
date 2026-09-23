@@ -49,19 +49,28 @@ spaces or tabs. Floats may use any format `strtof` accepts (`-0.124`, `.5`,
 
 | Direction | Frame | Meaning |
 |---|---|---|
-| `EYE` → `AIM` | `E <dx> <dy> <valid>` | Tracking error, streamed — the `AUTO` channel |
+| `EYE` → `AIM` | `E <dx> <dy> <valid>` | Tracking error, streamed — the `AUTO` and `AUTO_POS` channels |
 | `EYE` → `AIM` | `M <vpan> <vtilt>` | Direct axis velocity, deg/s — the `MANUAL` channel |
 | `EYE` → `AIM` | `F` | Fire one shot |
-| `EYE` → `AIM` | `K <axis> <kp> <ki> <kd>` | Set PID gains live; `axis` = `p` \| `t` \| `b` |
+| `EYE` → `AIM` | `K <axis> <kp> <ki> <kd>` | Set `AUTO`'s (velocity-form) PID gains live; `axis` = `p` \| `t` \| `b` |
 | `EYE` → `AIM` | `N <dpan> <dtilt>` | Open-loop nudge, in degrees |
 | `EYE` → `AIM` | `P <pan> <tilt>` | Absolute position, in degrees |
 | `EYE` → `AIM` | `T <0\|1>` | Telemetry stream off / on |
 | `EYE` → `AIM` | `Q` | Query gains and state |
 | `AIM` → `EYE` | `G pan <kp> <ki> <kd> tilt <kp> <ki> <kd> armed <0\|1>` | Reply to `K` and `Q` |
 
+`G` reports whichever channel is actually selected: `AUTO`'s velocity-form
+gains normally, or `AUTO_POS`'s direct-position gains while `AUTO_POS` is
+selected — `K` always writes `AUTO`'s regardless of the active channel.
+
 `E` carries the error vector normalised to `[-1, 1]`, defined as
 `error = target_position − laser_dot_position`, with `valid = 1` only when both
-the dot and the target were seen in that frame. `M` is the manual counterpart:
+the dot and the target were seen in that frame. `AUTO_POS` consumes the same
+`E` stream as `AUTO` — it differs only in how `ctrl` turns the error into a
+servo command (direct position instead of velocity), see
+[`servo-control-strategies.md`](./servo-control-strategies.md); its gains are
+NDJSON-only (`pid.pos.*`, §3.3), `K` never touches them. `M` is the manual
+counterpart:
 `EYE`'s mouse script sends a pan/tilt rate directly, bypassing the PID, and it is
 processed only while `input.channel = MANUAL`. `N` displaces the gimbal without
 telling the controller, which makes it a repeatable open-loop disturbance — the
@@ -76,8 +85,8 @@ intersected with the mechanical limits — so neither can drive the gimbal past
 its stops even if the requested value is outside that range.
 
 Frames for the non-selected channel (an `E` frame while `MANUAL` is active, or an
-`M` frame while `AUTO` is active) are still parsed and counted as `drop_inact`,
-then dropped before the controller (§6).
+`M` frame while `AUTO` or `AUTO_POS` is active) are still parsed and counted as
+`drop_inact`, then dropped before the controller (§6).
 
 Per-frame telemetry has moved to NDJSON (§3.4); the `T` frame now only toggles the
 stream on and off.
@@ -211,6 +220,10 @@ sender retries or the operator repeats the command.
 ### 3.3 Configuration messages
 
 The key space is defined in [`architecture.md`](./architecture.md#5-configuration-and-storage).
+`input.channel` accepts `"NONE"`, `"AUTO"`, `"MANUAL"` or `"AUTO_POS"`; the
+`pid.pos.pan.{kp,ki,kd}` / `pid.pos.tilt.{kp,ki,kd}` keys are `AUTO_POS`'s
+gains, same `[0.0, 1000.0]` range as `pid.pan.*`/`pid.tilt.*` (§2.3) — there is
+no ASCII shortcut for them, only `cfg.set`.
 
 | `t` | Direction | Fields | Meaning |
 |---|---|---|---|

@@ -21,6 +21,11 @@ if __package__ in (None, ""):
 
 # Preset gain combinations. (pan_kp, pan_ki, pan_kd), (tilt...)
 #
+# Sized for AUTO's velocity-form PID (Kp in the tens). AUTO_POS's gains are a
+# different scale entirely - its whole PID output is clamped to [-1, 1], so
+# Kp near 1 is already aggressive (docs/servo-control-strategies.md) - these
+# presets are not meant for it.
+#
 # Weighted towards D, because that is the term worth sweeping on this rig: the
 # gimbal overshoots and rings, which D fixes and I does not. I is deliberately
 # rare - it is only interesting as the fix for the steady-state offset the PD
@@ -270,14 +275,15 @@ class Controls:
         chan =row.add(ttk.Frame(row))
         ttk.Label(chan, text="Channel").pack(side="left", padx=(0, 4))
         ttk.Combobox(chan, textvariable=self.channel, width=8, state="readonly",
-                     values=["NONE", "AUTO", "MANUAL"]).pack(side="left")
+                     values=["NONE", "AUTO", "MANUAL", "AUTO_POS"]).pack(side="left")
         ttk.Button(chan, text="Set", command=self._set_channel).pack(
             side="left", padx=(4, 0))
 
     def _build_gains(self, parent):
         box = _titled_box(parent, "PID gains", (
             "Pick a preset to fill the table (nothing is sent yet). Edit any "
-            "value, then Apply sends pan and tilt gains together."))
+            "value, then Apply sends pan and tilt gains together, to AUTO or "
+            "AUTO_POS depending on the Channel selector above."))
         box.pack(fill="x", pady=(8, 0))
 
         # Picking a preset only fills the table; nothing is sent until Apply.
@@ -362,12 +368,38 @@ class Controls:
             self._say(f"query failed: {exc}", ok=False)
 
     def _set_channel(self):
+        channel = self.channel.get()
         try:
-            cid = self.link.set_channel(self.channel.get())
-            self._say(f"channel -> {self.channel.get()} (cfg.set id {cid}); "
-                      "confirmed by the overlay's 'ch:' field once a tlm sample lands")
+            cid = self.link.set_channel(channel)
         except Exception as exc:
             self._say(f"channel failed: {exc}", ok=False)
+            return
+
+        if channel not in ("AUTO", "AUTO_POS"):
+            self._say(f"channel -> {channel} (cfg.set id {cid}); "
+                      "confirmed by the overlay's 'ch:' field once a tlm sample lands")
+            return
+
+        # AUTO and AUTO_POS each have their own gains (pid.* vs pid.pos.*) --
+        # read back what the board is actually running rather than leaving
+        # whatever preset/manual entry was sitting in the table.
+        try:
+            gains = self.link.read_gains(channel)
+            missing = [k for k in ("pan_kp", "pan_ki", "pan_kd",
+                                   "tilt_kp", "tilt_ki", "tilt_kd") if k not in gains]
+            if missing:
+                raise RuntimeError(f"no reply for {', '.join(missing)} "
+                                   "-- is the board connected?")
+        except Exception as exc:
+            self._say(f"channel -> {channel} (cfg.set id {cid}), but reading "
+                      f"its gains failed: {exc}", ok=False)
+            return
+
+        for axis, _ in _AXES:
+            for term, key in zip(_TERMS, ("kp", "ki", "kd")):
+                self.gains[axis][term].set(f"{gains[f'{axis}_{key}']:g}")
+        self._say(f"channel -> {channel} (cfg.set id {cid}); gains table shows "
+                  "what the board is actually running")
 
     def note_state(self, st):
         """Feed the `st` field of each tlm sample (see manual.note_channel()
@@ -406,15 +438,23 @@ class Controls:
             self._say(f"telemetry failed: {exc}", ok=False)
 
     def _apply_gains(self):
+        # AUTO_POS's gains are a separate set (pid.pos.*, cfg.set only) from
+        # AUTO's (pid.*, the K frame) - send to whichever channel the table
+        # currently represents (see _set_channel(), which fills it from the
+        # matching one), not always AUTO's.
+        target = "AUTO_POS" if self.channel.get() == "AUTO_POS" else "AUTO"
         try:
             values = {axis: self._floats(self.gains[axis]) for axis, _ in _AXES}
             for axis, code in _AXES:
-                self.link.set_gains(code, *values[axis])
+                if target == "AUTO_POS":
+                    self.link.set_pos_gains(code, *values[axis])
+                else:
+                    self.link.set_gains(code, *values[axis])
         except Exception as exc:
             self._say(f"set gains failed: {exc}", ok=False)
             return
         self.applied_gains = values
-        self._say("gains applied: " + "; ".join(
+        self._say(f"{target} gains applied: " + "; ".join(
             f"{axis} {', '.join(f'{v:g}' for v in values[axis])}"
             for axis, _ in _AXES))
 

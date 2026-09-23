@@ -186,6 +186,7 @@ normally set by an NDJSON configuration line from `EYE` over UART1.
 | `input.channel` | Source | Accepted when |
 |---|---|---|
 | `AUTO` | Error vector from `EYE`'s (PC) vision pipeline | `ARMED`, source fresh |
+| `AUTO_POS` | Same error vector, driven by direct-position PID instead of `AUTO`'s velocity-form — see [`servo-control-strategies.md`](./servo-control-strategies.md) | `ARMED`, source fresh |
 | `MANUAL` | Keyboard-driven velocity from `EYE`'s manual control | `ARMED`, source fresh |
 | `NONE` | — | Motion commands ignored entirely |
 
@@ -209,7 +210,7 @@ removes it.
 
 | Gesture | Effect |
 |---|---|
-| Short press | Advance to the next channel: `NONE → AUTO → MANUAL → NONE` |
+| Short press | Advance to the next channel: `NONE → AUTO → MANUAL → AUTO_POS → NONE` |
 | Long press ≥ 1 s | Jump straight to `NONE` — cut all motion input without touching the E-stop latch |
 
 - **The button does not write configuration.** It posts the same
@@ -267,8 +268,9 @@ button on the `AIM` board does the same over a wire and works with no radio at a
 One versioned, flat key space rather than ad-hoc settings:
 
 ```text
-input.channel                    pid.pan.{kp,ki,kd}      pid.tilt.{kp,ki,kd}
-zone.{pan,tilt}.{min,max}        laser.brightness        telemetry.rate_hz
+input.channel                    pid.pan.{kp,ki,kd}          pid.tilt.{kp,ki,kd}
+pid.pos.pan.{kp,ki,kd}           pid.pos.tilt.{kp,ki,kd}     (AUTO_POS gains)
+zone.{pan,tilt}.{min,max}        laser.brightness            telemetry.rate_hz
 log.sd.enabled                   boot.tour
 zone.limit.{pan,tilt}.{min,max}  (read-only - the mechanical travel, cfg.get only)
 ```
@@ -370,6 +372,12 @@ port.
   what was commanded, which is what lets the loop reject gravity droop, servo
   deadband, backlash and a horn that slipped on its spline.
 
+The velocity form above is what `AUTO` runs. The same camera error is also
+available through a direct-position PID on the `AUTO_POS` channel, for
+comparing the two against each other on the bench — see
+[`servo-control-strategies.md`](./servo-control-strategies.md) for why
+velocity-form is still the default.
+
 ### Bounds and saturation
 
 - Travel clamped to mechanical limits ∩ the working zone. The zone is deliberately
@@ -467,6 +475,10 @@ in order:
 8. `Gimbal::setVelocity()` clamps the rate to the hardware ceiling;
    `Gimbal::update()` integrates it into a target angle and calls
    `Servo::write(angle)`, clamped to the working zone.
+   (On `AUTO_POS`, steps 6-8 are `AutoPositionChannel::onErrorSample()` /
+   `::update()` instead, and `PidPosition::update()`'s output goes straight to
+   `Gimbal::moveTo()` — no rate, no integration step. See
+   [`servo-control-strategies.md`](./servo-control-strategies.md).)
 9. `Servo::write()` maps the angle linearly to a pulse width in microseconds
    and calls `PWM::writeMicroseconds()`, which converts that to an LEDC duty
    count and programs it with `ledc_set_duty()`/`ledc_update_duty()`.

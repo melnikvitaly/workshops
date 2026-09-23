@@ -571,6 +571,28 @@ class ErrorLink:
                              "rejects them")
         self.send_raw(f"K {a} {kp:g} {ki:g} {kd:g}\n")
 
+    def set_pos_gains(self, axis, kp, ki, kd):
+        """cfg.set the three `pid.pos.<axis>.{kp,ki,kd}` keys - AUTO_POS's
+        direct-position PID gains (docs/servo-control-strategies.md), as
+        opposed to set_gains()'s `K` frame, which always targets AUTO's
+        velocity-form gains regardless of the active channel.
+
+        There is no ASCII fast path or "both axes" shortcut for these, and no
+        batched cfg.set on the wire - three separate lines, each with its own
+        id and `cfg.state` ack, same trade as set_zone(). Returns the three
+        ids, in (kp, ki, kd) order.
+        """
+        a = {"p": "pan", "pan": "pan", "t": "tilt", "tilt": "tilt"}.get(
+            str(axis).strip().lower())
+        if a is None:
+            raise ValueError(f"axis must be p/pan or t/tilt (got {axis!r})")
+        if min(kp, ki, kd) < 0.0:
+            raise ValueError("negative gains invert the loop; the firmware "
+                             "rejects them")
+        return (self.cfg_set(f"pid.pos.{a}.kp", kp),
+                self.cfg_set(f"pid.pos.{a}.ki", ki),
+                self.cfg_set(f"pid.pos.{a}.kd", kd))
+
     def nudge(self, dpan_deg, dtilt_deg):
         """`N <dpan> <dtilt>` - displace the gimbal open loop, in degrees.
 
@@ -681,6 +703,25 @@ class ErrorLink:
             time.sleep(0.02)
         return out
 
+    def read_gains(self, channel=None, timeout=0.4):
+        """Read back the live PID gains for `channel` (default: whichever
+        channel set_channel() last requested, or "AUTO" if none yet) via
+        cfg.get -- `pid.pan/tilt.*` for AUTO, `pid.pos.pan/tilt.*` for
+        AUTO_POS (docs/protocol.md §3.3). Only AUTO and AUTO_POS have a PID to
+        read; MANUAL and NONE raise. See _read_keys() for the
+        blocking/missing-key behaviour.
+        """
+        c = str(channel or self.channel_requested or "AUTO").strip().upper()
+        if c not in ("AUTO", "AUTO_POS"):
+            raise ValueError(f"channel {c!r} has no PID gains to read")
+        prefix = "pid.pos." if c == "AUTO_POS" else "pid."
+        return self._read_keys({
+            "pan_kp": f"{prefix}pan.kp", "pan_ki": f"{prefix}pan.ki",
+            "pan_kd": f"{prefix}pan.kd",
+            "tilt_kp": f"{prefix}tilt.kp", "tilt_ki": f"{prefix}tilt.ki",
+            "tilt_kd": f"{prefix}tilt.kd",
+        }, timeout)
+
     def read_zone_limits(self, timeout=0.4):
         """The gimbal's hard mechanical travel, read live from the firmware's
         read-only `zone.limit.{pan,tilt}.{min,max}` keys (docs/protocol.md
@@ -705,7 +746,7 @@ class ErrorLink:
         }, timeout)
 
     def set_channel(self, channel):
-        """cfg.set `input.channel` - NONE / AUTO / MANUAL.
+        """cfg.set `input.channel` - NONE / AUTO / MANUAL / AUTO_POS.
 
         This is what makes this script's own `E` frames (the AUTO channel)
         actually move the gimbal: the firmware boots with input.channel =
@@ -713,10 +754,14 @@ class ErrorLink:
         drop_inact, and thrown away before it reaches the controller (§2.1).
         MANUAL is the keyboard-driven `M <vpan> <vtilt>` channel (see
         manual_control.py / the `manual()` method), not this script's own.
+        AUTO_POS consumes the same `E` frames as AUTO, just through a
+        direct-position PID instead of AUTO's velocity-form one - see
+        docs/servo-control-strategies.md.
         """
         c = str(channel).strip().upper()
-        if c not in ("NONE", "AUTO", "MANUAL"):
-            raise ValueError(f"channel must be NONE/AUTO/MANUAL (got {channel!r})")
+        if c not in ("NONE", "AUTO", "MANUAL", "AUTO_POS"):
+            raise ValueError(
+                f"channel must be NONE/AUTO/MANUAL/AUTO_POS (got {channel!r})")
         self.channel_requested = c
         return self.cfg_set("input.channel", c)
 
@@ -988,10 +1033,13 @@ def _main():
                          "for the keyboard-driven version")
     ap.add_argument("--telemetry", type=int, choices=[0, 1], metavar="0|1",
                     help="T: start/stop the plottable per-frame stream")
-    ap.add_argument("--channel", choices=["NONE", "AUTO", "MANUAL"],
+    ap.add_argument("--channel", choices=["NONE", "AUTO", "MANUAL", "AUTO_POS"],
                     help="cfg.set input.channel: AUTO is what makes this "
                          "script's own E frames (or tracker.py's) take "
-                         "effect -- the firmware boots with it at NONE")
+                         "effect -- the firmware boots with it at NONE. "
+                         "AUTO_POS runs the same E frames through a "
+                         "direct-position PID instead of AUTO's velocity-form "
+                         "one")
     ap.add_argument("--arm", action="store_true",
                     help="{\"t\":\"arm\"}: remote CONTROL-button press. "
                          "No-ops unless DISARMED/PARKED. Selecting AUTO "

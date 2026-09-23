@@ -248,9 +248,10 @@ private:
         {
             if (v.type != Value::Type::String)
                 return "type";
-            if (!std::strcmp(v.str, "NONE"))   { _blob.input_channel = (uint8_t)config::Channel::None;   return nullptr; }
-            if (!std::strcmp(v.str, "AUTO"))   { _blob.input_channel = (uint8_t)config::Channel::Auto;   return nullptr; }
-            if (!std::strcmp(v.str, "MANUAL")) { _blob.input_channel = (uint8_t)config::Channel::Manual; return nullptr; }
+            if (!std::strcmp(v.str, "NONE"))     { _blob.input_channel = (uint8_t)config::Channel::None;         return nullptr; }
+            if (!std::strcmp(v.str, "AUTO"))     { _blob.input_channel = (uint8_t)config::Channel::Auto;         return nullptr; }
+            if (!std::strcmp(v.str, "MANUAL"))   { _blob.input_channel = (uint8_t)config::Channel::Manual;       return nullptr; }
+            if (!std::strcmp(v.str, "AUTO_POS")) { _blob.input_channel = (uint8_t)config::Channel::AutoPosition; return nullptr; }
             return "range";
         }
 
@@ -260,6 +261,13 @@ private:
         if (!std::strcmp(key, "pid.tilt.kp")) return checkGain(v, _blob.tilt_gains.kp);
         if (!std::strcmp(key, "pid.tilt.ki")) return checkGain(v, _blob.tilt_gains.ki);
         if (!std::strcmp(key, "pid.tilt.kd")) return checkGain(v, _blob.tilt_gains.kd);
+
+        if (!std::strcmp(key, "pid.pos.pan.kp"))  return checkGain(v, _blob.pan_pos_gains.kp);
+        if (!std::strcmp(key, "pid.pos.pan.ki"))  return checkGain(v, _blob.pan_pos_gains.ki);
+        if (!std::strcmp(key, "pid.pos.pan.kd"))  return checkGain(v, _blob.pan_pos_gains.kd);
+        if (!std::strcmp(key, "pid.pos.tilt.kp")) return checkGain(v, _blob.tilt_pos_gains.kp);
+        if (!std::strcmp(key, "pid.pos.tilt.ki")) return checkGain(v, _blob.tilt_pos_gains.ki);
+        if (!std::strcmp(key, "pid.pos.tilt.kd")) return checkGain(v, _blob.tilt_pos_gains.kd);
 
         if (!std::strcmp(key, "zone.pan.min"))
             return checkZone(v, config::GIMBAL_PAN_MIN, config::GIMBAL_PAN_MAX, _blob.zone.panMax, true, _blob.zone.panMin);
@@ -319,6 +327,12 @@ private:
         if (!std::strcmp(key, "pid.tilt.kp")) { fmtNum(out, cap, _blob.tilt_gains.kp); return; }
         if (!std::strcmp(key, "pid.tilt.ki")) { fmtNum(out, cap, _blob.tilt_gains.ki); return; }
         if (!std::strcmp(key, "pid.tilt.kd")) { fmtNum(out, cap, _blob.tilt_gains.kd); return; }
+        if (!std::strcmp(key, "pid.pos.pan.kp"))  { fmtNum(out, cap, _blob.pan_pos_gains.kp);  return; }
+        if (!std::strcmp(key, "pid.pos.pan.ki"))  { fmtNum(out, cap, _blob.pan_pos_gains.ki);  return; }
+        if (!std::strcmp(key, "pid.pos.pan.kd"))  { fmtNum(out, cap, _blob.pan_pos_gains.kd);  return; }
+        if (!std::strcmp(key, "pid.pos.tilt.kp")) { fmtNum(out, cap, _blob.tilt_pos_gains.kp); return; }
+        if (!std::strcmp(key, "pid.pos.tilt.ki")) { fmtNum(out, cap, _blob.tilt_pos_gains.ki); return; }
+        if (!std::strcmp(key, "pid.pos.tilt.kd")) { fmtNum(out, cap, _blob.tilt_pos_gains.kd); return; }
         if (!std::strcmp(key, "zone.pan.min"))  { fmtNum(out, cap, _blob.zone.panMin);  return; }
         if (!std::strcmp(key, "zone.pan.max"))  { fmtNum(out, cap, _blob.zone.panMax);  return; }
         if (!std::strcmp(key, "zone.tilt.min")) { fmtNum(out, cap, _blob.zone.tiltMin); return; }

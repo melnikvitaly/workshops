@@ -23,7 +23,7 @@
 // The ui task. Owns the OLED, the status LED and
 // the two polled buttons. 50 Hz loop, OLED redrawn every 100 ms.
 //
-//   MODE  short press  -> next channel  NONE -> AUTO -> MANUAL -> NONE
+//   MODE  short press  -> next channel  NONE -> AUTO -> MANUAL -> AUTO_POS -> NONE
 //   MODE  long  >= 1 s -> NONE
 //   CTRL  short press  -> arm/disarm, or acknowledge a latched FAULT
 //
@@ -133,7 +133,7 @@ private:
     // --- status LED --------------------------------------------------------
     void startBlink(config::Channel c)
     {
-        const uint8_t ordinal = (uint8_t)c; // NONE=0, AUTO=1, MANUAL=2
+        const uint8_t ordinal = (uint8_t)c; // NONE=0, AUTO=1, MANUAL=2, AUTO_POS=3
         _blinkPhasesLeft = ordinal ? (uint8_t)(ordinal * 2) : 0;
         _blinkOn         = true;
         _blinkTickAcc    = 0;
@@ -179,9 +179,10 @@ private:
     {
         switch (c)
         {
-        case config::Channel::Auto:   return {0, 20, 0};
-        case config::Channel::Manual: return {0, 0, 24};
-        default:                      return {12, 12, 12};
+        case config::Channel::Auto:         return {0, 20, 0};
+        case config::Channel::Manual:       return {0, 0, 24};
+        case config::Channel::AutoPosition: return {20, 20, 0};
+        default:                            return {12, 12, 12};
         }
     }
 
