@@ -1,10 +1,11 @@
 # Servo Control Strategies — Direct Position vs Rate-Output PID
 
 Two ways to drive a PID output onto a standard hobby servo (an internal
-position-tracking actuator). `AIM` uses **rate-output PID with position
-stepping** — this doc explains why, against the alternative. The
-implementation is
-[`utils/PositionalPid.hpp`](../firmware/aim/src/utils/PositionalPid.hpp); the
+position-tracking actuator). `AIM`'s default tracking channel, `AUTO`, uses
+**rate-output PID with position stepping** — this doc explains why, against
+the alternative. The implementation is
+[`utils/PositionalPid.hpp`](../firmware/aim/src/utils/PositionalPid.hpp) +
+[`parts/AutoChannel.hpp`](../firmware/aim/src/parts/AutoChannel.hpp); the
 design rationale is [`architecture.md` §6](./architecture.md#6-control).
 
 > **Terminology note:** some sources call a *different* algorithm "velocity
@@ -13,12 +14,17 @@ design rationale is [`architecture.md` §6](./architecture.md#6-control).
 > accumulates `u_k = u_{k-1} + Δu_k` (see the `apm` reference in
 > [§4](#4-references)). That form is algebraically equivalent to positional
 > PID — it is just computed incrementally, with no explicit integral
-> accumulator. `AIM` does **not** use it. §2 below keeps positional-form
-> error terms (`Kp*e[k]`, an explicit integral, matching
+> accumulator. §2 below keeps positional-form error terms (`Kp*e[k]`, an
+> explicit integral, matching
 > [`PositionalPid.hpp`](../firmware/aim/src/utils/PositionalPid.hpp), whose
 > class name reflects this) and instead treats the PID *output* as a rate,
 > adding an outer integration step to turn it into a position. This doc
-> calls the overall strategy "rate-output PID" to avoid the name clash.
+> calls that strategy "rate-output PID" to avoid the name clash.
+
+The true velocity/incremental form above is also implemented, as the
+separate `AUTO_POS` channel — see [§2a](#2a-velocity-equation-pid) — so the
+two can be compared on the same camera-error input. It is not the default:
+§3 below is still the reason `AUTO` stays rate-output for normal tracking.
 
 ## Contents
 
@@ -42,6 +48,13 @@ angle[k] = clamp(u[k], angleMin, angleMax)
 Every PID sample is a full position setpoint change. Simple, and fast for a
 single large step, but every noisy or aggressive sample is a real position
 command the servo must chase.
+
+Implemented as `AUTO_POS` —
+[`PidPosition::update()`](../firmware/aim/src/utils/PidPosition.hpp) returns
+`u[k]` directly (clamped to `[-1, 1]`, since the error is normalised the same
+way); [`AutoPositionChannel::update()`](../firmware/aim/src/parts/AutoPositionChannel.hpp)
+scales that onto the working zone and writes it with `Gimbal::moveTo()` — no
+rate, no integration step.
 
 ## 2. Rate-output PID (position stepping)
 
@@ -80,7 +93,7 @@ contract — the caller does `angle += pid.update(error, dt) * dt`.
 | **Interaction with servo's internal loop** | Can fight it if updates arrive faster than the servo settles | Steps stay inside the servo's linear slew range — less fighting |
 | **MCU cost** | One PID evaluation per tick | Same, plus one multiply-add and one clamp — negligible |
 | **Ideal use case** | Large, infrequent setpoint changes; point-to-point positioning | Continuous closed-loop tracking against a moving/noisy error signal |
-| **Applicability to this project** | Poor fit — `AIM` tracks a continuously-moving camera error at 50–250 ms dead time (§6); direct position would feed every noisy/stale detection straight into the servo as a position command | **Used.** Matches the vision-tracking plant exactly: [`architecture.md` §6](./architecture.md#6-control) targets `P(s)=k/s` deliberately, rate limits absorb detector noise and dead time, and [`PositionalPid::hold()`](../firmware/aim/src/utils/PositionalPid.hpp) handles the zero-error/non-zero-Ki case this form requires |
+| **Applicability to this project** | Implemented as `AUTO_POS`, an explicit alternate channel for comparison/tuning — but a poor fit as the *default*: `AIM` tracks a continuously-moving camera error at 50–250 ms dead time (§6), and feeding every noisy/stale detection straight into the servo as a position command is exactly what dead time punishes. `PAN_POS_KP`/`TILT_POS_KP` (`Config.hpp`) are derated hard for this reason | **Used as `AUTO`, the default.** Matches the vision-tracking plant exactly: [`architecture.md` §6](./architecture.md#6-control) targets `P(s)=k/s` deliberately, rate limits absorb detector noise and dead time, and [`PositionalPid::hold()`](../firmware/aim/src/utils/PositionalPid.hpp) handles the zero-error/non-zero-Ki case this form requires |
 
 ---
 

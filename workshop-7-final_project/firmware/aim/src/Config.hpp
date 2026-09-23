@@ -153,6 +153,41 @@ namespace config
     // Note: the error is at most 1.0, so the P term alone tops out at Kp deg/s.
     // These caps only bite when Kp (plus the integral) exceeds them.
 
+    // --- PID (error vector -> servo position, direct-position form) ---------
+    // AutoPositionChannel's alternative to the velocity-form PID above - see
+    // docs/servo-control-strategies.md. Same normalised [-1, 1] error input,
+    // but Kp here maps error straight onto a *position* offset (dimensionless,
+    // not deg/s): the PID output is clamped to [POS_OUTPUT_MIN, POS_OUTPUT_MAX]
+    // and scaled onto the working zone directly, with no rate integration.
+    //
+    // Kp -> 1 tries to close all the error in a single sample - a deadbeat
+    // response that only works with a truly instantaneous plant. This loop's
+    // dead time (50-250 ms, docs/architecture.md SS6) spans several frame
+    // periods, so a Kp anywhere near 1 overshoots on the next sample instead
+    // of settling. Derate the same way as a Ziegler-Nichols dead-time rule:
+    // Kp <= 1 / (2N), N = dead time in frame periods. Start well under that
+    // and raise; back off at the first sign of hunting.
+    //
+    // Ki pulls in the last bit of steady-state offset (e.g. gravity droop on
+    // tilt); keep it a fraction of Kp so it cannot itself force an overshoot
+    // on a fast-moving target. Kd stays at zero - the noisy-error argument by
+    // PID_DERIV_ALPHA above applies here too.
+    //
+    // NOT yet bench-tuned - starting points only.
+    constexpr float PAN_POS_KP = 0.15f;
+    constexpr float PAN_POS_KI = 0.05f;
+    constexpr float PAN_POS_KD = 0.0f;
+
+    constexpr float TILT_POS_KP = 0.12f;
+    constexpr float TILT_POS_KI = 0.05f;
+    constexpr float TILT_POS_KD = 0.0f;
+
+    // The PID output IS the position here, so its clamp is the unit working
+    // area itself, not a tuning knob - AutoPositionChannel scales this
+    // straight onto the working zone.
+    constexpr float POS_OUTPUT_MIN = -1.0f;
+    constexpr float POS_OUTPUT_MAX = 1.0f;
+
     // These must not exceed the Gimbal's hard rate ceiling. If they did, the
     // PID would believe it was still in range while the Gimbal was quietly
     // limiting the rate - so conditional integration would keep accumulating
@@ -314,27 +349,31 @@ namespace config
 
     // --- Config plane ------------------------------------------------------
     // Exactly one input channel is processed at a time.
-    enum class Channel : uint8_t { None = 0, Auto = 1, Manual = 2 };
+    enum class Channel : uint8_t { None = 0, Auto = 1, Manual = 2, AutoPosition = 3 };
 
     inline const char *channelName(Channel c)
     {
         switch (c)
         {
-        case Channel::None:   return "NONE";
-        case Channel::Auto:   return "AUTO";
-        case Channel::Manual: return "MANUAL";
+        case Channel::None:         return "NONE";
+        case Channel::Auto:         return "AUTO";
+        case Channel::Manual:       return "MANUAL";
+        case Channel::AutoPosition: return "AUTO_POS";
         }
         return "?";
     }
 
-    // Short press on MODE advances NONE -> AUTO -> MANUAL -> NONE.
+    // Short press on MODE advances NONE -> AUTO -> MANUAL -> AUTO_POS -> NONE.
+    // AUTO_POS is appended last so it doesn't shift the existing NONE/AUTO/
+    // MANUAL muscle memory.
     inline Channel nextChannel(Channel c)
     {
         switch (c)
         {
-        case Channel::None:   return Channel::Auto;
-        case Channel::Auto:   return Channel::Manual;
-        case Channel::Manual: return Channel::None;
+        case Channel::None:         return Channel::Auto;
+        case Channel::Auto:         return Channel::Manual;
+        case Channel::Manual:       return Channel::AutoPosition;
+        case Channel::AutoPosition: return Channel::None;
         }
         return Channel::None;
     }
@@ -342,7 +381,7 @@ namespace config
     // Bumped whenever ConfigBlob's layout or semantics change. A stored blob
     // with a different version is rejected and the compiled defaults reloaded -
     // a stale blob is never reinterpreted.
-    constexpr uint16_t SCHEMA_VERSION = 2;
+    constexpr uint16_t SCHEMA_VERSION = 3;
 
     // The persisted configuration. POD and trivially copyable: written to NVS
     // as one blob and copied out under the config mutex by ctrl each step.
@@ -350,7 +389,8 @@ namespace config
     {
         uint8_t input_channel; // Channel
 
-        Gains pan_gains, tilt_gains;
+        Gains pan_gains, tilt_gains;         // velocity-form PID (AutoChannel)
+        Gains pan_pos_gains, tilt_pos_gains; // direct-position PID (AutoPositionChannel)
 
         Zone zone;
 
@@ -367,6 +407,8 @@ namespace config
         /* input_channel          */ (uint8_t)Channel::None,
         /* pan_gains              */ {PAN_KP, PAN_KI, PAN_KD},
         /* tilt_gains             */ {TILT_KP, TILT_KI, TILT_KD},
+        /* pan_pos_gains          */ {PAN_POS_KP, PAN_POS_KI, PAN_POS_KD},
+        /* tilt_pos_gains         */ {TILT_POS_KP, TILT_POS_KI, TILT_POS_KD},
         /* zone                   */ {WORK_PAN_MIN, WORK_PAN_MAX, WORK_TILT_MIN, WORK_TILT_MAX},
         /* laser_brightness       */ 0,
         /* telemetry_rate_hz      */ 10,

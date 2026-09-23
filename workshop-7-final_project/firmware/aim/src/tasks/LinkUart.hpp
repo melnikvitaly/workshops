@@ -204,7 +204,10 @@ private:
         switch (f.type)
         {
         case protocol::FrameType::Error:
-            if (ch != config::Channel::Auto)
+            // AUTO and AUTO_POS are both camera-error-driven - they differ in
+            // how ctrl turns the error into a servo command, not in what
+            // feeds them.
+            if (ch != config::Channel::Auto && ch != config::Channel::AutoPosition)
             {
                 _ipc.dropInactive.fetch_add(1);
                 return;
@@ -326,11 +329,18 @@ private:
     {
         config::ConfigBlob c;
         _ipc.config->snapshot(c);
+        // Report whichever channel is actually running: AUTO_POS's PID is a
+        // different gain set (direct-position form) from AUTO's, and a `Q`
+        // while AUTO_POS is active should show what it is actually doing,
+        // not AUTO's unrelated numbers.
+        const bool posActive = (config::Channel)c.input_channel == config::Channel::AutoPosition;
+        const Gains &pan  = posActive ? c.pan_pos_gains  : c.pan_gains;
+        const Gains &tilt = posActive ? c.tilt_pos_gains : c.tilt_gains;
         char line[128];
         std::snprintf(line, sizeof(line),
                       "G pan %.2f %.2f %.2f tilt %.2f %.2f %.2f armed %d",
-                      (double)c.pan_gains.kp, (double)c.pan_gains.ki, (double)c.pan_gains.kd,
-                      (double)c.tilt_gains.kp, (double)c.tilt_gains.ki, (double)c.tilt_gains.kd,
+                      (double)pan.kp, (double)pan.ki, (double)pan.kd,
+                      (double)tilt.kp, (double)tilt.ki, (double)tilt.kd,
                       _ipc.state.load() == State::Armed ? 1 : 0);
         _ipc.link->writeLine(line);
     }

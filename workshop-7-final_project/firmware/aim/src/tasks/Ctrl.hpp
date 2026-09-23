@@ -35,6 +35,7 @@
 #include "IInputChannel.hpp"
 #include "ManualChannel.hpp"
 #include "AutoChannel.hpp"
+#include "AutoPositionChannel.hpp"
 #include "NoneChannel.hpp"
 
 // The ctrl task. Owns the PIDs, the gimbal and the
@@ -156,7 +157,7 @@ private:
         if (stepState(now, fresh, chNone))
             _gimbal.update(config::UPDATE_PERIOD_S);
         updateLaser();
-        _ipc.pidRuns.store(_autoChannel.pidRuns());
+        _ipc.pidRuns.store(currentPidRuns());
         pushLog(now);
 
         gpio_set_level(pinout::SCOPE, 0);
@@ -197,10 +198,11 @@ private:
     {
         switch (ch)
         {
-        case config::Channel::Auto:   return &_autoChannel;
-        case config::Channel::Manual: return &_manualChannel;
+        case config::Channel::Auto:         return &_autoChannel;
+        case config::Channel::Manual:       return &_manualChannel;
+        case config::Channel::AutoPosition: return &_autoPositionChannel;
         case config::Channel::None:
-        default:                      return &_noneChannel;
+        default:                            return &_noneChannel;
         }
     }
 
@@ -215,6 +217,16 @@ private:
         {
             _autoChannel.setTiltGains(_cfg.tilt_gains.kp, _cfg.tilt_gains.ki, _cfg.tilt_gains.kd);
             _tiltGains = _cfg.tilt_gains;
+        }
+        if (force || _cfg.pan_pos_gains != _panPosGains)
+        {
+            _autoPositionChannel.setPanGains(_cfg.pan_pos_gains.kp, _cfg.pan_pos_gains.ki, _cfg.pan_pos_gains.kd);
+            _panPosGains = _cfg.pan_pos_gains;
+        }
+        if (force || _cfg.tilt_pos_gains != _tiltPosGains)
+        {
+            _autoPositionChannel.setTiltGains(_cfg.tilt_pos_gains.kp, _cfg.tilt_pos_gains.ki, _cfg.tilt_pos_gains.kd);
+            _tiltPosGains = _cfg.tilt_pos_gains;
         }
     }
 
@@ -300,8 +312,36 @@ private:
     void resetLoop(uint32_t now)
     {
         _autoChannel.reset(now);
+        _autoPositionChannel.reset(now);
         _manualChannel.reset(now);
         _gimbal.setVelocity({0.0f, 0.0f});
+    }
+
+    // --- telemetry source for whichever Auto-family channel is active ------
+    // Only AUTO and AUTO_POS carry a meaningful error/on-target/pidRuns - both
+    // expose the same accessor shape as a plain convention, not through
+    // IInputChannel (which stays the minimal update()/reset() strategy
+    // interface). Manual/None fall back to _autoChannel's (stale) values,
+    // same as before this channel existed.
+    Point currentError() const
+    {
+        return _lastChannel == config::Channel::AutoPosition
+                   ? _autoPositionChannel.error()
+                   : _autoChannel.error();
+    }
+
+    bool currentOnTarget() const
+    {
+        return _lastChannel == config::Channel::AutoPosition
+                   ? _autoPositionChannel.onTarget()
+                   : _autoChannel.onTarget();
+    }
+
+    uint32_t currentPidRuns() const
+    {
+        return _lastChannel == config::Channel::AutoPosition
+                   ? _autoPositionChannel.pidRuns()
+                   : _autoChannel.pidRuns();
     }
 
     // --- laser ------------------------------------------------------------------
@@ -324,7 +364,7 @@ private:
         r.t_mono_us = (uint64_t)esp_timer_get_time();
         r.state     = _sm.state();
         r.channel   = _cfg.input_channel;
-        const Point error = _autoChannel.error();
+        const Point error = currentError();
         r.ex        = error.x;
         r.ey        = error.y;
         const Point v = _gimbal.velocity();
@@ -332,7 +372,7 @@ private:
         r.vtilt     = v.y;
         r.pan       = _gimbal.panAngle();
         r.tilt      = _gimbal.tiltAngle();
-        r.flags     = _autoChannel.onTarget() ? 1u : 0u;
+        r.flags     = currentOnTarget() ? 1u : 0u;
         logSend(_ipc.logQ, &r, &_ipc.logDropped);
 
         _ipc.telem = {r.ex, r.ey, r.vpan, r.vtilt, r.pan, r.tilt};
@@ -415,6 +455,10 @@ private:
                              config::PAN_KP, config::PAN_KI, config::PAN_KD, config::PAN_MAX_SLEW,
                              config::TILT_KP, config::TILT_KI, config::TILT_KD, config::TILT_MAX_SLEW,
                              config::PID_DERIV_ALPHA};
+    AutoPositionChannel _autoPositionChannel{_gimbal,
+                             config::PAN_POS_KP, config::PAN_POS_KI, config::PAN_POS_KD,
+                             config::TILT_POS_KP, config::TILT_POS_KI, config::TILT_POS_KD,
+                             config::PID_DERIV_ALPHA};
     ManualChannel _manualChannel{_gimbal};
     NoneChannel   _noneChannel{_gimbal};
 
@@ -432,6 +476,8 @@ private:
 
     Gains _panGains{0, 0, 0};
     Gains _tiltGains{0, 0, 0};
+    Gains _panPosGains{0, 0, 0};
+    Gains _tiltPosGains{0, 0, 0};
     Zone _zone{0, 0, 0, 0};
 
     uint32_t _lastFrameMs = 0;    // last E/M frame of any validity -- link liveness
@@ -453,10 +499,14 @@ inline void CtrlTask::handleCmd<CmdKind::ErrorSample>(uint32_t now, const CmdIte
     _lastFrameMs = now;
     // Sign correction is the mounting, not the wire: it says how the
     // camera sits relative to the gimbal.
-    _autoChannel.onErrorSample(c.flag,
-                               {config::PAN_INVERT ? -c.vec.x : c.vec.x,
-                                config::TILT_INVERT ? -c.vec.y : c.vec.y},
-                               c.t_ms);
+    const Point err{config::PAN_INVERT ? -c.vec.x : c.vec.x,
+                    config::TILT_INVERT ? -c.vec.y : c.vec.y};
+    // link_uart only lets an E frame through while AUTO or AUTO_POS is
+    // selected (see LinkUart.hpp), so _lastChannel alone picks the right one.
+    if (_lastChannel == config::Channel::AutoPosition)
+        _autoPositionChannel.onErrorSample(c.flag, err, c.t_ms);
+    else
+        _autoChannel.onErrorSample(c.flag, err, c.t_ms);
     _lastActivityMs = now;
 }
 
