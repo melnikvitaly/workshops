@@ -2,7 +2,7 @@
 
 The firmware's MANUAL input channel (firmware/aim/src/parts/ManualChannel.hpp)
 drives the gimbal straight off the last `M <vpan> <vtilt>` frame and fails
-safe the same way AUTO does on `E` frames -- config::TRACK_TIMEOUT_MS
+safe the same way the Auto-family channels do on `E` frames -- config::TRACK_TIMEOUT_MS
 (300 ms) without a fresh one parks the gimbal. So driving from the keyboard
 still means refreshing the last frame periodically while a direction key is
 held, even if the commanded velocity has not changed.

@@ -129,12 +129,13 @@ picking `MANUAL` + **Set** in the left panel — then the arrow keys send
 at `--manual-speed` deg/s per axis (default 40). Turning it off sends one
 immediate zero-velocity frame and stops sending; the gimbal still needs
 `ARMED` (`--arm`, or the **Arm / Disarm** button) to actually
-move, same as `AUTO`.
+move, same as `AUTO_POSITIONAL`.
 
-MANUAL fails safe the same way AUTO does — 300 ms without a fresh `M` frame
-parks the gimbal — so `manual_control.py` keeps a keep-alive frame going
-(every 150 ms) the whole time a key is down, even if the commanded velocity
-has not changed, and sends immediately the moment it does change. "Held" is
+MANUAL fails safe the same way the Auto-family channels do — 300 ms without a
+fresh `M` frame parks the gimbal — so `manual_control.py` keeps a keep-alive
+frame going (every 150 ms) the whole time a key is down, even if the
+commanded velocity has not changed, and sends immediately the moment it does
+change. "Held" is
 read straight from the OS key state (Windows only), not guessed from
 key-repeat events, so release is immediate and exact — see the module
 docstring.
@@ -159,7 +160,7 @@ separate step to see it. Untick the checkbox in the controls panel, or send
 (`docs/protocol.md` §3.4), tagged with how long ago it arrived:
 
 ```text
-ESP T  st:ARMED ch:AUTO  ex:-0.031 ey:+0.012  v:-4.2/+1.1 deg/s  pan:92.4 tilt:78.1  0.3s ago
+ESP T  st:ARMED ch:AUTO_POSITIONAL  ex:-0.031 ey:+0.012  v:-4.2/+1.1 deg/s  pan:92.4 tilt:78.1  0.3s ago
 PID: 29.8 Hz   0.6s ago
 ```
 
@@ -187,11 +188,11 @@ sender printing (or not printing) it on its own. Two independent outputs:
 - **Console** — everything prints as `-> ...` (`F`, `K`, `N`, `T`, `Q`,
   `cfg.set`, and keyboard `MANUAL` drive's `M` frames), except `E`. `E` is
   the one tag sent continuously regardless of any key or click — up to
-  `--rate`, 50 Hz by default, for as long as `AUTO` runs — so printing every
-  one by default would drown everything else; add `--echo` to also print
-  those, and received lines too. `M` gets no such throttling: it only goes
-  out while a direction key is actually held, so it stays visible the same
-  way `F` or `N` is.
+  `--rate`, 50 Hz by default, for as long as an Auto-family channel runs —
+  so printing every one by default would drown everything else; add
+  `--echo` to also print those, and received lines too. `M` gets no such
+  throttling: it only goes out while a direction key is actually held, so
+  it stays visible the same way `F` or `N` is.
 - **File** — `--tx-log [PATH]` (bare `--tx-log` = `tx_log.txt`) appends
   *every* line, streamed frames included, one per row with the elapsed time
   since the log opened. Nothing is filtered out of the file regardless of
@@ -224,14 +225,14 @@ firmware's own state and channel instead.
 ### Making the PC the active channel
 
 Sending `E` frames is not enough by itself. The firmware picks exactly one
-input channel at a time (`input.channel`: `NONE` / `AUTO` / `MANUAL` /
-`AUTO_POS`) and boots at `NONE`, so `E` frames are parsed, counted as
-`drop_inact`, and thrown away until something sets it to `AUTO` — that is
-this script's channel, not `MANUAL` (the keyboard-driven `M <vpan> <vtilt>`
-channel, see
+input channel at a time (`input.channel`: `NONE` / `AUTO_POSITIONAL` /
+`MANUAL` / `AUTO_VELOCITYEQUATION`) and boots at `NONE`, so `E` frames are
+parsed, counted as `drop_inact`, and thrown away until something sets it to
+`AUTO_POSITIONAL` — that is this script's channel, not `MANUAL` (the
+keyboard-driven `M <vpan> <vtilt>` channel, see
 [Driving the gimbal from the keyboard](#driving-the-gimbal-from-the-keyboard))
-or `AUTO_POS` (the same `E` frames, driven through a direct-position PID
-instead of `AUTO`'s velocity-form one — see
+or `AUTO_VELOCITYEQUATION` (the same `E` frames, driven through a
+velocity-equation PID instead of `AUTO_POSITIONAL`'s rate-output one — see
 [`docs/servo-control-strategies.md`](../../docs/servo-control-strategies.md)).
 
 Unlike telemetry, this is never sent automatically — forcing the channel over
@@ -239,18 +240,19 @@ can take control away from whatever else is driving the gimbal (another PC
 session, the pilot remote), so it always waits for an explicit action:
 
 ```bash
-py -3 serial_link.py --channel AUTO     # cfg.set input.channel AUTO, then exit
+py -3 serial_link.py --channel AUTO_POSITIONAL   # cfg.set input.channel AUTO_POSITIONAL, then exit
 ```
 
 or the **Channel** dropdown + **Set** button in the left panel (below).
 Either way it is a `cfg.set` NDJSON message, acknowledged by a `cfg.state`
-reply (`docs/protocol.md` §3.3) printed as `cfg: input.channel='AUTO' OK
-[id N]` with `--echo`/`--console`/`--monitor`; confirm it actually took by
+reply (`docs/protocol.md` §3.3) printed as
+`cfg: input.channel='AUTO_POSITIONAL' OK [id N]` with
+`--echo`/`--console`/`--monitor`; confirm it actually took by
 watching `ch:` in the telemetry readout on the view.
 
 ### Arming
 
-Selecting `AUTO` is still not enough — the gimbal only moves while the
+Selecting `AUTO_POSITIONAL` is still not enough — the gimbal only moves while the
 firmware's own state machine is `ARMED` (check `st:` in the telemetry
 readout). Arming used to be physical-button-only; `arm`/`disarm` are their
 own wire commands (not `cfg.set`, no ack — same shape as `estop`) that do

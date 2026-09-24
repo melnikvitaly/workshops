@@ -1,12 +1,12 @@
-# Servo Control Strategies — Direct Position vs Rate-Output PID
+# Servo Control Strategies — Velocity-Equation vs Rate-Output PID
 
 Two ways to drive a PID output onto a standard hobby servo (an internal
-position-tracking actuator). `AIM`'s default tracking channel, `AUTO`, uses
-**rate-output PID with position stepping** — this doc explains why, against
-the alternative. The implementation is
+position-tracking actuator). `AIM`'s default tracking channel,
+`AUTO_POSITIONAL`, uses **rate-output PID with position stepping** — this doc
+explains why, against the alternative. The implementation is
 [`utils/PositionalPid.hpp`](../firmware/aim/src/utils/PositionalPid.hpp) +
-[`parts/AutoChannel.hpp`](../firmware/aim/src/parts/AutoChannel.hpp); the
-design rationale is [`architecture.md` §6](./architecture.md#6-control).
+[`parts/AutoPositionalChannel.hpp`](../firmware/aim/src/parts/AutoPositionalChannel.hpp);
+the design rationale is [`architecture.md` §6](./architecture.md#6-control).
 
 > **Terminology note:** some sources call a *different* algorithm "velocity
 > form" — one that differences the error itself,
@@ -22,39 +22,48 @@ design rationale is [`architecture.md` §6](./architecture.md#6-control).
 > calls that strategy "rate-output PID" to avoid the name clash.
 
 The true velocity/incremental form above is also implemented, as the
-separate `AUTO_POS` channel — see [§2a](#2a-velocity-equation-pid) — so the
-two can be compared on the same camera-error input. It is not the default:
-§3 below is still the reason `AUTO` stays rate-output for normal tracking.
+separate `AUTO_VELOCITYEQUATION` channel —
+[`utils/VelocityEquationPid.hpp`](../firmware/aim/src/utils/VelocityEquationPid.hpp)
+and [`parts/AutoVelocityEquationChannel.hpp`](../firmware/aim/src/parts/AutoVelocityEquationChannel.hpp)
+— so the two can be compared on the same camera-error input. It is not the
+default: §3 below is still the reason `AUTO_POSITIONAL` stays rate-output
+for normal tracking.
 
 ## Contents
 
-1. [Direct position control](#1-direct-position-control)
+1. [Velocity-equation PID (angle-delta output)](#1-velocity-equation-pid-angle-delta-output)
 2. [Rate-output PID (position stepping)](#2-rate-output-pid-position-stepping)
 3. [Comparison](#3-comparison)
 4. [References](#4-references)
 
 ---
 
-## 1. Direct position control
+## 1. Velocity-equation PID (angle-delta output)
 
-The PID output **is** the commanded angle, sent straight to the servo's own
-internal position loop:
+The PID output is the **change** in the commanded angle since the previous
+sample — the incremental form from
+[`docs/pid_controller_equations_positional_vs_velocity.md`](./pid_controller_equations_positional_vs_velocity.md)
+§2:
 
 ```text
-u[k]     = Kp*e[k] + Ki*sum(e[0..k])*dt + Kd*(e[k]-e[k-1])/dt
-angle[k] = clamp(u[k], angleMin, angleMax)
+du[k]  = Kp*(e[k]-e[k-1]) + Ki*e[k]*dt + Kd*(e[k]-2*e[k-1]+e[k-2])/dt
+angle += du[k]
 ```
 
-Every PID sample is a full position setpoint change. Simple, and fast for a
-single large step, but every noisy or aggressive sample is a real position
-command the servo must chase.
+There is no separate integral accumulator: the running sum of every `du[k]`
+issued since the last reset plays that role, and is tracked purely to clamp
+it (see `VelocityEquationPid::update()`) — once that running sum sits at its
+limit, a `du[k]` that would push further into it collapses to zero instead of
+accumulating. That is the "stops adding `du[k]`" anti-windup behaviour the
+reference doc's "Advantages of the Velocity Form" section describes.
 
-Implemented as `AUTO_POS` —
-[`PidPosition::update()`](../firmware/aim/src/utils/PidPosition.hpp) returns
-`u[k]` directly (clamped to `[-1, 1]`, since the error is normalised the same
-way); [`AutoPositionChannel::update()`](../firmware/aim/src/parts/AutoPositionChannel.hpp)
-scales that onto the working zone and writes it with `Gimbal::moveTo()` — no
-rate, no integration step.
+Implemented as `AUTO_VELOCITYEQUATION` —
+[`VelocityEquationPid::update()`](../firmware/aim/src/utils/VelocityEquationPid.hpp)
+returns `du[k]` directly, in degrees;
+[`AutoVelocityEquationChannel::update()`](../firmware/aim/src/parts/AutoVelocityEquationChannel.hpp)
+adds it straight onto the gimbal's current angle and writes the result with
+`Gimbal::moveTo()` — same `angle += delta` shape as `Gimbal::nudge()`, no
+rate, no outer integration step.
 
 ## 2. Rate-output PID (position stepping)
 
@@ -77,23 +86,23 @@ contract — the caller does `angle += pid.update(error, dt) * dt`.
 
 ## 3. Comparison
 
-| Dimension | Direct position control | Rate-output PID (position stepping) |
+| Dimension | Velocity-equation PID | Rate-output PID (position stepping) |
 |---|---|---|
-| **Core representation** | PID output = target angle (position domain) | PID output = target rate; MCU integrates to angle each tick |
+| **Core representation** | PID output = angle delta per sample; running sum of deltas stands in for the position | PID output = target rate; MCU integrates to angle each tick |
 | **Plant model seen by outer loop** | Near-unity gain with lag — servo's own loop absorbs the step | Pure integrator, `P(s) = k/s` |
-| **Steady-state error** | Needs Ki to null static error; a wound-up Ki is a real position offset | Plant integration often nulls it on its own; Ki compensates only residual effects (backlash, load droop); wound-up Ki is a persistent *rate*, so zero error still needs explicit hold logic |
-| **Role of Kp** | Maps error to a position offset | Maps error to a slew rate |
+| **Steady-state error** | Needs Ki (via `Ki*e[k]*dt` per sample) to null static error; the running-sum clamp is a real position-authority limit, not a rate | Plant integration often nulls it on its own; Ki compensates only residual effects (backlash, load droop); wound-up Ki is a persistent *rate*, so zero error still needs explicit hold logic |
+| **Role of Kp** | Maps the *change* in error to a delta | Maps error to a slew rate |
 | **Role of Ki** | Primary tool for steady-state error | Often small or zero — the integration step already integrates |
-| **Role of Kd** | Damps position command; noise → position jitter directly | Damps rate command; noise is smoothed by the `v*dt` integration step |
+| **Role of Kd** | A second-difference term; damps delta command, noise → position jitter directly | Damps rate command; noise is smoothed by the `v*dt` integration step |
 | **Overshoot / jerk** | Higher — every sample can be a discontinuous position jump | Lower — position change per tick is rate-limited by construction |
 | **Dynamic response to a large step** | Faster — uses the servo's full internal bandwidth | Slower to close large error (rate-limited); settles cleaner near target |
-| **Sensor / measurement noise** | Transmitted ~directly into commanded position | Attenuated — noisy rate averages toward its mean before it accumulates |
+| **Sensor / measurement noise** | Transmitted ~directly into the commanded delta | Attenuated — noisy rate averages toward its mean before it accumulates |
 | **Sensitivity to loop `dt` jitter** | `dt` affects only I and D terms | `dt` also sizes the integration step (`v*dt`); timing accuracy matters more |
-| **Saturation / anti-windup** | One clamp (position); anti-windup guards the commanded angle | Two clamps (rate + integrated position); anti-windup must see both, or it reasons about the wrong limit |
+| **Saturation / anti-windup** | One clamp, on the running sum of deltas; a delta that would push past it collapses to zero (see §1) | Two clamps (rate + integrated position); anti-windup must see both, or it reasons about the wrong limit |
 | **Interaction with servo's internal loop** | Can fight it if updates arrive faster than the servo settles | Steps stay inside the servo's linear slew range — less fighting |
 | **MCU cost** | One PID evaluation per tick | Same, plus one multiply-add and one clamp — negligible |
 | **Ideal use case** | Large, infrequent setpoint changes; point-to-point positioning | Continuous closed-loop tracking against a moving/noisy error signal |
-| **Applicability to this project** | Implemented as `AUTO_POS`, an explicit alternate channel for comparison/tuning — but a poor fit as the *default*: `AIM` tracks a continuously-moving camera error at 50–250 ms dead time (§6), and feeding every noisy/stale detection straight into the servo as a position command is exactly what dead time punishes. `PAN_POS_KP`/`TILT_POS_KP` (`Config.hpp`) are derated hard for this reason | **Used as `AUTO`, the default.** Matches the vision-tracking plant exactly: [`architecture.md` §6](./architecture.md#6-control) targets `P(s)=k/s` deliberately, rate limits absorb detector noise and dead time, and [`PositionalPid::hold()`](../firmware/aim/src/utils/PositionalPid.hpp) handles the zero-error/non-zero-Ki case this form requires |
+| **Applicability to this project** | Implemented as `AUTO_VELOCITYEQUATION`, an explicit alternate channel for comparison/tuning — but a poor fit as the *default*: `AIM` tracks a continuously-moving camera error at 50–250 ms dead time (§6), and feeding every noisy/stale detection straight into a servo-angle delta is exactly what dead time punishes. `PAN_VEQ_KP`/`TILT_VEQ_KP` (`Config.hpp`) are derated hard for this reason | **Used as `AUTO_POSITIONAL`, the default.** Matches the vision-tracking plant exactly: [`architecture.md` §6](./architecture.md#6-control) targets `P(s)=k/s` deliberately, rate limits absorb detector noise and dead time, and [`PositionalPid::hold()`](../firmware/aim/src/utils/PositionalPid.hpp) handles the zero-error/non-zero-Ki case this form requires |
 
 ---
 
@@ -101,6 +110,9 @@ contract — the caller does `angle += pid.update(error, dt) * dt`.
 
 Derivations and proofs:
 
+- [`docs/pid_controller_equations_positional_vs_velocity.md`](./pid_controller_equations_positional_vs_velocity.md)
+  — the positional/velocity distinction and the exact `du_k` formula
+  `VelocityEquationPid.hpp` implements.
 - [Åström & Murray, *Feedback Systems*, ch. 11 "PID Control"][astrom] — free
   PDF; §11.4 derives the discrete PID algorithm and integrator windup, §11.5
   covers anti-windup by tracking (back-calculation).

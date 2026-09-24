@@ -131,8 +131,9 @@ namespace ndjson
     }
 
     // Build a sealed cfg.state acknowledgement. `vLit` is
-    // a JSON value literal - "\"AUTO\"", "40", "true", "null". `key`/`err` may be
-    // null. Used by both link_uart (src "uart") and ui (src "button").
+    // a JSON value literal - "\"AUTO_POSITIONAL\"", "40", "true", "null".
+    // `key`/`err` may be null. Used by both link_uart (src "uart") and ui
+    // (src "button").
     inline void cfgState(char *line, size_t cap, const char *key, const char *vLit,
                          long id, bool ok, const char *err, const char *src, unsigned ver)
     {

@@ -12,7 +12,7 @@
 
 enum class CmdKind : uint8_t
 {
-    ErrorSample,    // vec = raw (dx, dy) from an E frame; i = valid flag. AUTO channel.
+    ErrorSample,    // vec = raw (dx, dy) from an E frame; i = valid flag. AUTO_POSITIONAL/AUTO_VELOCITYEQUATION channels.
     ManualVelocity, // vec = (vpan, vtilt) deg/s from an M frame.          MANUAL channel.
     Nudge,          // vec = (dpan, dtilt) deg - open-loop disturbance
     MoveTo,         // vec = (pan, tilt) deg - absolute position, a P frame

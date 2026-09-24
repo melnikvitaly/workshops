@@ -49,27 +49,29 @@ spaces or tabs. Floats may use any format `strtof` accepts (`-0.124`, `.5`,
 
 | Direction | Frame | Meaning |
 |---|---|---|
-| `EYE` → `AIM` | `E <dx> <dy> <valid>` | Tracking error, streamed — the `AUTO` and `AUTO_POS` channels |
+| `EYE` → `AIM` | `E <dx> <dy> <valid>` | Tracking error, streamed — the `AUTO_POSITIONAL` and `AUTO_VELOCITYEQUATION` channels |
 | `EYE` → `AIM` | `M <vpan> <vtilt>` | Direct axis velocity, deg/s — the `MANUAL` channel |
 | `EYE` → `AIM` | `F` | Fire one shot |
-| `EYE` → `AIM` | `K <axis> <kp> <ki> <kd>` | Set `AUTO`'s (velocity-form) PID gains live; `axis` = `p` \| `t` \| `b` |
+| `EYE` → `AIM` | `K <axis> <kp> <ki> <kd>` | Set `AUTO_POSITIONAL`'s (rate-output) PID gains live; `axis` = `p` \| `t` \| `b` |
 | `EYE` → `AIM` | `N <dpan> <dtilt>` | Open-loop nudge, in degrees |
 | `EYE` → `AIM` | `P <pan> <tilt>` | Absolute position, in degrees |
 | `EYE` → `AIM` | `T <0\|1>` | Telemetry stream off / on |
 | `EYE` → `AIM` | `Q` | Query gains and state |
 | `AIM` → `EYE` | `G pan <kp> <ki> <kd> tilt <kp> <ki> <kd> armed <0\|1>` | Reply to `K` and `Q` |
 
-`G` reports whichever channel is actually selected: `AUTO`'s velocity-form
-gains normally, or `AUTO_POS`'s direct-position gains while `AUTO_POS` is
-selected — `K` always writes `AUTO`'s regardless of the active channel.
+`G` reports whichever channel is actually selected: `AUTO_POSITIONAL`'s
+rate-output gains normally, or `AUTO_VELOCITYEQUATION`'s velocity-equation
+gains while `AUTO_VELOCITYEQUATION` is selected — `K` always writes
+`AUTO_POSITIONAL`'s regardless of the active channel.
 
 `E` carries the error vector normalised to `[-1, 1]`, defined as
 `error = target_position − laser_dot_position`, with `valid = 1` only when both
-the dot and the target were seen in that frame. `AUTO_POS` consumes the same
-`E` stream as `AUTO` — it differs only in how `ctrl` turns the error into a
-servo command (direct position instead of velocity), see
+the dot and the target were seen in that frame. `AUTO_VELOCITYEQUATION`
+consumes the same `E` stream as `AUTO_POSITIONAL` — it differs only in how
+`ctrl` turns the error into a servo command (a velocity-equation angle delta
+instead of a rate), see
 [`servo-control-strategies.md`](./servo-control-strategies.md); its gains are
-NDJSON-only (`pid.pos.*`, §3.3), `K` never touches them. `M` is the manual
+NDJSON-only (`pid.veq.*`, §3.3), `K` never touches them. `M` is the manual
 counterpart:
 `EYE`'s mouse script sends a pan/tilt rate directly, bypassing the PID, and it is
 processed only while `input.channel = MANUAL`. `N` displaces the gimbal without
@@ -85,8 +87,9 @@ intersected with the mechanical limits — so neither can drive the gimbal past
 its stops even if the requested value is outside that range.
 
 Frames for the non-selected channel (an `E` frame while `MANUAL` is active, or an
-`M` frame while `AUTO` or `AUTO_POS` is active) are still parsed and counted as
-`drop_inact`, then dropped before the controller (§6).
+`M` frame while `AUTO_POSITIONAL` or `AUTO_VELOCITYEQUATION` is active) are
+still parsed and counted as `drop_inact`, then dropped before the controller
+(§6).
 
 Per-frame telemetry has moved to NDJSON (§3.4); the `T` frame now only toggles the
 stream on and off.
@@ -149,7 +152,7 @@ One JSON object per line, no newlines inside the object, terminated by `\n`.
 ### 3.1 Line format
 
 ```text
-{"t":"cfg.set","k":"input.channel","v":"AUTO","id":17}*4C\n
+{"t":"cfg.set","k":"input.channel","v":"AUTO_POSITIONAL","id":17}*68\n
 ```
 
 | Part | Rule |
@@ -220,10 +223,11 @@ sender retries or the operator repeats the command.
 ### 3.3 Configuration messages
 
 The key space is defined in [`architecture.md`](./architecture.md#5-configuration-and-storage).
-`input.channel` accepts `"NONE"`, `"AUTO"`, `"MANUAL"` or `"AUTO_POS"`; the
-`pid.pos.pan.{kp,ki,kd}` / `pid.pos.tilt.{kp,ki,kd}` keys are `AUTO_POS`'s
-gains, same `[0.0, 1000.0]` range as `pid.pan.*`/`pid.tilt.*` (§2.3) — there is
-no ASCII shortcut for them, only `cfg.set`.
+`input.channel` accepts `"NONE"`, `"AUTO_POSITIONAL"`, `"MANUAL"` or
+`"AUTO_VELOCITYEQUATION"`; the `pid.veq.pan.{kp,ki,kd}` /
+`pid.veq.tilt.{kp,ki,kd}` keys are `AUTO_VELOCITYEQUATION`'s gains, same
+`[0.0, 1000.0]` range as `pid.pan.*`/`pid.tilt.*` (§2.3) — there is no ASCII
+shortcut for them, only `cfg.set`.
 
 | `t` | Direction | Fields | Meaning |
 |---|---|---|---|
@@ -242,8 +246,8 @@ A silently ignored change is indistinguishable from a broken one, so `cfg.state`
 is emitted for *every* `cfg.set`, accepted or rejected:
 
 ```text
-{"t":"cfg.set","k":"input.channel","v":"AUTO","id":17}*4C
-{"t":"cfg.state","k":"input.channel","v":"AUTO","id":17,"ok":true,"err":null,"src":"uart","ver":1}*26
+{"t":"cfg.set","k":"input.channel","v":"AUTO_POSITIONAL","id":17}*68
+{"t":"cfg.state","k":"input.channel","v":"AUTO_POSITIONAL","id":17,"ok":true,"err":null,"src":"uart","ver":1}*64
 
 {"t":"cfg.set","k":"pid.pan.kp","v":-4,"id":18}*AF
 {"t":"cfg.state","k":"pid.pan.kp","v":40,"id":18,"ok":false,"err":"range","src":"uart","ver":1}*9F
@@ -311,7 +315,7 @@ All four are gated on the `T` frame. Each line is shown here exactly as it goes
 on the wire, with its real checksum:
 
 ```text
-{"t":"tlm","up":812345,"st":"ARMED","ch":"AUTO","ex":-0.031,"ey":0.012,"vp":-4.2,"vt":1.1,"pan":92.4,"tilt":78.1}*C8
+{"t":"tlm","up":812345,"st":"ARMED","ch":"AUTO_POSITIONAL","ex":-0.031,"ey":0.012,"vp":-4.2,"vt":1.1,"pan":92.4,"tilt":78.1}*DF
 {"t":"tlm.sd","up":812345,"pres":1,"mnt":1,"full":0,"free":7861248,"werr":0,"drop":3,"qd":11,"bps":4096,"lmax":214000,"lp95":9100}*25
 {"t":"tlm.sys","up":812345,"link":{"bad_crc":0,"overlong":0,"unparsed":2,"oor":0,"drop_inact":17,"uart_err":0},"pid_hz":29.8,"heap":183240,"cpu":{"ctrl":11,"logger":4,"ui":2,"idle":80},"stack_min":1840,"wdt":0}*1C
 {"t":"tlm.perf","up":812345,"pid":{"min":180,"max":2400,"ema":420},"parse":{"min":40,"max":310,"ema":85},"render":{"min":900,"max":4100,"ema":1800}}*AC
@@ -384,10 +388,10 @@ realtime `safety` task, which latches `FAULT`. Recovery needs an explicit operat
 acknowledgement — `{"t":"cfg.set","k":"fault.ack","v":true}` or the local
 `CONTROL` button.
 
-Routing E-stop through channel selection would mean that selecting `AUTO` disables
-the emergency stop on any other input channel. That is a safety defect, not a
-design preference, which is why the exemption is stated in the protocol rather
-than left to the implementation.
+Routing E-stop through channel selection would mean that selecting
+`AUTO_POSITIONAL` disables the emergency stop on any other input channel.
+That is a safety defect, not a design preference, which is why the exemption
+is stated in the protocol rather than left to the implementation.
 
 ---
 

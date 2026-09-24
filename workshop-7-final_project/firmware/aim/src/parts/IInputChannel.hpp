@@ -10,11 +10,11 @@ public:
     virtual ~IInputChannel() = default;
 
     // Drive the gimbal for this tick. `fresh` is ctrl's link/frame-freshness
-    // test - AutoChannel acts on it, the others ignore it.
+    // test - the Auto-family channels act on it, the others ignore it.
     virtual void update(uint32_t now, bool fresh) = 0;
 
     // Drop accumulated state: channel switch, arm, tour-done, fault-ack,
     // link-recovered, e-stop, link-stale. Each channel decides what "reset"
-    // means for itself (e.g. AutoChannel also drops its PID integrators).
+    // means for itself (e.g. an Auto-family channel also drops its PID state).
     virtual void reset(uint32_t now) = 0;
 };

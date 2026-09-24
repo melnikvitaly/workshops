@@ -153,20 +153,28 @@ namespace config
     // Note: the error is at most 1.0, so the P term alone tops out at Kp deg/s.
     // These caps only bite when Kp (plus the integral) exceeds them.
 
-    // --- PID (error vector -> servo position, direct-position form) ---------
-    // AutoPositionChannel's alternative to the velocity-form PID above - see
-    // docs/servo-control-strategies.md. Same normalised [-1, 1] error input,
-    // but Kp here maps error straight onto a *position* offset (dimensionless,
-    // not deg/s): the PID output is clamped to [POS_OUTPUT_MIN, POS_OUTPUT_MAX]
-    // and scaled onto the working zone directly, with no rate integration.
+    // --- PID (error vector -> servo angle delta, velocity-equation form) ----
+    // AutoVelocityEquationChannel's alternative to the rate-output PID above -
+    // see docs/servo-control-strategies.md and
+    // docs/pid_controller_equations_positional_vs_velocity.md. Same normalised
+    // [-1, 1] error input, but the PID output here IS a servo-angle delta in
+    // degrees, added straight onto the current angle each frame - no rate,
+    // no outer integration step.
     //
-    // Kp -> 1 tries to close all the error in a single sample - a deadbeat
-    // response that only works with a truly instantaneous plant. This loop's
-    // dead time (50-250 ms, docs/architecture.md SS6) spans several frame
-    // periods, so a Kp anywhere near 1 overshoots on the next sample instead
-    // of settling. Derate the same way as a Ziegler-Nichols dead-time rule:
-    // Kp <= 1 / (2N), N = dead time in frame periods. Start well under that
-    // and raise; back off at the first sign of hunting.
+    // Because Kp/Ki/Kd map normalised error onto DEGREES here (not the unit
+    // position fraction the old direct-position form used), they are scaled
+    // by the working-zone half-extent (WORK_PAN_MAX-WORK_PAN_MIN)/2 = 30 deg
+    // pan, (WORK_TILT_MAX-WORK_TILT_MIN)/2 = 15 deg tilt, from that form's
+    // starting points.
+    //
+    // Kp -> half-extent tries to close all the error in a single sample - a
+    // deadbeat response that only works with a truly instantaneous plant.
+    // This loop's dead time (50-250 ms, docs/architecture.md SS6) spans
+    // several frame periods, so a Kp anywhere near that overshoots on the
+    // next sample instead of settling. Derate the same way as a
+    // Ziegler-Nichols dead-time rule: Kp <= half-extent / (2N), N = dead time
+    // in frame periods. Start well under that and raise; back off at the
+    // first sign of hunting.
     //
     // Ki pulls in the last bit of steady-state offset (e.g. gravity droop on
     // tilt); keep it a fraction of Kp so it cannot itself force an overshoot
@@ -174,19 +182,21 @@ namespace config
     // PID_DERIV_ALPHA above applies here too.
     //
     // NOT yet bench-tuned - starting points only.
-    constexpr float PAN_POS_KP = 0.15f;
-    constexpr float PAN_POS_KI = 0.05f;
-    constexpr float PAN_POS_KD = 0.0f;
+    constexpr float PAN_VEQ_KP = 4.5f;
+    constexpr float PAN_VEQ_KI = 1.5f;
+    constexpr float PAN_VEQ_KD = 0.0f;
 
-    constexpr float TILT_POS_KP = 0.12f;
-    constexpr float TILT_POS_KI = 0.05f;
-    constexpr float TILT_POS_KD = 0.0f;
+    constexpr float TILT_VEQ_KP = 1.8f;
+    constexpr float TILT_VEQ_KI = 0.75f;
+    constexpr float TILT_VEQ_KD = 0.0f;
 
-    // The PID output IS the position here, so its clamp is the unit working
-    // area itself, not a tuning knob - AutoPositionChannel scales this
-    // straight onto the working zone.
-    constexpr float POS_OUTPUT_MIN = -1.0f;
-    constexpr float POS_OUTPUT_MAX = 1.0f;
+    // VelocityEquationPid's running output tracks the actual servo angle and
+    // is clamped to it - not a fixed pair of constants here, because the
+    // working zone can change at runtime (Gimbal::setWorkingZone(), a
+    // cfg.set from the UI). AutoVelocityEquationChannel reads the live zone
+    // straight off the Gimbal each tick (see
+    // AutoVelocityEquationChannel::syncOutputLimits()), so this clamp can
+    // never fall out of sync with what Gimbal::moveTo() itself allows.
 
     // These must not exceed the Gimbal's hard rate ceiling. If they did, the
     // PID would believe it was still in range while the Gimbal was quietly
@@ -348,32 +358,34 @@ namespace config
     constexpr uint32_t SD_FREE_POLL_MS    = 2000;  // sd.free_bytes refresh
 
     // --- Config plane ------------------------------------------------------
-    // Exactly one input channel is processed at a time.
-    enum class Channel : uint8_t { None = 0, Auto = 1, Manual = 2, AutoPosition = 3 };
+    // Exactly one input channel is processed at a time. Named after the PID
+    // form each one runs: AutoPositional -> PositionalPid, AutoVelocityEquation
+    // -> VelocityEquationPid (see docs/servo-control-strategies.md).
+    enum class Channel : uint8_t { None = 0, AutoPositional = 1, Manual = 2, AutoVelocityEquation = 3 };
 
     inline const char *channelName(Channel c)
     {
         switch (c)
         {
-        case Channel::None:         return "NONE";
-        case Channel::Auto:         return "AUTO";
-        case Channel::Manual:       return "MANUAL";
-        case Channel::AutoPosition: return "AUTO_POS";
+        case Channel::None:                 return "NONE";
+        case Channel::AutoPositional:       return "AUTO_POSITIONAL";
+        case Channel::Manual:               return "MANUAL";
+        case Channel::AutoVelocityEquation: return "AUTO_VELOCITYEQUATION";
         }
         return "?";
     }
 
-    // Short press on MODE advances NONE -> AUTO -> MANUAL -> AUTO_POS -> NONE.
-    // AUTO_POS is appended last so it doesn't shift the existing NONE/AUTO/
-    // MANUAL muscle memory.
+    // Short press on MODE advances NONE -> AUTO_POSITIONAL -> MANUAL ->
+    // AUTO_VELOCITYEQUATION -> NONE. AUTO_VELOCITYEQUATION is appended last so
+    // it doesn't shift the existing NONE/AUTO_POSITIONAL/MANUAL muscle memory.
     inline Channel nextChannel(Channel c)
     {
         switch (c)
         {
-        case Channel::None:         return Channel::Auto;
-        case Channel::Auto:         return Channel::Manual;
-        case Channel::Manual:       return Channel::AutoPosition;
-        case Channel::AutoPosition: return Channel::None;
+        case Channel::None:                 return Channel::AutoPositional;
+        case Channel::AutoPositional:       return Channel::Manual;
+        case Channel::Manual:               return Channel::AutoVelocityEquation;
+        case Channel::AutoVelocityEquation: return Channel::None;
         }
         return Channel::None;
     }
@@ -381,7 +393,12 @@ namespace config
     // Bumped whenever ConfigBlob's layout or semantics change. A stored blob
     // with a different version is rejected and the compiled defaults reloaded -
     // a stale blob is never reinterpreted.
-    constexpr uint16_t SCHEMA_VERSION = 3;
+    //
+    // v4: pan_pos_gains/tilt_pos_gains (direct-position, unit-space Kp~0.1)
+    // became pan_veq_gains/tilt_veq_gains (velocity-equation, degree-space
+    // Kp~1-5) - same layout, incompatible semantics, so an old blob's gains
+    // must not be reinterpreted under the new algorithm.
+    constexpr uint16_t SCHEMA_VERSION = 4;
 
     // The persisted configuration. POD and trivially copyable: written to NVS
     // as one blob and copied out under the config mutex by ctrl each step.
@@ -389,8 +406,8 @@ namespace config
     {
         uint8_t input_channel; // Channel
 
-        Gains pan_gains, tilt_gains;         // velocity-form PID (AutoChannel)
-        Gains pan_pos_gains, tilt_pos_gains; // direct-position PID (AutoPositionChannel)
+        Gains pan_gains, tilt_gains;         // rate-output PID, PositionalPid (AutoPositionalChannel)
+        Gains pan_veq_gains, tilt_veq_gains; // velocity-equation PID, VelocityEquationPid (AutoVelocityEquationChannel)
 
         Zone zone;
 
@@ -407,8 +424,8 @@ namespace config
         /* input_channel          */ (uint8_t)Channel::None,
         /* pan_gains              */ {PAN_KP, PAN_KI, PAN_KD},
         /* tilt_gains             */ {TILT_KP, TILT_KI, TILT_KD},
-        /* pan_pos_gains          */ {PAN_POS_KP, PAN_POS_KI, PAN_POS_KD},
-        /* tilt_pos_gains         */ {TILT_POS_KP, TILT_POS_KI, TILT_POS_KD},
+        /* pan_veq_gains          */ {PAN_VEQ_KP, PAN_VEQ_KI, PAN_VEQ_KD},
+        /* tilt_veq_gains         */ {TILT_VEQ_KP, TILT_VEQ_KI, TILT_VEQ_KD},
         /* zone                   */ {WORK_PAN_MIN, WORK_PAN_MAX, WORK_TILT_MIN, WORK_TILT_MAX},
         /* laser_brightness       */ 0,
         /* telemetry_rate_hz      */ 10,

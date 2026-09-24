@@ -395,7 +395,7 @@ def run(args):
                     # Sliders are lost on exit; this is how a session's tuning
                     # becomes the next run's command line.
                     print(th.flags())
-                # MANUAL fails safe the same 300 ms way AUTO does, so this
+                # MANUAL fails safe the same 300 ms way the Auto-family channels do, so this
                 # must run every iteration, key or not, same as link.send()
                 # above for the E frames.
                 manual.tick()

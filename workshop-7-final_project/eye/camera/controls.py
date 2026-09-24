@@ -21,10 +21,10 @@ if __package__ in (None, ""):
 
 # Preset gain combinations. (pan_kp, pan_ki, pan_kd), (tilt...)
 #
-# Sized for AUTO's velocity-form PID (Kp in the tens). AUTO_POS's gains are a
-# different scale entirely - its whole PID output is clamped to [-1, 1], so
-# Kp near 1 is already aggressive (docs/servo-control-strategies.md) - these
-# presets are not meant for it.
+# Sized for AUTO_POSITIONAL's rate-output PID (Kp in the tens).
+# AUTO_VELOCITYEQUATION's gains are a different scale entirely - its output
+# is a degrees-per-tick delta, clamped to the working-zone half-extent
+# (docs/servo-control-strategies.md) - these presets are not meant for it.
 #
 # Weighted towards D, because that is the term worth sweeping on this rig: the
 # gimbal overshoots and rings, which D fixes and I does not. I is deliberately
@@ -105,11 +105,20 @@ class Flow(ttk.Frame):
         return widget
 
     def _on_configure(self, event):
+        # Not event.width: the first Configure can fire before ttk has
+        # settled each child's final reqwidth (theme/font still resolving
+        # at startup), so the fit check below runs against a width that no
+        # longer matches what the children actually need -- rows come out
+        # too full and spill past the frame's right edge. Re-querying both
+        # numbers together, after flushing pending geometry, keeps them
+        # consistent.
+        self.update_idletasks()
+        width = self.winfo_width()
         x, row, col = 0, 0, 0
         places = []
         for w in self._items:
             need = w.winfo_reqwidth() + _GAP
-            if col and x + need > event.width:
+            if col and x + need > width:
                 row, col, x = row + 1, 0, 0
             places.append((row, col))
             col += 1
@@ -189,9 +198,10 @@ class Controls:
         # Not sent automatically: unlike telemetry, forcing the channel over
         # is a real behavioural change (it can take control away from
         # whatever else is driving the gimbal), so it waits for the operator
-        # to press Set. AUTO is only the default shown here, since it is what
-        # this script's own E frames need -- the firmware itself boots at NONE.
-        self.channel = tk.StringVar(value="AUTO")
+        # to press Set. AUTO_POSITIONAL is only the default shown here, since
+        # it is what this script's own E frames need -- the firmware itself
+        # boots at NONE.
+        self.channel = tk.StringVar(value="AUTO_POSITIONAL")
         # Mirrors the firmware default (boot.tour off); not read back from the
         # board. Ticking it sends the value, which the board saves in NVS.
         self.boot_tour = tk.BooleanVar(value=False)
@@ -274,16 +284,17 @@ class Controls:
                           "again. PC side only.")
         chan =row.add(ttk.Frame(row))
         ttk.Label(chan, text="Channel").pack(side="left", padx=(0, 4))
-        ttk.Combobox(chan, textvariable=self.channel, width=8, state="readonly",
-                     values=["NONE", "AUTO", "MANUAL", "AUTO_POS"]).pack(side="left")
+        ttk.Combobox(chan, textvariable=self.channel, width=22, state="readonly",
+                     values=["NONE", "AUTO_POSITIONAL", "MANUAL", "AUTO_VELOCITYEQUATION"]).pack(side="left")
         ttk.Button(chan, text="Set", command=self._set_channel).pack(
             side="left", padx=(4, 0))
 
     def _build_gains(self, parent):
         box = _titled_box(parent, "PID gains", (
             "Pick a preset to fill the table (nothing is sent yet). Edit any "
-            "value, then Apply sends pan and tilt gains together, to AUTO or "
-            "AUTO_POS depending on the Channel selector above."))
+            "value, then Apply sends pan and tilt gains together, to "
+            "AUTO_POSITIONAL or AUTO_VELOCITYEQUATION depending on the "
+            "Channel selector above."))
         box.pack(fill="x", pady=(8, 0))
 
         # Picking a preset only fills the table; nothing is sent until Apply.
@@ -375,14 +386,15 @@ class Controls:
             self._say(f"channel failed: {exc}", ok=False)
             return
 
-        if channel not in ("AUTO", "AUTO_POS"):
+        if channel not in ("AUTO_POSITIONAL", "AUTO_VELOCITYEQUATION"):
             self._say(f"channel -> {channel} (cfg.set id {cid}); "
                       "confirmed by the overlay's 'ch:' field once a tlm sample lands")
             return
 
-        # AUTO and AUTO_POS each have their own gains (pid.* vs pid.pos.*) --
-        # read back what the board is actually running rather than leaving
-        # whatever preset/manual entry was sitting in the table.
+        # AUTO_POSITIONAL and AUTO_VELOCITYEQUATION each have their own gains
+        # (pid.* vs pid.veq.*) -- read back what the board is actually
+        # running rather than leaving whatever preset/manual entry was
+        # sitting in the table.
         try:
             gains = self.link.read_gains(channel)
             missing = [k for k in ("pan_kp", "pan_ki", "pan_kd",
@@ -438,16 +450,17 @@ class Controls:
             self._say(f"telemetry failed: {exc}", ok=False)
 
     def _apply_gains(self):
-        # AUTO_POS's gains are a separate set (pid.pos.*, cfg.set only) from
-        # AUTO's (pid.*, the K frame) - send to whichever channel the table
-        # currently represents (see _set_channel(), which fills it from the
-        # matching one), not always AUTO's.
-        target = "AUTO_POS" if self.channel.get() == "AUTO_POS" else "AUTO"
+        # AUTO_VELOCITYEQUATION's gains are a separate set (pid.veq.*,
+        # cfg.set only) from AUTO_POSITIONAL's (pid.*, the K frame) - send to
+        # whichever channel the table currently represents (see
+        # _set_channel(), which fills it from the matching one), not always
+        # AUTO_POSITIONAL's.
+        target = "AUTO_VELOCITYEQUATION" if self.channel.get() == "AUTO_VELOCITYEQUATION" else "AUTO_POSITIONAL"
         try:
             values = {axis: self._floats(self.gains[axis]) for axis, _ in _AXES}
             for axis, code in _AXES:
-                if target == "AUTO_POS":
-                    self.link.set_pos_gains(code, *values[axis])
+                if target == "AUTO_VELOCITYEQUATION":
+                    self.link.set_veq_gains(code, *values[axis])
                 else:
                     self.link.set_gains(code, *values[axis])
         except Exception as exc:

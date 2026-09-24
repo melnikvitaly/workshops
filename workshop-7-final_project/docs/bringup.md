@@ -69,7 +69,7 @@ control loop keeps running regardless (see
 | Line | Example | Meaning |
 |---|---|---|
 | 1 | `AIM  DISARMED` | Current FSM state |
-| 2 | `CH: NONE` | Active input channel (`NONE`/`AUTO`/`MANUAL`) |
+| 2 | `CH: NONE` | Active input channel (`NONE`/`AUTO_POSITIONAL`/`MANUAL`/`AUTO_VELOCITYEQUATION`) |
 | 3 | `CRC:0 OVL:0` | `bad_crc`, `overlong` frame counters |
 | 4 | `UNP:0 OOR:0` | `unparsed`, `out_of_range` frame counters |
 | 5 | `DRPi:0 ERR:0` | `drop_inact` (inactive-channel drops), `uart_err` |
@@ -98,8 +98,8 @@ from the `MODE` button briefly overrides it with a blink count
 
 **`MODE` button blink** (channel confirmation, overrides the state colour for
 ~1.5 s): the LED blinks in the new channel's colour — dim white for `NONE`
-(no blink), green for `AUTO` (2 phases), blue for `MANUAL` (4 phases) — then
-returns to the state colour above.
+(no blink), green for `AUTO_POSITIONAL` (2 phases), blue for `MANUAL`
+(4 phases) — then returns to the state colour above.
 
 ## 6. Connecting `EYE`
 
@@ -110,7 +110,7 @@ traffic immediately.
 
 Before wiring up the camera, `eye/camera/README.md` has three link-only
 checks (constant error, sweep, fire) under **Bring-up, before connecting the
-camera**, plus how to set `input.channel = AUTO` and arm — see
+camera**, plus how to set `input.channel = AUTO_POSITIONAL` and arm — see
 [**Making the PC the active channel**](../eye/camera/README.md#making-the-pc-the-active-channel)
 and [**Arming**](../eye/camera/README.md#arming).
 
@@ -124,8 +124,9 @@ and [**Arming**](../eye/camera/README.md#arming).
       blink count change accordingly, with no `EYE` connected.
 - [ ] `BTN_ESTOP` press latches `FAULT` (red LED); the `CONTROL` button
       acknowledges it back to `DISARMED`.
-- [ ] With `EYE` connected and `--echo`: `cfg.set input.channel AUTO` gets a
-      `cfg.state ... OK` reply, and `CH:` on the OLED updates to `AUTO`.
+- [ ] With `EYE` connected and `--echo`: `cfg.set input.channel AUTO_POSITIONAL`
+      gets a `cfg.state ... OK` reply, and `CH:` on the OLED updates to
+      `AUTO_POSITIONAL`.
 - [ ] Arm (`CONTROL` button or `serial_link.py --arm`); `st:` in the
       `EYE` telemetry readout reads `ARMED`, LED turns green.
 - [ ] Unplug the `UART1` adapter: within 300 ms the board reports

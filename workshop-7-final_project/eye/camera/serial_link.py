@@ -63,7 +63,7 @@ And the tuning console:
     py -3 serial_link.py --query                     # Q
     py -3 serial_link.py --gains b 40 4 0            # K b 40 4 0
     py -3 serial_link.py --telemetry 1 --nudge 8 0   # T 1 then N 8 0
-    py -3 serial_link.py --channel AUTO              # cfg.set input.channel AUTO
+    py -3 serial_link.py --channel AUTO_POSITIONAL   # cfg.set input.channel AUTO_POSITIONAL
     py -3 serial_link.py --arm                       # {"t":"arm"}
     py -3 serial_link.py --disarm                    # {"t":"disarm"}
     py -3 serial_link.py --zone 40 110 80 120        # cfg.set zone.{pan,tilt}.{min,max}
@@ -198,7 +198,7 @@ def parse_tlm(line):
     """dict if `line` is a `tlm` control sample (docs/protocol.md §3.4), else
     None.
 
-        {"t":"tlm","up":..,"st":"ARMED","ch":"AUTO","ex":..,"ey":..,
+        {"t":"tlm","up":..,"st":"ARMED","ch":"AUTO_POSITIONAL","ex":..,"ey":..,
          "vp":..,"vt":..,"pan":..,"tilt":..}*XX
 
     Wire keys are kept as-is (ex/ey/vp/vt/pan/tilt) -- see architecture.md §5
@@ -227,7 +227,7 @@ def parse_tlm_sys(line):
 def parse_cfg_state(line):
     """dict if `line` is a `cfg.state` acknowledgement, else None.
 
-        {"t":"cfg.state","k":"input.channel","v":"AUTO","id":17,"ok":true,
+        {"t":"cfg.state","k":"input.channel","v":"AUTO_POSITIONAL","id":17,"ok":true,
          "err":null,"src":"uart","ver":1}*XX
 
     docs/protocol.md §3.3 -- the reply to every cfg.set, accepted (`ok`:
@@ -515,7 +515,8 @@ class ErrorLink:
 
         Rate-limited the same way send() rate-limits E frames, and for the
         same reason: MANUAL fails safe within config::TRACK_TIMEOUT_MS
-        (300 ms) of the last M frame, exactly like AUTO does on E frames. A
+        (300 ms) of the last M frame, exactly like the Auto-family channels
+        do on E frames. A
         caller driving this from a key held down must keep calling it every
         loop iteration -- zero velocity included -- rather than only when the
         commanded rate changes; see manual_control.py.
@@ -571,11 +572,12 @@ class ErrorLink:
                              "rejects them")
         self.send_raw(f"K {a} {kp:g} {ki:g} {kd:g}\n")
 
-    def set_pos_gains(self, axis, kp, ki, kd):
-        """cfg.set the three `pid.pos.<axis>.{kp,ki,kd}` keys - AUTO_POS's
-        direct-position PID gains (docs/servo-control-strategies.md), as
-        opposed to set_gains()'s `K` frame, which always targets AUTO's
-        velocity-form gains regardless of the active channel.
+    def set_veq_gains(self, axis, kp, ki, kd):
+        """cfg.set the three `pid.veq.<axis>.{kp,ki,kd}` keys -
+        AUTO_VELOCITYEQUATION's velocity-equation PID gains
+        (docs/servo-control-strategies.md), as opposed to set_gains()'s `K`
+        frame, which always targets AUTO_POSITIONAL's rate-output gains
+        regardless of the active channel.
 
         There is no ASCII fast path or "both axes" shortcut for these, and no
         batched cfg.set on the wire - three separate lines, each with its own
@@ -589,9 +591,9 @@ class ErrorLink:
         if min(kp, ki, kd) < 0.0:
             raise ValueError("negative gains invert the loop; the firmware "
                              "rejects them")
-        return (self.cfg_set(f"pid.pos.{a}.kp", kp),
-                self.cfg_set(f"pid.pos.{a}.ki", ki),
-                self.cfg_set(f"pid.pos.{a}.kd", kd))
+        return (self.cfg_set(f"pid.veq.{a}.kp", kp),
+                self.cfg_set(f"pid.veq.{a}.ki", ki),
+                self.cfg_set(f"pid.veq.{a}.kd", kd))
 
     def nudge(self, dpan_deg, dtilt_deg):
         """`N <dpan> <dtilt>` - displace the gimbal open loop, in degrees.
@@ -648,7 +650,7 @@ class ErrorLink:
     def send_ndjson(self, obj):
         """Seal `obj` with its CRC-8 and send it as one NDJSON line.
 
-            {"t":"cfg.set","k":"input.channel","v":"AUTO","id":17}*4C
+            {"t":"cfg.set","k":"input.channel","v":"AUTO_POSITIONAL","id":17}*68
 
         docs/protocol.md §3.1/§3.2. `obj` must be JSON-serialisable and small
         enough to stay under the 256-byte line cap once sealed.
@@ -705,16 +707,17 @@ class ErrorLink:
 
     def read_gains(self, channel=None, timeout=0.4):
         """Read back the live PID gains for `channel` (default: whichever
-        channel set_channel() last requested, or "AUTO" if none yet) via
-        cfg.get -- `pid.pan/tilt.*` for AUTO, `pid.pos.pan/tilt.*` for
-        AUTO_POS (docs/protocol.md §3.3). Only AUTO and AUTO_POS have a PID to
+        channel set_channel() last requested, or "AUTO_POSITIONAL" if none
+        yet) via cfg.get -- `pid.pan/tilt.*` for AUTO_POSITIONAL,
+        `pid.veq.pan/tilt.*` for AUTO_VELOCITYEQUATION (docs/protocol.md
+        §3.3). Only AUTO_POSITIONAL and AUTO_VELOCITYEQUATION have a PID to
         read; MANUAL and NONE raise. See _read_keys() for the
         blocking/missing-key behaviour.
         """
-        c = str(channel or self.channel_requested or "AUTO").strip().upper()
-        if c not in ("AUTO", "AUTO_POS"):
+        c = str(channel or self.channel_requested or "AUTO_POSITIONAL").strip().upper()
+        if c not in ("AUTO_POSITIONAL", "AUTO_VELOCITYEQUATION"):
             raise ValueError(f"channel {c!r} has no PID gains to read")
-        prefix = "pid.pos." if c == "AUTO_POS" else "pid."
+        prefix = "pid.veq." if c == "AUTO_VELOCITYEQUATION" else "pid."
         return self._read_keys({
             "pan_kp": f"{prefix}pan.kp", "pan_ki": f"{prefix}pan.ki",
             "pan_kd": f"{prefix}pan.kd",
@@ -746,22 +749,25 @@ class ErrorLink:
         }, timeout)
 
     def set_channel(self, channel):
-        """cfg.set `input.channel` - NONE / AUTO / MANUAL / AUTO_POS.
+        """cfg.set `input.channel` - NONE / AUTO_POSITIONAL / MANUAL /
+        AUTO_VELOCITYEQUATION.
 
-        This is what makes this script's own `E` frames (the AUTO channel)
-        actually move the gimbal: the firmware boots with input.channel =
-        NONE, and every frame on a non-selected channel is parsed, counted as
-        drop_inact, and thrown away before it reaches the controller (§2.1).
-        MANUAL is the keyboard-driven `M <vpan> <vtilt>` channel (see
-        manual_control.py / the `manual()` method), not this script's own.
-        AUTO_POS consumes the same `E` frames as AUTO, just through a
-        direct-position PID instead of AUTO's velocity-form one - see
+        This is what makes this script's own `E` frames (the AUTO_POSITIONAL
+        channel) actually move the gimbal: the firmware boots with
+        input.channel = NONE, and every frame on a non-selected channel is
+        parsed, counted as drop_inact, and thrown away before it reaches the
+        controller (§2.1). MANUAL is the keyboard-driven `M <vpan> <vtilt>`
+        channel (see manual_control.py / the `manual()` method), not this
+        script's own. AUTO_VELOCITYEQUATION consumes the same `E` frames as
+        AUTO_POSITIONAL, just through a velocity-equation PID instead of
+        AUTO_POSITIONAL's rate-output one - see
         docs/servo-control-strategies.md.
         """
         c = str(channel).strip().upper()
-        if c not in ("NONE", "AUTO", "MANUAL", "AUTO_POS"):
+        if c not in ("NONE", "AUTO_POSITIONAL", "MANUAL", "AUTO_VELOCITYEQUATION"):
             raise ValueError(
-                f"channel must be NONE/AUTO/MANUAL/AUTO_POS (got {channel!r})")
+                f"channel must be NONE/AUTO_POSITIONAL/MANUAL/"
+                f"AUTO_VELOCITYEQUATION (got {channel!r})")
         self.channel_requested = c
         return self.cfg_set("input.channel", c)
 
@@ -771,7 +777,7 @@ class ErrorLink:
 
         Not a cfg.set: nothing is persisted, and there is no cfg.state ack.
         No-ops unless the FSM is DISARMED/PARKED -- watch `st:` in telemetry
-        to see whether it actually armed. AUTO-channel `E` frames only move
+        to see whether it actually armed. Auto-family `E` frames only move
         the gimbal once `st:` reads ARMED -- selecting the channel alone is
         not enough. Like the physical button, this is not gated by
         input.channel. Does not clear a latched FAULT -- see fault.ack.
@@ -889,7 +895,7 @@ class ErrorLink:
                 # Zero both channels: whichever one is actually selected
                 # is what stops the gimbal, and there is no way to read
                 # input.channel back from here to send only the right one.
-                self.send_now(0.0, 0.0, False)   # AUTO
+                self.send_now(0.0, 0.0, False)   # AUTO_POSITIONAL / AUTO_VELOCITYEQUATION
                 self.manual_now(0.0, 0.0)        # MANUAL
             self._tx.put(None)                   # worker exits after sending these
             self._thread.join(timeout=1.0)
@@ -960,7 +966,7 @@ def _console(link):
           "  N 8 0             nudge 8 degrees of pan, open loop\n"
           "  T 1 / T 0         telemetry on / off\n"
           "  F                 fire\n"
-          "  E 0.2 0 1         one error frame (AUTO channel)\n"
+          "  E 0.2 0 1         one error frame (AUTO_POSITIONAL channel)\n"
           "  M 20 0            one velocity frame, deg/s (MANUAL channel)\n"
           "Ctrl-C or 'exit' to leave.")
 
@@ -1033,18 +1039,19 @@ def _main():
                          "for the keyboard-driven version")
     ap.add_argument("--telemetry", type=int, choices=[0, 1], metavar="0|1",
                     help="T: start/stop the plottable per-frame stream")
-    ap.add_argument("--channel", choices=["NONE", "AUTO", "MANUAL", "AUTO_POS"],
-                    help="cfg.set input.channel: AUTO is what makes this "
-                         "script's own E frames (or tracker.py's) take "
-                         "effect -- the firmware boots with it at NONE. "
-                         "AUTO_POS runs the same E frames through a "
-                         "direct-position PID instead of AUTO's velocity-form "
-                         "one")
+    ap.add_argument("--channel", choices=["NONE", "AUTO_POSITIONAL", "MANUAL", "AUTO_VELOCITYEQUATION"],
+                    help="cfg.set input.channel: AUTO_POSITIONAL is what "
+                         "makes this script's own E frames (or tracker.py's) "
+                         "take effect -- the firmware boots with it at NONE. "
+                         "AUTO_VELOCITYEQUATION runs the same E frames "
+                         "through a velocity-equation PID instead of "
+                         "AUTO_POSITIONAL's rate-output one")
     ap.add_argument("--arm", action="store_true",
                     help="{\"t\":\"arm\"}: remote CONTROL-button press. "
-                         "No-ops unless DISARMED/PARKED. Selecting AUTO "
-                         "alone does not move the gimbal; it also has to be "
-                         "ARMED (see st: in the telemetry)")
+                         "No-ops unless DISARMED/PARKED. Selecting an "
+                         "Auto-family channel alone does not move the "
+                         "gimbal; it also has to be ARMED (see st: in the "
+                         "telemetry)")
     ap.add_argument("--disarm", action="store_true",
                     help="{\"t\":\"disarm\"}: remote CONTROL-button press. "
                          "No-ops unless ARMED/LINK_LOST (see st: in the "

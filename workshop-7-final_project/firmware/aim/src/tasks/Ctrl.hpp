@@ -34,8 +34,8 @@
 #include "ZoneTour.hpp"
 #include "IInputChannel.hpp"
 #include "ManualChannel.hpp"
-#include "AutoChannel.hpp"
-#include "AutoPositionChannel.hpp"
+#include "AutoPositionalChannel.hpp"
+#include "AutoVelocityEquationChannel.hpp"
 #include "NoneChannel.hpp"
 
 // The ctrl task. Owns the PIDs, the gimbal and the
@@ -69,7 +69,7 @@ public:
         _activeChannel = selectChannel(_lastChannel);
 
         const uint32_t now = nowMs();
-        _autoChannel.reset(now); // primes _lastPidMs so the first frame's dt is sane
+        _autoPositionalChannel.reset(now); // primes _lastPidMs so the first frame's dt is sane
         _lastActivityMs = now;
         _lastFrameMs    = now - config::TRACK_TIMEOUT_MS - 1; // start stale
     }
@@ -150,7 +150,7 @@ private:
         // the PC keeps sending at a steady rate specifically so a missed
         // detection holds the loop rather than tripping the link failsafe
         // (see serial_link.py's module docstring). Target visibility is a
-        // separate concern, already handled inside AutoChannel::onErrorSample.
+        // separate concern, already handled inside AutoPositionalChannel::onErrorSample.
         const bool fresh = !chNone && (now - _lastFrameMs <= config::TRACK_TIMEOUT_MS);
         _ipc.linkFresh.store(fresh);
 
@@ -198,11 +198,11 @@ private:
     {
         switch (ch)
         {
-        case config::Channel::Auto:         return &_autoChannel;
-        case config::Channel::Manual:       return &_manualChannel;
-        case config::Channel::AutoPosition: return &_autoPositionChannel;
+        case config::Channel::AutoPositional:       return &_autoPositionalChannel;
+        case config::Channel::Manual:               return &_manualChannel;
+        case config::Channel::AutoVelocityEquation: return &_autoVelocityEquationChannel;
         case config::Channel::None:
-        default:                            return &_noneChannel;
+        default:                                    return &_noneChannel;
         }
     }
 
@@ -210,23 +210,23 @@ private:
     {
         if (force || _cfg.pan_gains != _panGains)
         {
-            _autoChannel.setPanGains(_cfg.pan_gains.kp, _cfg.pan_gains.ki, _cfg.pan_gains.kd);
+            _autoPositionalChannel.setPanGains(_cfg.pan_gains.kp, _cfg.pan_gains.ki, _cfg.pan_gains.kd);
             _panGains = _cfg.pan_gains;
         }
         if (force || _cfg.tilt_gains != _tiltGains)
         {
-            _autoChannel.setTiltGains(_cfg.tilt_gains.kp, _cfg.tilt_gains.ki, _cfg.tilt_gains.kd);
+            _autoPositionalChannel.setTiltGains(_cfg.tilt_gains.kp, _cfg.tilt_gains.ki, _cfg.tilt_gains.kd);
             _tiltGains = _cfg.tilt_gains;
         }
-        if (force || _cfg.pan_pos_gains != _panPosGains)
+        if (force || _cfg.pan_veq_gains != _panVeqGains)
         {
-            _autoPositionChannel.setPanGains(_cfg.pan_pos_gains.kp, _cfg.pan_pos_gains.ki, _cfg.pan_pos_gains.kd);
-            _panPosGains = _cfg.pan_pos_gains;
+            _autoVelocityEquationChannel.setPanGains(_cfg.pan_veq_gains.kp, _cfg.pan_veq_gains.ki, _cfg.pan_veq_gains.kd);
+            _panVeqGains = _cfg.pan_veq_gains;
         }
-        if (force || _cfg.tilt_pos_gains != _tiltPosGains)
+        if (force || _cfg.tilt_veq_gains != _tiltVeqGains)
         {
-            _autoPositionChannel.setTiltGains(_cfg.tilt_pos_gains.kp, _cfg.tilt_pos_gains.ki, _cfg.tilt_pos_gains.kd);
-            _tiltPosGains = _cfg.tilt_pos_gains;
+            _autoVelocityEquationChannel.setTiltGains(_cfg.tilt_veq_gains.kp, _cfg.tilt_veq_gains.ki, _cfg.tilt_veq_gains.kd);
+            _tiltVeqGains = _cfg.tilt_veq_gains;
         }
     }
 
@@ -283,8 +283,8 @@ private:
             else
             {
                 // fresh is guaranteed true here: the branch above already
-                // catches !fresh && !chNone, so Auto (which implies !chNone)
-                // only reaches this dispatch while fresh.
+                // catches !fresh && !chNone, so an Auto-family channel (which
+                // implies !chNone) only reaches this dispatch while fresh.
                 _activeChannel->update(now, fresh);
             }
             break;
@@ -311,37 +311,38 @@ private:
 
     void resetLoop(uint32_t now)
     {
-        _autoChannel.reset(now);
-        _autoPositionChannel.reset(now);
+        _autoPositionalChannel.reset(now);
+        _autoVelocityEquationChannel.reset(now);
         _manualChannel.reset(now);
         _gimbal.setVelocity({0.0f, 0.0f});
     }
 
     // --- telemetry source for whichever Auto-family channel is active ------
-    // Only AUTO and AUTO_POS carry a meaningful error/on-target/pidRuns - both
-    // expose the same accessor shape as a plain convention, not through
-    // IInputChannel (which stays the minimal update()/reset() strategy
-    // interface). Manual/None fall back to _autoChannel's (stale) values,
-    // same as before this channel existed.
+    // Only AUTO_POSITIONAL and AUTO_VELOCITYEQUATION carry a meaningful
+    // error/on-target/pidRuns - both expose the same accessor shape as a
+    // plain convention, not through IInputChannel (which stays the minimal
+    // update()/reset() strategy interface). Manual/None fall back to
+    // _autoPositionalChannel's (stale) values, same as before this channel
+    // existed.
     Point currentError() const
     {
-        return _lastChannel == config::Channel::AutoPosition
-                   ? _autoPositionChannel.error()
-                   : _autoChannel.error();
+        return _lastChannel == config::Channel::AutoVelocityEquation
+                   ? _autoVelocityEquationChannel.error()
+                   : _autoPositionalChannel.error();
     }
 
     bool currentOnTarget() const
     {
-        return _lastChannel == config::Channel::AutoPosition
-                   ? _autoPositionChannel.onTarget()
-                   : _autoChannel.onTarget();
+        return _lastChannel == config::Channel::AutoVelocityEquation
+                   ? _autoVelocityEquationChannel.onTarget()
+                   : _autoPositionalChannel.onTarget();
     }
 
     uint32_t currentPidRuns() const
     {
-        return _lastChannel == config::Channel::AutoPosition
-                   ? _autoPositionChannel.pidRuns()
-                   : _autoChannel.pidRuns();
+        return _lastChannel == config::Channel::AutoVelocityEquation
+                   ? _autoVelocityEquationChannel.pidRuns()
+                   : _autoPositionalChannel.pidRuns();
     }
 
     // --- laser ------------------------------------------------------------------
@@ -451,13 +452,13 @@ private:
     Relay _laserRelay{pinout::LASER_GATE, config::RELAY_ACTIVE_HIGH};
     Laser _laser{_laserRelay, config::LASER_FIRE_BLANK_MS};
 
-    AutoChannel _autoChannel{_gimbal,
+    AutoPositionalChannel _autoPositionalChannel{_gimbal,
                              config::PAN_KP, config::PAN_KI, config::PAN_KD, config::PAN_MAX_SLEW,
                              config::TILT_KP, config::TILT_KI, config::TILT_KD, config::TILT_MAX_SLEW,
                              config::PID_DERIV_ALPHA};
-    AutoPositionChannel _autoPositionChannel{_gimbal,
-                             config::PAN_POS_KP, config::PAN_POS_KI, config::PAN_POS_KD,
-                             config::TILT_POS_KP, config::TILT_POS_KI, config::TILT_POS_KD,
+    AutoVelocityEquationChannel _autoVelocityEquationChannel{_gimbal,
+                             config::PAN_VEQ_KP, config::PAN_VEQ_KI, config::PAN_VEQ_KD,
+                             config::TILT_VEQ_KP, config::TILT_VEQ_KI, config::TILT_VEQ_KD,
                              config::PID_DERIV_ALPHA};
     ManualChannel _manualChannel{_gimbal};
     NoneChannel   _noneChannel{_gimbal};
@@ -476,8 +477,8 @@ private:
 
     Gains _panGains{0, 0, 0};
     Gains _tiltGains{0, 0, 0};
-    Gains _panPosGains{0, 0, 0};
-    Gains _tiltPosGains{0, 0, 0};
+    Gains _panVeqGains{0, 0, 0};
+    Gains _tiltVeqGains{0, 0, 0};
     Zone _zone{0, 0, 0, 0};
 
     uint32_t _lastFrameMs = 0;    // last E/M frame of any validity -- link liveness
@@ -501,12 +502,13 @@ inline void CtrlTask::handleCmd<CmdKind::ErrorSample>(uint32_t now, const CmdIte
     // camera sits relative to the gimbal.
     const Point err{config::PAN_INVERT ? -c.vec.x : c.vec.x,
                     config::TILT_INVERT ? -c.vec.y : c.vec.y};
-    // link_uart only lets an E frame through while AUTO or AUTO_POS is
-    // selected (see LinkUart.hpp), so _lastChannel alone picks the right one.
-    if (_lastChannel == config::Channel::AutoPosition)
-        _autoPositionChannel.onErrorSample(c.flag, err, c.t_ms);
+    // link_uart only lets an E frame through while AUTO_POSITIONAL or
+    // AUTO_VELOCITYEQUATION is selected (see LinkUart.hpp), so _lastChannel
+    // alone picks the right one.
+    if (_lastChannel == config::Channel::AutoVelocityEquation)
+        _autoVelocityEquationChannel.onErrorSample(c.flag, err, c.t_ms);
     else
-        _autoChannel.onErrorSample(c.flag, err, c.t_ms);
+        _autoPositionalChannel.onErrorSample(c.flag, err, c.t_ms);
     _lastActivityMs = now;
 }
 

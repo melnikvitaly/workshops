@@ -14,7 +14,7 @@ Two independent outputs, both optional:
   * console  -- one line per send, EXCEPT an `E` frame without --echo. `E` is
                 the one tag sent continuously regardless of any user action
                 -- up to the link's max rate (commonly 20-30 Hz) for as long
-                as AUTO is running -- so printing every one by default would
+                as an Auto-family channel is running -- so printing every one by default would
                 drown everything else; it stays quiet unless explicitly
                 asked for. Every other tag prints unconditionally, `M`
                 (manual_control.py's keyboard drive) included: unlike `E`, an

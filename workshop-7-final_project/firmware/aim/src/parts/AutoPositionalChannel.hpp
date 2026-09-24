@@ -13,10 +13,10 @@
 //
 // The setpoint is implicitly zero (see PositionalPid.hpp); this class only carries the
 // per-frame bookkeeping (visibility, dt, arrival) around that.
-class AutoChannel : public IInputChannel
+class AutoPositionalChannel : public IInputChannel
 {
 public:
-    AutoChannel(Gimbal &gimbal,
+    AutoPositionalChannel(Gimbal &gimbal,
                 float panKp, float panKi, float panKd, float panMaxSlew,
                 float tiltKp, float tiltKi, float tiltKd, float tiltMaxSlew,
                 float derivAlpha)

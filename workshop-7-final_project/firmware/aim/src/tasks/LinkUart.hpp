@@ -132,7 +132,7 @@ private:
         {
         case ndjson::Field::Kind::String:
         {
-            char vs[16];
+            char vs[24]; // fits the longest channel name, AUTO_VELOCITYEQUATION (22 chars)
             const size_t n = (vf.len < sizeof(vs) - 1) ? vf.len : sizeof(vs) - 1;
             std::memcpy(vs, vf.ptr, n);
             vs[n] = '\0';
@@ -204,10 +204,10 @@ private:
         switch (f.type)
         {
         case protocol::FrameType::Error:
-            // AUTO and AUTO_POS are both camera-error-driven - they differ in
-            // how ctrl turns the error into a servo command, not in what
-            // feeds them.
-            if (ch != config::Channel::Auto && ch != config::Channel::AutoPosition)
+            // AUTO_POSITIONAL and AUTO_VELOCITYEQUATION are both
+            // camera-error-driven - they differ in how ctrl turns the error
+            // into a servo command, not in what feeds them.
+            if (ch != config::Channel::AutoPositional && ch != config::Channel::AutoVelocityEquation)
             {
                 _ipc.dropInactive.fetch_add(1);
                 return;
@@ -329,13 +329,14 @@ private:
     {
         config::ConfigBlob c;
         _ipc.config->snapshot(c);
-        // Report whichever channel is actually running: AUTO_POS's PID is a
-        // different gain set (direct-position form) from AUTO's, and a `Q`
-        // while AUTO_POS is active should show what it is actually doing,
-        // not AUTO's unrelated numbers.
-        const bool posActive = (config::Channel)c.input_channel == config::Channel::AutoPosition;
-        const Gains &pan  = posActive ? c.pan_pos_gains  : c.pan_gains;
-        const Gains &tilt = posActive ? c.tilt_pos_gains : c.tilt_gains;
+        // Report whichever channel is actually running: AUTO_VELOCITYEQUATION's
+        // PID is a different gain set (velocity-equation form) from
+        // AUTO_POSITIONAL's, and a `Q` while AUTO_VELOCITYEQUATION is active
+        // should show what it is actually doing, not AUTO_POSITIONAL's
+        // unrelated numbers.
+        const bool veqActive = (config::Channel)c.input_channel == config::Channel::AutoVelocityEquation;
+        const Gains &pan  = veqActive ? c.pan_veq_gains  : c.pan_gains;
+        const Gains &tilt = veqActive ? c.tilt_veq_gains : c.tilt_gains;
         char line[128];
         std::snprintf(line, sizeof(line),
                       "G pan %.2f %.2f %.2f tilt %.2f %.2f %.2f armed %d",

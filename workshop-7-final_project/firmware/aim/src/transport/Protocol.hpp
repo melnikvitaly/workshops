@@ -7,7 +7,7 @@
 // instead.
 //
 // Downlink (EYE -> AIM):
-//     E <dx> <dy> <valid>          tracking error, streamed          (AUTO channel)
+//     E <dx> <dy> <valid>          tracking error, streamed          (AUTO_POSITIONAL/AUTO_VELOCITYEQUATION channels)
 //     M <vpan> <vtilt>             direct velocity command, deg/s    (MANUAL channel)
 //     F                            fire one shot (blank the beam)
 //     K <axis> <kp> <ki> <kd>      set PID gains live; axis = p | t | b
