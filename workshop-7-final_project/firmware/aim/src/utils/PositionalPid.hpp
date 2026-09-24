@@ -2,7 +2,7 @@
 #include <cmath>
 #include "Ema.hpp"
 
-// PID controller for a plant that *integrates* its input.
+// Positional-form PID controller for a plant that *integrates* its input.
 //
 // The output is a RATE (deg/s), which the caller integrates into a position:
 //
@@ -21,7 +21,7 @@
 // The derivative is low-pass filtered. The error arrives from a camera at a
 // modest frame rate and carries pixel noise; raw differentiation of that is
 // mostly noise amplification. derivAlpha = 1.0 disables the filter.
-class Pid
+class PositionalPid
 {
     float _kp, _ki, _kd;
     float _outMin, _outMax;
@@ -33,7 +33,7 @@ class Pid
     Ema<float> _dFilter;
 
 public:
-    Pid(float kp, float ki, float kd,
+    PositionalPid(float kp, float ki, float kd,
         float outMin, float outMax,
         float derivAlpha = 1.0f)
         : _kp(kp), _ki(ki), _kd(kd),

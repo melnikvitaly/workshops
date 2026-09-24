@@ -4,14 +4,14 @@
 #include "IInputChannel.hpp"
 #include "Gimbal.hpp"
 #include "Point.hpp"
-#include "Pid.hpp"
+#include "PositionalPid.hpp"
 #include "Config.hpp"
 
 // Camera-tracking input channel: a pan/tilt PID pair closing the loop on the
 // error vector reported by EYE, one fresh frame at a time (dt measured
 // between frames, not once per tick - ported from ErrorVectorInput::update()).
 //
-// The setpoint is implicitly zero (see Pid.hpp); this class only carries the
+// The setpoint is implicitly zero (see PositionalPid.hpp); this class only carries the
 // per-frame bookkeeping (visibility, dt, arrival) around that.
 class AutoChannel : public IInputChannel
 {
@@ -96,7 +96,7 @@ private:
         _tiltPid.reset();
     }
 
-    static float axisRate(Pid &pid, float error, float dt)
+    static float axisRate(PositionalPid &pid, float error, float dt)
     {
         const float mag = error < 0.0f ? -error : error;
         if (mag < config::TRACK_DEADZONE)
@@ -115,8 +115,8 @@ private:
     }
 
     Gimbal &_gimbal;
-    Pid     _panPid;
-    Pid     _tiltPid;
+    PositionalPid _panPid;
+    PositionalPid _tiltPid;
 
     Point    _error{0.0f, 0.0f};
     bool     _targetVisible = false;

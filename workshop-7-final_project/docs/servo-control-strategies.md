@@ -1,15 +1,29 @@
-# Servo Control Strategies — Direct Position vs Velocity-Form PID
+# Servo Control Strategies — Direct Position vs Rate-Output PID
 
 Two ways to drive a PID output onto a standard hobby servo (an internal
-position-tracking actuator). `AIM` uses **velocity-form PID with position
+position-tracking actuator). `AIM` uses **rate-output PID with position
 stepping** — this doc explains why, against the alternative. The
-implementation is [`utils/Pid.hpp`](../firmware/aim/src/utils/Pid.hpp); the
+implementation is
+[`utils/PositionalPid.hpp`](../firmware/aim/src/utils/PositionalPid.hpp); the
 design rationale is [`architecture.md` §6](./architecture.md#6-control).
+
+> **Terminology note:** some sources call a *different* algorithm "velocity
+> form" — one that differences the error itself,
+> `Δu_k = Kp(e_k-e_{k-1}) + Ki*e_k*dt + Kd(e_k-2e_{k-1}+e_{k-2})/dt`, then
+> accumulates `u_k = u_{k-1} + Δu_k` (see the `apm` reference in
+> [§4](#4-references)). That form is algebraically equivalent to positional
+> PID — it is just computed incrementally, with no explicit integral
+> accumulator. `AIM` does **not** use it. §2 below keeps positional-form
+> error terms (`Kp*e[k]`, an explicit integral, matching
+> [`PositionalPid.hpp`](../firmware/aim/src/utils/PositionalPid.hpp), whose
+> class name reflects this) and instead treats the PID *output* as a rate,
+> adding an outer integration step to turn it into a position. This doc
+> calls the overall strategy "rate-output PID" to avoid the name clash.
 
 ## Contents
 
 1. [Direct position control](#1-direct-position-control)
-2. [Velocity-form PID (position stepping)](#2-velocity-form-pid-position-stepping)
+2. [Rate-output PID (position stepping)](#2-rate-output-pid-position-stepping)
 3. [Comparison](#3-comparison)
 4. [References](#4-references)
 
@@ -29,7 +43,7 @@ Every PID sample is a full position setpoint change. Simple, and fast for a
 single large step, but every noisy or aggressive sample is a real position
 command the servo must chase.
 
-## 2. Velocity-form PID (position stepping)
+## 2. Rate-output PID (position stepping)
 
 The PID output is a **rate**; the microcontroller integrates it into the
 position command each tick:
@@ -43,14 +57,14 @@ angle[k] = clamp(angle[k-1] + v[k]*dt, angleMin, angleMax)   // integration step
 The extra line — `angle[k-1] + v[k]*dt` — has no equivalent in §1: it is what
 makes the plant seen by the outer loop `P(s) = k/s`, a pure integrator,
 instead of the servo's own near-unity closed position loop. This is exactly
-[`Pid::update()`](../firmware/aim/src/utils/Pid.hpp)'s contract — the caller
-does `angle += pid.update(error, dt) * dt`.
+[`PositionalPid::update()`](../firmware/aim/src/utils/PositionalPid.hpp)'s
+contract — the caller does `angle += pid.update(error, dt) * dt`.
 
 ---
 
 ## 3. Comparison
 
-| Dimension | Direct position control | Velocity-form PID (position stepping) |
+| Dimension | Direct position control | Rate-output PID (position stepping) |
 |---|---|---|
 | **Core representation** | PID output = target angle (position domain) | PID output = target rate; MCU integrates to angle each tick |
 | **Plant model seen by outer loop** | Near-unity gain with lag — servo's own loop absorbs the step | Pure integrator, `P(s) = k/s` |
@@ -66,7 +80,7 @@ does `angle += pid.update(error, dt) * dt`.
 | **Interaction with servo's internal loop** | Can fight it if updates arrive faster than the servo settles | Steps stay inside the servo's linear slew range — less fighting |
 | **MCU cost** | One PID evaluation per tick | Same, plus one multiply-add and one clamp — negligible |
 | **Ideal use case** | Large, infrequent setpoint changes; point-to-point positioning | Continuous closed-loop tracking against a moving/noisy error signal |
-| **Applicability to this project** | Poor fit — `AIM` tracks a continuously-moving camera error at 50–250 ms dead time (§6); direct position would feed every noisy/stale detection straight into the servo as a position command | **Used.** Matches the vision-tracking plant exactly: [`architecture.md` §6](./architecture.md#6-control) targets `P(s)=k/s` deliberately, rate limits absorb detector noise and dead time, and [`Pid::hold()`](../firmware/aim/src/utils/Pid.hpp) handles the zero-error/non-zero-Ki case this form requires |
+| **Applicability to this project** | Poor fit — `AIM` tracks a continuously-moving camera error at 50–250 ms dead time (§6); direct position would feed every noisy/stale detection straight into the servo as a position command | **Used.** Matches the vision-tracking plant exactly: [`architecture.md` §6](./architecture.md#6-control) targets `P(s)=k/s` deliberately, rate limits absorb detector noise and dead time, and [`PositionalPid::hold()`](../firmware/aim/src/utils/PositionalPid.hpp) handles the zero-error/non-zero-Ki case this form requires |
 
 ---
 
@@ -91,8 +105,8 @@ Anti-windup theory:
   ["Anti-Windup in PID Control: Review, Analysis, and New Tuning
   Directions"][antiwindup] (arXiv:2606.01959) — back-calculation vs.
   conditional integration (the scheme
-  [`Pid.hpp`](../firmware/aim/src/utils/Pid.hpp) uses) on saturating
-  actuators, with tuning rules.
+  [`PositionalPid.hpp`](../firmware/aim/src/utils/PositionalPid.hpp) uses) on
+  saturating actuators, with tuning rules.
 - Lavretsky, ["Integrator Anti-Windup Design for Servo-Controllers with
   Position Constraints"][lavretsky] (arXiv:2504.12207) — anti-windup for
   position-saturated servo controllers via control-barrier-function theory.

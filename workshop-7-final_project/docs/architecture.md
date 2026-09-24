@@ -462,8 +462,9 @@ in order:
 6. `ctrl` drains `cmd_q`; `AutoChannel::onErrorSample()` copies the vector
    into its own `_error` member, sign-corrected for the mounting
    (`PAN_INVERT`/`TILT_INVERT`).
-7. `AutoChannel::update()` runs each axis's `Pid::update(error, dt)`, turning
-   the error into a commanded rate in deg/s.
+7. `AutoChannel::update()` runs each axis's
+   `PositionalPid::update(error, dt)`, turning the error into a commanded
+   rate in deg/s.
 8. `Gimbal::setVelocity()` clamps the rate to the hardware ceiling;
    `Gimbal::update()` integrates it into a target angle and calls
    `Servo::write(angle)`, clamped to the working zone.

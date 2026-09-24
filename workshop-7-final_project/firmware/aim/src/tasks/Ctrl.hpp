@@ -28,7 +28,7 @@
 #include "Relay.hpp"
 #include "Gimbal.hpp"
 #include "Laser.hpp"
-#include "Pid.hpp"
+#include "PositionalPid.hpp"
 #include "Gains.hpp"
 #include "Zone.hpp"
 #include "ZoneTour.hpp"

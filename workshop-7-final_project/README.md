@@ -47,7 +47,7 @@ and wire formats are in [`docs/architecture.md`](./docs/architecture.md).
 | [`firmware/aim/src/parts/`](./firmware/aim/src/parts) | Gimbal, Laser, StatusLed |
 | [`firmware/aim/src/tasks/`](./firmware/aim/src/tasks) | ctrl, safety, link_uart, logger, ui |
 | [`firmware/aim/src/transport/`](./firmware/aim/src/transport) | `ITransport` + Uart |
-| [`firmware/aim/src/utils/`](./firmware/aim/src/utils) | Pid, RingQueue, Crc8 |
+| [`firmware/aim/src/utils/`](./firmware/aim/src/utils) | PositionalPid, RingQueue, Crc8 |
 | [`eye/camera/`](./eye/camera) | Detection, overlay, controls, serial link |
 | [`hardware/`](./hardware/README.md) | `AIM` board — KiCad, DRC, plots, BOM |
 

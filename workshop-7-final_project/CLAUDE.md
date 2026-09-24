@@ -14,7 +14,7 @@ workshop-7-final_project/
         parts/           Gimbal, Laser, StatusLed
         tasks/           ctrl, safety, link_uart, logger, ui (+ link_net, radio: Phase 1)
         transport/       ITransport + Uart (Mqtt / EspNow: Phase 1)
-        utils/           Pid, RingQueue, Crc8
+        utils/           PositionalPid, RingQueue, Crc8
         Config.hpp  ConfigStore.hpp  StateMachine.hpp  Pinout.hpp
     pilot/               wireless remote — ESP32-C3
     vault/               storage controller — STM32 (Phase 1)
