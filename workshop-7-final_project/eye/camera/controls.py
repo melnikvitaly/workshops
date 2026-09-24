@@ -91,6 +91,18 @@ class Flow(ttk.Frame):
 
     Add children with `add()`; they are laid out left to right and start a new
     line when the next one would not fit. Re-run on every width change.
+
+    Positions children with place(), not grid or pack: grid ties every row's
+    column widths together, so a wide widget on one line (the Channel
+    combobox, on its own line once it wraps) stretched a narrow widget's
+    column on an earlier line far past what that widget needed -- and since
+    the panel this sits in disables propagate, nothing shrank it back, so it
+    rendered outside the panel. A per-line sub-frame with pack(in_=...) fixed
+    that but traded it for a worse bug: pack's `in_` reparents the child's
+    actual window onto that sub-frame, so destroying the sub-frame on the
+    next relayout (e.g. once the pane's sash finishes settling at startup)
+    destroyed the child with it -- controls vanishing outright. place() sets
+    each child's own (x, y) directly, with nothing to reparent or destroy.
     """
 
     def __init__(self, parent):
@@ -104,30 +116,34 @@ class Flow(ttk.Frame):
         self._layout = None
         return widget
 
-    def _on_configure(self, event):
+    def _on_configure(self, _event):
         # Not event.width: the first Configure can fire before ttk has
         # settled each child's final reqwidth (theme/font still resolving
-        # at startup), so the fit check below runs against a width that no
-        # longer matches what the children actually need -- rows come out
-        # too full and spill past the frame's right edge. Re-querying both
-        # numbers together, after flushing pending geometry, keeps them
-        # consistent.
+        # at startup), so the fit check below would run against a width
+        # that no longer matches what the children actually need.
+        # Re-querying both together, after flushing pending geometry,
+        # keeps them consistent.
         self.update_idletasks()
         width = self.winfo_width()
-        x, row, col = 0, 0, 0
-        places = []
+        x, y, row_h = 0, 0, 0
+        placements = []
         for w in self._items:
-            need = w.winfo_reqwidth() + _GAP
-            if col and x + need > width:
-                row, col, x = row + 1, 0, 0
-            places.append((row, col))
-            col += 1
-            x += need
-        if places == self._layout:
+            need = w.winfo_reqwidth()
+            if x and x + need > width:
+                x, y, row_h = 0, y + row_h + 4, 0
+            placements.append((w, x, y))
+            x += need + _GAP
+            row_h = max(row_h, w.winfo_reqheight())
+        if placements == self._layout:
             return
-        self._layout = places
-        for w, (r, c) in zip(self._items, places):
-            w.grid(row=r, column=c, sticky="w", padx=(0, _GAP), pady=2)
+        self._layout = placements
+        # place() does not feed a widget's size back into its parent's own
+        # requested size the way pack/grid do, so this frame has to state
+        # its own height explicitly -- otherwise the panel above gives it
+        # none and every placed child is there but invisible.
+        self.config(height=y + row_h)
+        for w, px, py in placements:
+            w.place(x=px, y=py)
 
 
 def _wrap_to(label, parent):
