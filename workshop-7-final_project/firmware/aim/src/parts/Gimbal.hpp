@@ -22,10 +22,6 @@
 // arm into its stop.
 class Gimbal
 {
-    static constexpr float DEFAULT_MIN_DEG = 10.0f;
-    static constexpr float DEFAULT_MAX_DEG = 170.0f;
-    static constexpr float DEFAULT_MAX_RATE = 120.0f; // deg/s
-
     Servo &_pan;  // servo A (below) - horizontal axis
     Servo &_tilt; // servo B (above) - vertical axis
 
@@ -43,6 +39,10 @@ class Gimbal
 
     Point _velocity{0.0f, 0.0f}; // deg/s, already rate-limited
 
+    // True if the last moveTo() had to trim the requested angle to fit
+    // the effective travel - see wasClamped() below.
+    bool _clamped = false;
+
     // Symmetric clamp with a NaN guard: a non-finite rate would poison the
     // integrated angle permanently, and the servo would never recover.
     static float clampRate(float degPerSec, float maxRate)
@@ -59,8 +59,8 @@ class Gimbal
 public:
     Gimbal(Servo &pan, Servo &tilt,
            ViewPort viewPort,
-           Zone mechZone = {DEFAULT_MIN_DEG, DEFAULT_MAX_DEG, DEFAULT_MIN_DEG, DEFAULT_MAX_DEG},
-           float panMaxRate = DEFAULT_MAX_RATE, float tiltMaxRate = DEFAULT_MAX_RATE)
+           Zone mechZone,
+           float panMaxRate, float tiltMaxRate)
         : _pan(pan), _tilt(tilt),
           _viewPortAngles(viewPort),
           _mechZone(mechZone),
@@ -121,6 +121,7 @@ public:
     void moveTo(float panDeg, float tiltDeg)
     {
         const Point clamped = _travel.clamp({panDeg, tiltDeg});
+        _clamped = (clamped.x != panDeg) || (clamped.y != tiltDeg);
         _pan.write(clamped.x);
         _tilt.write(clamped.y);
     }
@@ -149,6 +150,10 @@ public:
     {
         return _travel.atLimit({_pan.angle(), _tilt.angle()});
     }
+
+    // True if the most recent moveTo() call asked for more than the
+    // effective travel allows, and the angle was trimmed to fit.
+    bool wasClamped() const { return _clamped; }
 
     float panAngle() const { return _pan.angle(); }
     float tiltAngle() const { return _tilt.angle(); }

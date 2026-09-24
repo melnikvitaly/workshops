@@ -156,6 +156,17 @@ private:
 
         if (stepState(now, fresh, chNone))
             _gimbal.update(config::UPDATE_PERIOD_S);
+
+        const bool clampedNow = _gimbal.wasClamped();
+        if (clampedNow && !_wasGimbalClamped)
+            emitGimbalClamped(now);
+        _wasGimbalClamped = clampedNow;
+
+        const bool pidClampedNow = currentPidClamped();
+        if (pidClampedNow && !_wasPidClamped)
+            emitPidClamped(now);
+        _wasPidClamped = pidClampedNow;
+
         updateLaser();
         _ipc.pidRuns.store(currentPidRuns());
         pushLog(now);
@@ -345,6 +356,13 @@ private:
                    : _autoPositionalChannel.pidRuns();
     }
 
+    bool currentPidClamped() const
+    {
+        return _lastChannel == config::Channel::AutoVelocityEquation
+                   ? _autoVelocityEquationChannel.pidClamped()
+                   : _autoPositionalChannel.pidClamped();
+    }
+
     // --- laser ------------------------------------------------------------------
     void updateLaser()
     {
@@ -411,6 +429,44 @@ private:
         std::snprintf(line, sizeof(line),
                       "{\"t\":\"evt\",\"e\":\"estop\",\"up\":%llu,\"src\":\"%s\",\"latched\":true}",
                       (unsigned long long)esp_timer_get_time(), src);
+        ndjson::seal(line, sizeof(line));
+        if (_ipc.link)
+            _ipc.link->writeLine(line);
+    }
+
+    // One ESP_LOGW + one sealed `evt e:"clamp"` line each time the gimbal's
+    // commanded move is trimmed to fit the travel zone - edge-triggered
+    // (see _wasGimbalClamped) so a PID pinned against the wall logs once,
+    // not every 20 ms tick.
+    void emitGimbalClamped(uint32_t /*now*/)
+    {
+        ESP_LOGW(TAG, "gimbal clamped: pan=%.1f tilt=%.1f",
+                 (double)_gimbal.panAngle(), (double)_gimbal.tiltAngle());
+
+        char line[112];
+        std::snprintf(line, sizeof(line),
+                      "{\"t\":\"evt\",\"e\":\"clamp\",\"up\":%llu,\"pan\":%.1f,\"tilt\":%.1f}",
+                      (unsigned long long)esp_timer_get_time(),
+                      (double)_gimbal.panAngle(), (double)_gimbal.tiltAngle());
+        ndjson::seal(line, sizeof(line));
+        if (_ipc.link)
+            _ipc.link->writeLine(line);
+    }
+
+    // One ESP_LOGW + one sealed `evt e:"pid_clamp"` line each time the active
+    // channel's PID output saturates - edge-triggered (see _wasPidClamped),
+    // same reasoning as emitGimbalClamped(). This is the loop's own
+    // anti-windup clamp, upstream of and distinct from the gimbal's
+    // travel-zone clamp.
+    void emitPidClamped(uint32_t /*now*/)
+    {
+        const Point error = currentError();
+        ESP_LOGW(TAG, "pid output clamped: ex=%.3f ey=%.3f", (double)error.x, (double)error.y);
+
+        char line[112];
+        std::snprintf(line, sizeof(line),
+                      "{\"t\":\"evt\",\"e\":\"pid_clamp\",\"up\":%llu,\"ex\":%.3f,\"ey\":%.3f}",
+                      (unsigned long long)esp_timer_get_time(), (double)error.x, (double)error.y);
         ndjson::seal(line, sizeof(line));
         if (_ipc.link)
             _ipc.link->writeLine(line);
@@ -486,6 +542,8 @@ private:
     uint32_t _lastDenyMs     = 0;
     uint32_t _seq            = 0;
     uint32_t _fireCount      = 0;
+    bool     _wasGimbalClamped = false; // edge state for emitGimbalClamped()
+    bool     _wasPidClamped    = false; // edge state for emitPidClamped()
 };
 
 // --- cmd_q handlers, one per CmdKind, single level of abstraction each -------

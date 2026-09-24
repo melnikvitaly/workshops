@@ -72,6 +72,10 @@ public:
     bool     onTarget() const { return _onTarget; }
     // PID evaluations since boot (one per fresh frame) - the caller derives Hz.
     uint32_t pidRuns() const  { return _pidRuns; }
+    // True if either axis' PID had to trim its running output this tick -
+    // the loop is saturated, distinct from Gimbal::wasClamped() (the
+    // travel-zone clamp moveTo() itself applies downstream).
+    bool     pidClamped() const { return _panPid.wasClamped() || _tiltPid.wasClamped(); }
 
     // Drive the gimbal for this tick. `fresh` is the caller's link/frame
     // freshness test - false forces a reset, same as a lost link. Unlike

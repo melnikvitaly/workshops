@@ -29,6 +29,7 @@ class PositionalPid
     float _integral  = 0.0f; // accumulated error*dt; Ki is applied at output time
     float _prevError = 0.0f;
     bool  _primed    = false;
+    bool  _clamped   = false; // true if the last update() output hit [outMin, outMax]
 
     Ema<float> _dFilter;
 
@@ -48,6 +49,7 @@ public:
         _integral  = 0.0f;
         _prevError = 0.0f;
         _primed    = false;
+        _clamped   = false;
         _dFilter.reset();
     }
 
@@ -66,12 +68,16 @@ public:
     {
         _prevError = error;
         _primed    = true;
+        _clamped   = false; // not producing an output this tick - nothing to clamp
     }
 
     float kp() const       { return _kp; }
     float ki() const       { return _ki; }
     float kd() const       { return _kd; }
     float integral() const { return _integral; }
+    // True if the most recent update() call had to trim its computed output
+    // to fit [outMin, outMax] - the loop is saturated on this axis.
+    bool  wasClamped() const { return _clamped; }
 
     // error - measured error (target minus laser dot), normalised to [-1, 1].
     // dt    - seconds since the previous call.
@@ -115,10 +121,12 @@ public:
             out = p + _ki * _integral + d;
         }
 
-        if (out > _outMax)
-            out = _outMax;
-        if (out < _outMin)
-            out = _outMin;
-        return out;
+        float clamped = out;
+        if (clamped > _outMax)
+            clamped = _outMax;
+        if (clamped < _outMin)
+            clamped = _outMin;
+        _clamped = (clamped != out);
+        return clamped;
     }
 };

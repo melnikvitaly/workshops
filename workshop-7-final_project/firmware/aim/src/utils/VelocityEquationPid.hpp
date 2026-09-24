@@ -42,6 +42,7 @@ class VelocityEquationPid
     float _prevError  = 0.0f; // e[k-1]
     float _prevError2 = 0.0f; // e[k-2]
     uint8_t _primed   = 0;    // 0 = no history, 1 = one sample, 2+ = full history
+    bool    _clamped  = false; // true if the last update() delta was trimmed by the running-output clamp
 
     Ema<float> _dFilter;
 
@@ -65,6 +66,7 @@ public:
         _prevError  = 0.0f;
         _prevError2 = 0.0f;
         _primed     = 0;
+        _clamped    = false;
         _dFilter.reset();
     }
 
@@ -86,11 +88,15 @@ public:
         _prevError  = error;
         if (_primed < 2)
             ++_primed;
+        _clamped = false; // not producing a delta this tick - nothing to clamp
     }
 
     float kp() const { return _kp; }
     float ki() const { return _ki; }
     float kd() const { return _kd; }
+    // True if the most recent update() call had to trim the running output
+    // to fit [outMin, outMax] - the loop is saturated on this axis.
+    bool  wasClamped() const { return _clamped; }
 
     // error - measured error (target minus laser dot), normalised to [-1, 1].
     // dt    - seconds since the previous call.
@@ -125,10 +131,12 @@ public:
         // Anti-windup: clamp the running output, then derive the delta from
         // the clamp (see class comment).
         float candidate = _output + rawDelta;
-        if (candidate > _outMax) candidate = _outMax;
-        if (candidate < _outMin) candidate = _outMin;
-        const float delta = candidate - _output;
-        _output = candidate;
+        float clamped = candidate;
+        if (clamped > _outMax) clamped = _outMax;
+        if (clamped < _outMin) clamped = _outMin;
+        _clamped = (clamped != candidate);
+        const float delta = clamped - _output;
+        _output = clamped;
         return delta;
     }
 };

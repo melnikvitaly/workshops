@@ -235,11 +235,13 @@ private:
             known += pct[t];
             if (hwm[t] < minHwm)
                 minHwm = hwm[t];
-            ESP_LOGI(TAG, "cpu %-9s %5.1f%%  stack free %lu words",
-                     NAMES[t], (double)pct[t], (unsigned long)hwm[t]);
+            if constexpr (config::ENABLE_SYS_STATS)
+                ESP_LOGI(TAG, "cpu %-9s %5.1f%%  stack free %lu words",
+                         NAMES[t], (double)pct[t], (unsigned long)hwm[t]);
         }
         const float idle = known < 100.0f ? 100.0f - known : 0.0f;
-        ESP_LOGI(TAG, "cpu %-9s %5.1f%%", "idle", (double)idle);
+        if constexpr (config::ENABLE_SYS_STATS)
+            ESP_LOGI(TAG, "cpu %-9s %5.1f%%", "idle", (double)idle);
 
         // ctrl/logger/ui + idle only - safety and link_uart stay console-only
         // (both near-0% in normal operation), to leave the wire message's
