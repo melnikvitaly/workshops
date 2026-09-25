@@ -1,6 +1,6 @@
 """Live threshold sliders for the detection stage.
 
-The `--red-*` and `--black-*` numbers decide what counts as a dot, and finding
+The `--red-*` and `--green-*` numbers decide what counts as a dot, and finding
 them is a matter of watching the masks while moving one at a time. As command
 line flags that costs a restart per guess; here they are sliders in the right
 panel of the main window (see app_window.py), so a value can be swept against a
@@ -38,26 +38,15 @@ _RED_PARAMS = (
     _Param("red_area_max", "area max", 0, 5000, 0.1, int),
 )
 
-_BLACK_PARAMS = (
-    # is it ink?
-    _Param("black_offset", "offset", 0, 60, 1, int),
-    _Param("black_block", "block px", 3, 201, 1, int),
-    _Param("black_darkness", "darkness", 0.0, 1.5, 100, float),
-    _Param("black_sat_margin", "sat margin", 0, 255, 1, int),
-    # is it a circle?
-    _Param("black_circ", "circ", 0.0, 1.0, 100, float),
-    _Param("black_radial", "radial", 0.0, 0.5, 1000, float),
-    _Param("black_aspect", "aspect", 1.0, 3.0, 100, float),
-    _Param("black_solidity", "solidity", 0.0, 1.0, 100, float),
-    _Param("black_compact", "compact", 0.0, 1.0, 100, float),
-    _Param("black_hole", "hole", 0.0, 1.0, 100, float),
-    # size and framing
-    _Param("black_area_min", "area min", 0, 2000, 1, int),
-    _Param("black_area_max", "area max", 0, 50000, 0.01, int),
-    _Param("black_edge_margin", "edge margin", -1, 50, 1, int),
+_GREEN_PARAMS = (
+    _Param("green_rel", "rel", 0.0, 1.0, 100, float),
+    _Param("green_min_greenness", "min greenness", 0, 120, 1, int),
+    _Param("green_circ", "circ", 0.0, 1.0, 100, float),
+    _Param("green_area_min", "area min", 0, 200, 1, int),
+    _Param("green_area_max", "area max", 0, 5000, 0.1, int),
 )
 
-_TABS = (("Red dot", _RED_PARAMS), ("Black dots", _BLACK_PARAMS))
+_TABS = (("Red dot", _RED_PARAMS), ("Green dot", _GREEN_PARAMS))
 
 
 def _count(p):
@@ -119,13 +108,10 @@ class Thresholds:
         return (self.red_area_min, self.red_area_max, self.red_circ,
                 self.red_min_redness, self.red_rel)
 
-    def black_args(self):
-        """Positional arguments for dots.find_black_dots, after the frame."""
-        return (self.black_area_min, self.black_area_max, self.black_circ,
-                self.black_darkness, self.black_sat_margin, self.black_block,
-                self.black_offset, self.black_radial, self.black_aspect,
-                self.black_solidity, self.black_compact, self.black_hole,
-                self.black_edge_margin)
+    def green_args(self):
+        """Positional arguments for dots.find_green_dot, after the frame."""
+        return (self.green_area_min, self.green_area_max, self.green_circ,
+                self.green_min_greenness, self.green_rel)
 
     def flags(self):
         """The current values as a command line, to carry a tuning session out."""

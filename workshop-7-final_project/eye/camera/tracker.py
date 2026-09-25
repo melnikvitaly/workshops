@@ -1,19 +1,19 @@
-"""OAK camera -> red dot + black target dot -> error vector -> ESP32 over COM.
+"""OAK camera -> red dot + green target dot -> error vector -> ESP32 over COM.
 
 The PC end of the closed loop implemented by src/inputs/ErrorVectorInput.hpp.
 Each frame:
 
-    frame ─┬─ red   dot (redness + size)     ─> where the laser points now
-           └─ black dots (adaptive + shape)  ─> where it should point
+    frame ─┬─ red   dot (redness + size)    ─> where the laser points now
+           └─ green dot (greenness + size)  ─> where it should point
                                     │
                           error = target - laser, normalised
                                     │
                     "E <dx> <dy> <valid>\\n"  -> COM port -> ESP32 UART
 
-Every frame is also rendered with its detections drawn on it (both dots, which
-black dot was chosen, and the error vector as an arrow), and the window carries
-a FIRE button that sends "F\\n" -- the PC-side trigger, equivalent to clicking
-the button on the board.
+Every frame is also rendered with its detections drawn on it (both dots, and
+the error vector as an arrow), and the window carries a FIRE button that
+sends "F\\n" -- the PC-side trigger, equivalent to clicking the button on the
+board.
 
 Detection runs entirely on the host (see dots.py); the OAK is used as a camera.
 The camera plumbing is DepthAI v3 and mirrors the on-camera NN pipeline used on
@@ -32,12 +32,16 @@ Usage:
     py -3 tracker.py --source shot.jpg --debug       # tune on one image
     py -3 tracker.py --source dataset/ --debug       # step through a folder
     py -3 tracker.py --source 0                      # any webcam, no OAK
+    py -3 tracker.py --source none --port            # no camera: manual drive
+                                                      # only, so collect_dataset.py
+                                                      # can have the OAK -- 'm' then
+                                                      # arrow keys to aim by hand
 
 Keys (with the view focused, not a text box): q = quit, f = fire, d = toggle
-the mask view and the labelled rejections, p = print the current thresholds as
-a command line, m = toggle keyboard MANUAL drive (see manual_control.py),
-arrows = move the simulated target, or drive the gimbal while 'm' is engaged,
-SPACE/n = next image (folder mode).
+the mask view, p = print the current thresholds as a command line, s = save
+the current frame (with its overlay) to snapshots/, m = toggle keyboard
+MANUAL drive (see manual_control.py), arrows = move the simulated target, or
+drive the gimbal while 'm' is engaged, SPACE/n = next image (folder mode).
 Mouse: left-click places the simulated target, right-click clears it.
 """
 
@@ -48,9 +52,10 @@ import os
 import time
 
 import cv2
+import numpy as np
 
 from app_window import AppWindow
-from dots import error_vector, find_black_dots, find_red_dot, pick_target
+from dots import error_vector, find_green_dot, find_red_dot
 from manual_control import ManualControl
 from recenter import LaserLostRecenter
 from overlay import _ROTATE, draw_overlay, render_masks, status_lines
@@ -168,6 +173,25 @@ def capture_frames(source):
         cap.release()
 
 
+def no_camera_frames(width, height, fps):
+    """Yield a static placeholder frame, forever, without opening any camera.
+
+    Lets the rest of the loop -- window, manual keyboard drive, serial link,
+    telemetry -- run untouched while the OAK stays free for another process
+    (collect_dataset.py) to use. Detection runs against the placeholder and
+    always finds nothing, so E frames go out as valid=0 and only the MANUAL
+    channel (see manual_control.py) actually moves the gimbal.
+    """
+    frame = np.zeros((height, width, 3), np.uint8)
+    cv2.putText(frame, "NO CAMERA -- 'm' then arrows to drive manually",
+               (20, height // 2), cv2.FONT_HERSHEY_SIMPLEX, 0.7,
+               (255, 255, 255), 2, cv2.LINE_AA)
+    interval = 1.0 / fps
+    while True:
+        yield frame
+        time.sleep(interval)
+
+
 def file_frames(source):
     """Yield frames from an image file or a folder of images.
 
@@ -201,6 +225,8 @@ def open_source(args, speed):
     src = args.source
     if src == "cam":
         return camera_frames((args.width, args.height), speed), False
+    if src == "none":
+        return no_camera_frames(args.width, args.height, args.fps), False
     if str(src).isdigit() or src.lower().endswith(_VID_EXT):
         return capture_frames(src), False
     return file_frames(src), os.path.isdir(src)
@@ -246,7 +272,7 @@ def run(args):
     sys_tlm_at = 0.0
     telemetry_requested_at = 0.0
     # The simulated target manager turns clicks on the view into a stand-in
-    # black dot, mapping display coordinates back through any --rotate.
+    # target dot, mapping display coordinates back through any --rotate.
     sim = SimulatedTargetManager(rotate=args.rotate)
     # The flags set the starting point; from here the sliders own these values.
     th = Thresholds(args)
@@ -262,6 +288,7 @@ def run(args):
     recentering = False
 
     print("Press 'q' to quit, 'f' or the FIRE button to flash the laser, "
+          "'s' or Save image to save the current frame, "
           "'m' to toggle keyboard MANUAL drive (arrow keys)."
           + ("  SPACE/n = next image." if folder_mode else ""))
     try:
@@ -271,11 +298,10 @@ def run(args):
             # frame is detected with one consistent set of thresholds.
             debug = win.debug.get() if win is not None else args.debug
             red, red_mask = find_red_dot(frame, *th.red_args())
-            targets, black_mask, rejects = find_black_dots(frame, *th.black_args())
-            target = pick_target(targets, frame.shape, args.target, red)
-            # If detection found no black target, fall back to a simulated one
+            target, green_mask = find_green_dot(frame, *th.green_args())
+            # If detection found no green target, fall back to a simulated one
             # created by a user click.
-            sim.update_state(targets, frame.shape)
+            sim.update_state([target] if target is not None else [], frame.shape)
             if target is None and sim.get_simulated() is not None:
                 target = sim.get_simulated()
 
@@ -285,8 +311,11 @@ def run(args):
             # Laser outside the camera view: nothing to correct, so drift toward
             # the zone centre until the red dot is seen again. Runs after the
             # detection above and stops with it -- see recenter.py.
+            # No camera means the red dot is never seen, so the usual "drift
+            # to zone centre" logic would fire immediately and fight manual
+            # driving; off unconditionally rather than tied to the checkbox.
             recenter_wanted = (win.controls.recenter_on.get() if win is not None
-                               else True)
+                               else True) and args.source != "none"
             if (recenter_wanted and not manual.engaged and link.port is not None
                     and recenter.update(red is not None, time.monotonic())):
                 recentering = True
@@ -346,21 +375,19 @@ def run(args):
             telemetry_age = (time.monotonic() - telemetry_at) if telemetry is not None else None
 
             if win is not None:
-                shown_rejects = rejects if debug else ()
-                win.set_status(status_lines(red, targets, target, dx, dy, valid,
+                win.set_status(status_lines(red, target, dx, dy, valid,
                                             fps, frame.shape, link, telemetry,
-                                            telemetry_age, shown_rejects,
+                                            telemetry_age,
                                             recentering, sys_tlm,
                                             (time.monotonic() - sys_tlm_at)
                                             if sys_tlm is not None else None))
-                view = draw_overlay(frame, red, targets, target, valid,
-                                    shown_rejects)
+                view = draw_overlay(frame, red, target, valid)
                 if args.rotate:
                     view = cv2.rotate(view, _ROTATE[args.rotate])
                 win.set_on_target(bool(on_target))
                 win.show_frame(view)
                 if debug:
-                    win.show_masks(render_masks(red_mask, black_mask, args.rotate))
+                    win.show_masks(render_masks(red_mask, green_mask, args.rotate))
                 key = win.wait_key(folder_mode)
                 if manual.toggle_pressed(key):
                     on = manual.toggle()
@@ -391,6 +418,8 @@ def run(args):
                 # the view clears them.
                 if key == "d":
                     win.toggle_debug()
+                if key == "s":
+                    win.save_image()
                 if key == "p":
                     # Sliders are lost on exit; this is how a session's tuning
                     # becomes the next run's command line.
@@ -415,10 +444,12 @@ def run(args):
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Red dot + black target dot -> error vector -> ESP32 UART")
+        description="Red dot + green target dot -> error vector -> ESP32 UART")
     ap.add_argument("--source", default="cam",
-                    help="'cam' (OAK), an image, a folder, a video file, or a "
-                         "webcam index")
+                    help="'cam' (OAK), an image, a folder, a video file, a "
+                         "webcam index, or 'none' (no camera opened at all -- "
+                         "manual drive only, e.g. while collect_dataset.py "
+                         "uses the OAK)")
     ap.add_argument("--width", type=int, default=1280, help="OAK frame width")
     ap.add_argument("--height", type=int, default=720, help="OAK frame height")
     ap.add_argument("--fps", type=float, default=60.0,
@@ -463,17 +494,13 @@ def main():
                          "(on target). Display only - the firmware decides "
                          "arrival on its own, tighter deadzone")
 
-    # --- which black dot is the target ---
+    # --- laser-lost recenter ---
     ap.add_argument("--recenter-ms", type=float, default=1500.0,
                     help="red dot missing this long -> move the gimbal toward "
                          "the zone centre until the dot is seen again. "
                          "0 = off. The window also has a checkbox for it")
     ap.add_argument("--recenter-speed", type=float, default=30.0,
                     help="deg/s of that move toward the centre")
-    ap.add_argument("--target", default="center",
-                    choices=["center", "largest", "nearest"],
-                    help="pick the black dot nearest the frame centre (default), "
-                         "the largest one, or the one nearest the red dot")
 
     # --- red dot thresholds (areas are for a 640x480 reference frame) ---
     ap.add_argument("--red-area-min", type=int, default=3)
@@ -487,53 +514,21 @@ def main():
                     help="threshold as a fraction of the frame's peak redness "
                          "(lower = bigger, more forgiving blob)")
 
-    # --- black dot: is it round? (measured defaults, see dots._shape_reject) ---
-    ap.add_argument("--black-area-min", type=int, default=40)
-    ap.add_argument("--black-area-max", type=int, default=20000)
-    ap.add_argument("--black-circ", type=float, default=0.80,
-                    help="minimum circularity: fraction of the smallest "
-                         "enclosing circle the blob fills. A disc measures "
-                         "0.82-0.98, a square 0.72, a fat ellipse 0.77")
-    ap.add_argument("--black-radial", type=float, default=0.10,
-                    help="max spread of the centre-to-edge distance (/mean). "
-                         "The direct 'is every edge point equidistant' test; "
-                         "lower it to ~0.05 to also refuse polygons")
-    ap.add_argument("--black-aspect", type=float, default=1.25,
-                    help="max long/short side of the blob's minimum-area "
-                         "rectangle - rejects ellipses and rounded bars")
-    ap.add_argument("--black-solidity", type=float, default=0.88,
-                    help="min area / convex-hull area - rejects dents and "
-                         "notches, e.g. two dots touching")
-    ap.add_argument("--black-compact", type=float, default=0.50,
-                    help="min 4*pi*area / perimeter^2 - rejects frayed or "
-                         "knobbly outlines. Lower it if a rough print is "
-                         "being dropped")
-    ap.add_argument("--black-hole", type=float, default=0.15,
-                    help="max enclosed background / blob area - rejects rings "
-                         "and O-shapes, which every other test scores as "
-                         "perfect circles")
-    ap.add_argument("--black-edge-margin", type=int, default=2,
-                    help="drop blobs within this many px of the frame border "
-                         "(cut-off shapes measure as something else); -1 keeps "
-                         "them")
-
-    # --- black dot: is it ink? ---
-    ap.add_argument("--black-darkness", type=float, default=0.8,
-                    help="blob must be at most this fraction as bright as the "
-                         "paper ringing it (lower = stricter)")
-    ap.add_argument("--black-sat-margin", type=int, default=70,
-                    help="how much more saturated than the surrounding paper a "
-                         "blob may be before it counts as coloured, not ink")
-    ap.add_argument("--black-block", type=int, default=51,
-                    help="adaptive-threshold window in px (odd); roughly 3x the "
-                         "dot diameter")
-    ap.add_argument("--black-offset", type=int, default=12,
-                    help="how much darker than its surroundings ink must be")
+    # --- green dot thresholds (areas are for a 640x480 reference frame; see
+    # dots.find_green_dot for why these differ from red's) ---
+    ap.add_argument("--green-area-min", type=int, default=1)
+    ap.add_argument("--green-area-max", type=int, default=2000)
+    ap.add_argument("--green-circ", type=float, default=0.20,
+                    help="minimum circularity of the green blob")
+    ap.add_argument("--green-min-greenness", type=int, default=18,
+                    help="absolute floor on G-max(R,B); below this the frame is "
+                         "declared dot-free (raise if noise is detected as a dot)")
+    ap.add_argument("--green-rel", type=float, default=0.5,
+                    help="threshold as a fraction of the frame's peak greenness "
+                         "(lower = bigger, more forgiving blob)")
 
     ap.add_argument("--debug", action="store_true",
-                    help="show the red / black binary masks, and box every "
-                         "rejected blob on the frame with the measurement that "
-                         "failed (also 'd' at runtime)")
+                    help="show the red / green binary masks (also 'd' at runtime)")
     ap.add_argument("--headless", action="store_true",
                     help="no windows -- run the link without a display")
     ap.add_argument("--verbose", action="store_true",

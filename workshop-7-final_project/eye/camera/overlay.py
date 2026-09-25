@@ -19,9 +19,7 @@ _ROTATE = {
 
 _RED = (0, 0, 255)
 _GREEN = (0, 220, 0)
-_BLUE = (255, 160, 0)
 _WHITE = (255, 255, 255)
-_GREY = (140, 140, 140)
 
 
 def _ui_scale(frame):
@@ -40,31 +38,14 @@ def _age_text(age):
     return f"{age:.1f}s ago" if age < 10.0 else f"{age:.0f}s ago"
 
 
-def draw_overlay(frame, red, targets, target, valid, rejects=()):
+def draw_overlay(frame, red, target, valid):
     """Annotate the frame with both detections and the error vector.
-
-    `rejects` is [(Dot, reason)] from find_black_dots - the blobs that were the
-    right size but were not round enough (or not dark enough) to be a dot.
-    Drawn in grey with the measurement that failed, so a missed dot can be read
-    off the frame: "circ 0.71" says raise nothing, it is not round; "pale 0.86"
-    says the ink test is what to loosen.
 
     The numbers (error, fps, telemetry...) are not drawn here: see
     `status_lines`, shown in the left panel.
     """
     s = _ui_scale(frame)
     thick = max(1, int(2 * s))
-
-    for d, reason in rejects:
-        x1, y1, x2, y2 = d.bbox
-        cv2.rectangle(frame, (x1, y1), (x2, y2), _GREY, 1)
-        cv2.putText(frame, reason, (x1, max(int(10 * s), y1 - int(4 * s))),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.4 * s, _GREY, 1, cv2.LINE_AA)
-
-    # Ring the candidates OUTSIDE their own edge - a circle drawn at the blob's
-    # own radius is invisible against the ink it traces.
-    for d in targets:
-        cv2.circle(frame, d.center, d.radius + int(4 * s) + 1, _BLUE, 1)
 
     if red is not None:
         cv2.circle(frame, red.center, red.radius + int(6 * s) + 2, _RED, thick)
@@ -82,8 +63,8 @@ def draw_overlay(frame, red, targets, target, valid, rejects=()):
     return frame
 
 
-def status_lines(red, targets, target, dx, dy, valid, fps, frame_shape, link,
-                 telemetry=None, telemetry_age=None, rejects=(),
+def status_lines(red, target, dx, dy, valid, fps, frame_shape, link,
+                 telemetry=None, telemetry_age=None,
                  recentering=False, sys_tlm=None, sys_age=None):
     """The status text for the left panel, one string per line.
 
@@ -96,13 +77,11 @@ def status_lines(red, targets, target, dx, dy, valid, fps, frame_shape, link,
     dead link reads as a growing age instead of the readout vanishing.
 
     The target's roundness is worth a slot: it is the one number that says
-    how comfortably the chosen dot passed, and a target hovering near the
+    how comfortably the green dot passed, and a target hovering near the
     threshold is what a flickering lock looks like from here.
     """
     lines = [
         f"red: {'YES' if red is not None else 'no'}",
-        f"black: {len(targets)}"
-        + (f" (+{len(rejects)} rejected)" if rejects else ""),
         "target: "
         + (f"YES roundness score {target.roundness:.2f}"
            if target is not None else "no"),
@@ -126,15 +105,15 @@ def status_lines(red, targets, target, dx, dy, valid, fps, frame_shape, link,
     return lines
 
 
-def render_masks(red_mask, black_mask, rotate):
+def render_masks(red_mask, green_mask, rotate):
     """One BGR image with both binary masks side by side, for threshold tuning."""
-    both = np.hstack([red_mask, black_mask])
+    both = np.hstack([red_mask, green_mask])
     scale = 900.0 / both.shape[1]
     if scale < 1.0:
         both = cv2.resize(both, None, fx=scale, fy=scale)
     both = cv2.cvtColor(both, cv2.COLOR_GRAY2BGR)
     cv2.putText(both, "red", (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.7, _RED, 2)
-    cv2.putText(both, "black", (both.shape[1] // 2 + 8, 24),
+    cv2.putText(both, "green", (both.shape[1] // 2 + 8, 24),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, _GREEN, 2)
     if rotate:
         both = cv2.rotate(both, _ROTATE[rotate])

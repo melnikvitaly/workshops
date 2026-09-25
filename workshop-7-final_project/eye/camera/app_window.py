@@ -46,6 +46,8 @@ _STRIP_W = 30   # a folded panel keeps just its button
 _GREEN = "#1a7f37"
 _RED = "#c62828"
 
+_SNAPSHOT_DIR = os.path.join(os.path.dirname(__file__), "snapshots")
+
 
 def _photo(bgr, max_w, max_h):
     """(PhotoImage, scale) of a BGR image shrunk or grown to fit max_w x max_h."""
@@ -165,6 +167,8 @@ class AppWindow:
         self.drive_btn = actions.add(ttk.Button(
             actions, text="Keyboard drive: off (m)",
             command=lambda: self._keys.append("m")))
+        self.save_btn = actions.add(ttk.Button(
+            actions, text="Save image (s)", command=self.save_image))
         self.controls.add_actions(actions)
 
         self.canvas = tk.Canvas(parent, bg="#111111", highlightthickness=0,
@@ -172,6 +176,7 @@ class AppWindow:
         self.canvas.pack(side="top", fill="both", expand=True)
         self._image_item = self.canvas.create_image(0, 0, anchor="nw")
         self._photo = None
+        self._last_view = None    # the frame currently on screen, for Save image
         self._map = (0, 0, 1.0, 1, 1)          # x offset, y offset, scale, w, h
         self.on_click = lambda x, y: None      # image coordinates, left button
         self.on_clear = lambda: None           # right button
@@ -271,6 +276,23 @@ class AppWindow:
         self.fire_btn.config(relief="sunken")
         self.root.after(300, lambda: self.fire_btn.config(relief="raised"))
 
+    def save_image(self):
+        """Save the frame currently on screen (with its overlay) to
+        eye/camera/snapshots/, so a bad detection can be captured for later
+        review -- the same folder error_graph.py's Snapshot button uses,
+        told apart by the `frame_` prefix."""
+        self.canvas.focus_set()
+        if self._last_view is None:
+            return None
+        os.makedirs(_SNAPSHOT_DIR, exist_ok=True)
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        path = os.path.join(_SNAPSHOT_DIR, f"frame_{stamp}.jpg")
+        cv2.imwrite(path, self._last_view)
+        print(f"-> saved {path}")
+        self.save_btn.config(text="Saved!")
+        self.root.after(600, lambda: self.save_btn.config(text="Save image (s)"))
+        return path
+
     def set_on_target(self, on):
         """Red when the error is small enough to shoot on, green while converging."""
         if on != self._on_target:
@@ -285,6 +307,7 @@ class AppWindow:
 
     def show_frame(self, view):
         """Draw a BGR image into the view, scaled to fit."""
+        self._last_view = view
         cw, ch = max(self.canvas.winfo_width(), 2), max(self.canvas.winfo_height(), 2)
         self._photo, scale = _photo(view, cw, ch)
         nw, nh = self._photo.width(), self._photo.height()

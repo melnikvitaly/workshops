@@ -1,9 +1,11 @@
-"""Classic-CV detection of the two dots the loop needs.
+"""Classic-CV detection of the dots the loop needs.
 
   red dot   -- the laser / red marker: where we are pointing NOW
-  black dot -- the printed target on the paper: where we WANT to point
+  green dot -- the target laser: where we WANT to point (tracker.py's default)
+  black dot -- a printed paper target: an earlier target method, still here
+              (find_black_dots) but not wired into tracker.py any more
 
-Both are found with plain OpenCV on the host, not a neural net. An on-camera
+All are found with plain OpenCV on the host, not a neural net. An on-camera
 variant runs a fixed-weight NN for the red dot because the OAK's VPU cannot
 execute OpenCV; here detection runs on the PC, so the color filter can just be
 a color filter.
@@ -186,50 +188,92 @@ def redness_map(frame_bgr):
     return cv2.subtract(r, cv2.max(g, b))   # uint8, clipped at 0
 
 
-def find_red_dot(frame_bgr, area_min=3, area_max=2000, min_circ=0.35,
-                 min_redness=22, rel=0.5):
-    """Best red blob in the frame. Returns (Dot or None, mask).
+def greenness_map(frame_bgr):
+    """G - max(R, B): how green a pixel is, independent of how bright it is."""
+    b, g, r = cv2.split(frame_bgr)
+    return cv2.subtract(g, cv2.max(r, b))   # uint8, clipped at 0
 
-    Thresholding is on REDNESS (R - max(G,B)), not on HSV saturation. A laser
-    dot is the brightest thing in the frame and its core clips to white: a real
-    dot measures around S=50..120 with a near-white centre, so any saturation
-    gate high enough to reject warm-coloured clutter also rejects the dot
-    itself. Redness has no such problem - white is 0, and only genuinely red
-    pixels score.
+
+def _find_saturated_dot(level_map, area_min, area_max, min_circ, min_level, rel,
+                        min_extent=0.35):
+    """Best blob of a channel-difference map (redness_map / greenness_map).
+
+    Shared by find_red_dot and find_green_dot - a laser dot's core clips to a
+    near-white centre regardless of colour, so both are thresholded the same
+    way: on how much one channel exceeds the other two, not on HSV saturation,
+    which a white-clipped core fails no matter how far the gate is loosened.
 
     The threshold is relative to the frame's own peak (`rel` x peak), with
-    `min_redness` as an absolute floor so that a frame containing no dot at all
-    finds nothing instead of latching onto the reddest noise. Candidates are
-    scored by circularity x peak redness.
+    `min_level` as an absolute floor so a frame containing no dot at all finds
+    nothing instead of latching onto the least-wrong noise. Candidates are
+    scored by circularity x peak level.
+
+    The gate stays loose on purpose (size, circularity, a light fill check):
+    at range the dot is a handful of pixels, where the six-measurement shape
+    test the black dot gets is all noise - and there is only ever one blob of
+    a given colour in frame, so this scoring settles it anyway. `min_extent`
+    is not exposed on find_red_dot/find_green_dot themselves (see there for
+    why green needs it looser) - it is this function's own knob, not a
+    command-line one.
     """
-    h, w = frame_bgr.shape[:2]
+    h, w = level_map.shape[:2]
     amin, amax = _scale_area(area_min, area_max, h, w)
 
-    redness = redness_map(frame_bgr)
-    peak = float(redness.max())
-    if peak < min_redness:
-        return None, np.zeros((h, w), np.uint8)      # nothing red in frame
+    peak = float(level_map.max())
+    if peak < min_level:
+        return None, np.zeros((h, w), np.uint8)      # nothing that colour in frame
 
-    thr = max(min_redness, rel * peak)
-    mask = (redness >= thr).astype(np.uint8) * 255
+    thr = max(min_level, rel * peak)
+    mask = (level_map >= thr).astype(np.uint8) * 255
     # Close only - no opening. A dot can be 3 px across at this range, and an
     # open would erase it; isolated speckles are dropped by area_min instead.
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, _K3)
 
-    # The red gate stays loose on purpose: at range the dot is a handful of
-    # pixels, where the shape measurements the black dot is judged on are all
-    # noise. Size, circularity and a light fill check are as much as a 3 px
-    # blob can honestly support - and there is only ever one red thing in
-    # frame, so the scoring below settles it anyway.
     best, best_score = None, 0.0
     for dot, contour in _candidates(mask, amin, amax):
-        if dot.circularity < min_circ or dot.extent < 0.35:
+        if dot.circularity < min_circ or dot.extent < min_extent:
             continue
-        blob_peak = float(redness[_contour_mask(frame_bgr.shape, contour) > 0].max())
+        blob_peak = float(level_map[_contour_mask(level_map.shape, contour) > 0].max())
         score = dot.circularity * blob_peak
         if score > best_score:
             best, best_score = dot, score
     return best, mask
+
+
+def find_red_dot(frame_bgr, area_min=3, area_max=2000, min_circ=0.35,
+                 min_redness=22, rel=0.5):
+    """Best red blob in the frame. Returns (Dot or None, mask). See find_green_dot."""
+    return _find_saturated_dot(redness_map(frame_bgr), area_min, area_max,
+                               min_circ, min_redness, rel)
+
+
+def find_green_dot(frame_bgr, area_min=1, area_max=2000, min_circ=0.20,
+                   min_greenness=18, rel=0.5):
+    """Best green blob in the frame. Returns (Dot or None, mask).
+
+    Same algorithm as find_red_dot (see `_find_saturated_dot`), on
+    G - max(R,B) instead of R - max(G,B). Every default here was measured
+    against dataset/only-green-dot and dataset/both-red-and-green, not carried
+    over from red's:
+
+      min_greenness=18 -- red's floor (22) undershoots on purpose: 18 is
+        already the highest peak greenness any only-red-dot frame in the
+        dataset reaches (background/lens reflections), so it is the tightest
+        floor that still keeps every measured true dot above it bar one
+        (peak 14 - too dim to separate from noise at any floor).
+      area_min=1, min_circ=0.20 -- at range the green dot's core is dimmer
+        relative to its own peak than red's, so the `rel`-scaled threshold
+        leaves a smaller, less circular blob (down to ~5 px, circularity
+        ~0.20 in the dataset) than red's area_min=3/min_circ=0.35 would pass.
+        Both are loosened to match, not tightened - false positives were not
+        observed at these settings, only false negatives from being stricter.
+
+    A green blob also needs `min_extent` loosened to match (see
+    `_find_saturated_dot`); that is not part of this function's own
+    signature, only its internal call.
+    """
+    return _find_saturated_dot(greenness_map(frame_bgr), area_min, area_max,
+                               min_circ, min_greenness, rel, min_extent=0.18)
 
 
 # --- black printed dots ----------------------------------------------------

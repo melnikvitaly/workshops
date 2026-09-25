@@ -1,14 +1,18 @@
 # camera/ — the PC end of the loop
 
-Finds the **red dot** (where the laser points now) and the **black printed dot**
-(where it should point) in the OAK camera image, and streams the error between
-them to the ESP32 over the COM port.
+Finds the **red dot** (where the laser points now) and the **green dot**
+(a second laser marking where it should point) in the OAK camera image, and
+streams the error between them to the ESP32 over the COM port.
 
 ```text
 OAK-1 ──USB──> PC: tracker.py ──COM──> ESP32-S3 ──> gimbal + laser
-                    red dot, black dot        E <dx> <dy> <valid>
+                    red dot, green dot        E <dx> <dy> <valid>
                     error = target − laser    F  (fire)
 ```
+
+An earlier version used a **black dot printed on paper** as the target instead
+of a second laser; that detector (`dots.find_black_dots`) is still in `dots.py`
+but is no longer wired into `tracker.py`.
 
 Detection runs on the **host** in plain OpenCV — the OAK is used as a camera
 only. The camera plumbing (DepthAI v3) mirrors the on-camera NN pipeline used
@@ -18,7 +22,7 @@ unnecessary here because a PC can run the color filter directly.
 | File                  |                                                                                    |
 |-----------------------|------------------------------------------------------------------------------------|
 | `tracker.py`      | main script: frame sources → detection → error vector → COM, plus the command line |
-| `dots.py`             | the detection itself: red dot, black dots, target choice, error vector             |
+| `dots.py`             | the detection itself: red dot, green dot, error vector (plus the unused `find_black_dots`) |
 | `serial_link.py`      | the COM link and the wire format; also a standalone sender for bring-up            |
 | `app_window.py`       | the one Tk window: controls left, camera view + FIRE middle, tuning right          |
 | `overlay.py`          | what is drawn on each frame: detections, error arrow, mask image; status text      |
@@ -27,7 +31,9 @@ unnecessary here because a PC can run the color filter directly.
 | `tx_log.py`           | the one place every line sent to the ESP32 is logged (console and/or file)         |
 | `tuning.py`           | the threshold sliders (right panel), and printing them back out as a command line  |
 | `speed.py`            | the Speed box (right panel): camera fps, frame queue, lens focus, send rate        |
-| `simulated_target.py` | click or arrow-key a stand-in target dot when no black dot is printed              |
+| `simulated_target.py` | click or arrow-key a stand-in target dot when no green dot is detected             |
+| `collect_dataset.py`  | saves camera frames to `dataset/`, for tuning the red/green detectors              |
+| `eval_dots.py`         | scores find_red_dot/find_green_dot against the labelled `dataset/` folders        |
 
 ## Install and run
 
@@ -44,6 +50,31 @@ py -3 tracker.py --source 0                    # any USB webcam, no OAK needed
 
 Omit `--port` entirely and the script detects and displays but sends nothing —
 the safe way to tune.
+
+### Collecting a tuning dataset
+
+```bash
+py -3 collect_dataset.py                # live OAK, saves into dataset/
+py -3 collect_dataset.py --source 0     # any USB webcam, no OAK needed
+```
+
+SPACE/`s` saves the current frame, `m` toggles a live red/green highlight (framing
+help only — it is not applied to what gets saved), `q` quits. Frames land in
+`dataset/` numbered so reruns append rather than overwrite; that folder is also
+what `tracker.py --source dataset --debug` reads to step through while tuning.
+
+For scoring the detectors rather than eyeballing them, sort the saved frames
+into subfolders named for what is actually lit in them — `only-red-dot/`,
+`only-green-dot/`, `both-red-and-green/` — and run:
+
+```bash
+py -3 eval_dots.py                             # pass/fail per image + a confusion summary
+py -3 eval_dots.py --save-annotated review      # also box the failures into review/
+```
+
+The folder name is the ground truth `eval_dots.py` checks detections against;
+it never opens a window, so it is the fast way to see whether a threshold
+change helped before firing up `tracker.py` to look at it.
 
 ### Finding the port
 
@@ -74,29 +105,36 @@ its edge; the tuning panel on the right starts folded.
 |--------|-------------------------------------------------------------------------------------------------|
 | Left   | the settings: telemetry, channel, PID gain table + presets, working zone, nudge, status         |
 | Middle | the camera view, and under it **FIRE**, keyboard drive and the action buttons (see below)       |
-| Right  | **Debug view**, the mask image, the red / black threshold sliders, the tracking-error graph, **Pin left edge** / **Snapshot** |
+| Right  | **Debug view**, the mask image, the red / green threshold sliders, the tracking-error graph, **Pin left edge** / **Snapshot** |
 
 Under the view: **FIRE** (red border colour = on target, green = converging),
-**Keyboard drive**, **Arm / Disarm (CONTROL)**, **Center**, **Start Zone Tour**
-and **Query gains**. The row wraps when the view is narrow.
+**Keyboard drive**, **Save image**, **Arm / Disarm (CONTROL)**, **Center**,
+**Start Zone Tour** and **Query gains**. The row wraps when the view is narrow.
+
+**Save image** (or the `s` key) saves the frame currently on screen — with
+its overlay (detections + error arrow) — to `eye/camera/snapshots/`
+(git-ignored), named `frame_<date>-<time>.jpg`, e.g.
+`frame_20260925-143012.jpg`. Use it to capture a frame the moment detection
+looks wrong, for later review. Same folder as the tracking-error graph's
+**Snapshot** button (see below); the `frame_`/`error_` prefix tells them apart.
 
 Every frame is rendered with its detections drawn on it:
 
 - **red circle + cross** — the red dot;
-- **blue circles** — every black dot found;
-- **green circle + tilted cross** — the one chosen as the target;
+- **green circle + tilted cross** — the green target dot;
 - **white arrow** — the error vector, tail on the laser, head on the target;
 - top-left readout — what was found, the exact frame being sent, fps and
   frame size (`WxH`), counters.
 
 Keys (they work while the view has focus; click it to give it back after using
-a text box): `q` quit · `f` fire · `d` toggle the mask image and the labelled
-rejections · `p` print the current thresholds as a command line · `m` toggle
-keyboard `MANUAL` drive · arrows move the simulated target, or drive the
-gimbal while `m` is engaged · `SPACE`/`n` next image (folder mode).
+a text box): `q` quit · `f` fire · `d` toggle the mask image · `p` print the
+current thresholds as a command line · `s` save the current frame (see
+**Save image** above) · `m` toggle keyboard `MANUAL` drive · arrows move the
+simulated target, or drive the gimbal while `m` is engaged · `SPACE`/`n` next
+image (folder mode).
 
 Mouse (on the view): left-click places or moves a **simulated target** where no
-black dot is printed, right-click clears it. The arrow keys nudge it 24 px at a
+green dot is detected, right-click clears it. The arrow keys nudge it 24 px at a
 time, in the direction it moves on screen even under `--rotate`; with no dot yet
 the first arrow puts one at the frame centre. While keyboard `MANUAL` drive is
 engaged, the arrow keys drive the gimbal instead (see below) and no longer
@@ -298,7 +336,7 @@ not found, so there is no error to correct and the firmware only holds.
 
 | Item       | Behaviour                                                            |
 |------------|----------------------------------------------------------------------|
-| Trigger    | red dot missing for `--recenter-ms` (default 1500). Black dot missing does not trigger it |
+| Trigger    | red dot missing for `--recenter-ms` (default 1500). Green dot missing does not trigger it |
 | Motion     | small `P` steps toward the zone centre at `--recenter-speed` deg/s (default 30) |
 | Stop       | as soon as the red dot is seen again, or when the centre is reached  |
 | Default    | on. Untick **Recenter if laser lost** in the left panel, or use `--recenter-ms 0` |
@@ -343,111 +381,59 @@ either. There is no OpenCV window and no `cv2.waitKey`. Closing the window ends
 the run. It shares the main thread with the loop, so a click has reached the
 serial link's queue before the next frame is detected.
 
-## Which black dot is the target
-
-`--target center` (default) takes the black dot nearest the frame centre — aim
-the camera to choose. `--target largest` takes the biggest, `--target nearest`
-the one closest to the red dot.
-
 ## Tuning
 
-Turn on **Debug view** (or `--debug`, or `d`): the right panel shows the two
-binary masks that everything else is derived from, and every rejected blob is
-boxed in grey **on the frame itself, labelled with the measurement that failed**
-— `circ 0.66`, `hollow 0.46`, `pale 0.91`. That label names the knob, so tuning
-is reading rather than guessing. The chosen target's `round` score is in the
-top-left readout; a target hovering near a threshold is what a flickering lock
-looks like from here.
+Turn on **Debug view** (or `--debug`, or `d`): the right panel shows the red
+and green binary masks that everything else is derived from. The chosen
+target's `round` score is in the top-left readout; a target hovering near a
+threshold is what a flickering lock looks like from here.
 
-The right panel has one tab per detector, **Red dot** and **Black dots**, with a
-slider per threshold, so a value can be swept against a live frame instead of
-costing a restart per guess. The flags below still set the starting point; the
-sliders take over from there. Each slider shows its real value, for example
-`circ` at `0.80`.
+The right panel has one tab per detector, **Red dot** and **Green dot**, each
+the same five sliders (`rel`, `min redness`/`min greenness`, `circ`, `area
+min`, `area max`) since both run the same algorithm (`dots._find_saturated_dot`)
+on a different colour. A value can be swept against a live frame instead of
+costing a restart per guess; the flags below still set the starting point.
 
 The sliders die with the window, so `p` prints the current set as a command
 line — that is how a tuning session becomes the next run's flags:
 
 ```text
---red-rel 0.5 --red-min-redness 22 ... --black-circ 0.66 --black-edge-margin -1
+--red-rel 0.5 --red-min-redness 22 ... --green-circ 0.2 --green-min-greenness 18
 ```
 
 Areas are given for a **640×480 reference frame** and scale automatically with
-resolution, so they stay meaningful at 1280×720.
+resolution, so they stay meaningful at 1280×720. `eval_dots.py` (see
+[Collecting a tuning dataset](#collecting-a-tuning-dataset)) turns a folder of
+labelled frames into a pass/fail table for the same flags, without a window.
 
-| Symptom                                                      | Knob                                                        |
-|--------------------------------------------------------------|-------------------------------------------------------------|
-| Red dot missed (pale / dim)                                  | lower `--red-min-redness`                                   |
-| Noise detected as a dot when there is none                   | raise `--red-min-redness`                                   |
-| Red blob too big / bleeding into surroundings                | raise `--red-rel`                                           |
-| Red distractor picked instead of the dot                     | lower `--red-area-max`, raise `--red-circ`                  |
-| Black dots missed                                            | raise `--black-darkness` toward 1.0, lower `--black-offset` |
-| Shadows / paper edges detected as dots                       | lower `--black-darkness`, raise `--black-offset`            |
-| A coloured object detected as a dot                          | lower `--black-sat-margin`                                  |
-| Dot on strongly coloured paper missed                        | raise `--black-sat-margin`                                  |
-| Big dots missed at close range                               | raise `--black-block` (≈3× dot diameter, odd)               |
-| Real dot rejected as `compact` (rough print)                 | lower `--black-compact`                                     |
-| Real dot rejected as `circ` / `aspect` (steep viewing angle) | lower `--black-circ`, raise `--black-aspect`                |
-| Something square-ish still accepted                          | lower `--black-radial` toward 0.05                          |
-
-### Is it round?
-
-Being dark is easy — shadows, text, a cable, the edge of the sheet and the gap
-under a bulldog clip all manage it — so the shape test is what actually picks
-the dot out of a scene. No single number does it, so six run, each blind to a
-different impostor, and **the first one that fails is the label `--debug`
-draws**:
-
-| Measurement | What it is                                       | Catches                                                       | A disc measures | Default  |
-|-------------|--------------------------------------------------|---------------------------------------------------------------|-----------------|----------|
-| `circ`      | fraction of the smallest enclosing circle filled | squares, triangles, anything lopsided                         | 0.82–0.98       | ≥ `0.80` |
-| `radial`    | spread of the centre-to-edge distance            | rounded squares — the shape everything else forgives          | 0.00–0.10       | ≤ `0.10` |
-| `aspect`    | long/short side of the min-area rectangle        | ellipses, rounded bars                                        | 1.00–1.12       | ≤ `1.25` |
-| `solid`     | area ÷ its own convex hull                       | dents and notches: two dots touching, a C                     | 0.88–0.99       | ≥ `0.88` |
-| `compact`   | 4π·area ÷ perimeter²                             | frayed, knobbly outlines: shadow edges, joined-up text        | 0.45–0.91       | ≥ `0.50` |
-| `hollow`    | enclosed background ÷ blob area                  | rings, an O, a washer — *perfect* circles to every test above | 0.00            | ≤ `0.15` |
-
-Plus an `edge` gate: a blob touching the frame border is a partial outline, and
-its true centre is outside the picture anyway (`--black-edge-margin -1` keeps
-them).
-
-The thresholds are measured rather than guessed — rendered discs against
-near-misses at radii 7–45 px — and the margin is real: an axis-aligned square
-scores `circ` 0.72 against the disc's 0.82 floor, a 0.78-ratio ellipse 0.77, a
-printed letter 0.73. On a test frame carrying a dot plus a square, a rotated
-square, an ellipse, a ring, a cable, a shadow and a line of text, one blob is
-accepted.
-
-The one near-miss deliberately let through is a regular **hexagon or octagon**:
-separating those from a disc costs more real dots than it saves, and at these
-sizes they are circles as far as aiming is concerned. Drop `--black-radial` to
-`0.05` if you disagree.
-
-Only the black dot is judged this hard. The red gate stays loose on purpose — at
-range the laser is a handful of pixels, where every one of these measurements is
-noise, and there is only ever one red thing in the frame.
+| Symptom                                    | Knob                                                    |
+|---------------------------------------------|----------------------------------------------------------|
+| Dot missed (pale / dim)                     | lower `--red-min-redness` / `--green-min-greenness`      |
+| Noise detected as a dot when there is none  | raise `--red-min-redness` / `--green-min-greenness`      |
+| Blob too big / bleeding into surroundings   | raise `--red-rel` / `--green-rel`                        |
+| A distractor picked instead of the real dot | lower `--red-area-max`/`--green-area-max`, raise `--red-circ`/`--green-circ` |
+| Dim, elongated (bloom/star-shaped) dot missed at range | lower `--green-circ`, lower `--green-area-min` |
 
 ### Why the thresholds are relative
 
-Both detectors deliberately avoid absolute colour gates, because a real scene is
-rarely neutral. Measured off a live frame lit by a blue-ish lamp:
+Both detectors avoid absolute colour gates, because a real scene is rarely
+neutral and a laser's core clips to white — its saturation runs low enough
+that no saturation gate can separate it from warm clutter. Each is found on a
+**channel-difference map** instead — `R − max(G, B)` for red, `G − max(R, B)`
+for green — where white scores 0 and only a genuinely-coloured pixel scores at
+all, thresholded relative to the frame's own peak (`--red-rel`/`--green-rel`)
+with an absolute floor (`--red-min-redness`/`--green-min-greenness`) so an
+empty frame reports nothing rather than latching onto the least-wrong noise.
 
-|                       | saturation | value   |
-|-----------------------|------------|---------|
-| white paper           | 105        | 167     |
-| the black printed dot | 135        | 91      |
-| the red laser dot     | 52–122     | 139–255 |
+### The earlier black-dot target
 
-An absolute "ink is unsaturated" rule (`S < 90`) throws the real dot away — the
-paper itself is more saturated than that. So the dot is compared with the ring
-of paper immediately around it instead: **darker than its own surroundings**
-(`--black-darkness`) and **not much more colourful than them**
-(`--black-sat-margin`).
-
-The laser has the mirror-image problem: its core clips to white, so saturation
-runs as low as 52 and no saturation gate can separate it from warm clutter.
-It is found on **redness**, `R − max(G, B)`, where white scores 0 and only truly
-red pixels score at all, thresholded relative to the frame's own peak.
+Before the target became a second laser, it was a black dot printed on paper,
+found with a much stricter detector: an adaptive ink threshold plus six
+independent shape measurements (circularity, compactness, solidity, aspect,
+radial spread, hole ratio) to separate a real dot from shadows, text, cables
+and paper edges. That detector, `dots.find_black_dots` (and `dots.pick_target`,
+which chose among several), is still in `dots.py` with its full reasoning in
+its own docstrings, but `tracker.py` no longer calls it.
 
 ## Protocol
 

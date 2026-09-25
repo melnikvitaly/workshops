@@ -10,6 +10,8 @@ __pycache__/
 .venv/
 .cache/
 eye/camera/snapshots/
+eye/camera/dataset/
+eye/camera/dataset_review/
 
 # Editor / tooling
 node_modules/

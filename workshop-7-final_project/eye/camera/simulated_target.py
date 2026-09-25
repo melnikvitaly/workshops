@@ -1,6 +1,6 @@
 """Simulated target handling extracted from tracker.py.
 
-Provides SimulatedTargetManager to manage a user-created simulated black dot
+Provides SimulatedTargetManager to manage a user-created simulated target dot
 via mouse interaction. It maps display coords (the view, after any --rotate)
 back to frame coords and creates/removes a `Dot` when appropriate.
 
@@ -103,7 +103,7 @@ class SimulatedTargetManager:
         """Left-click at display coords (x, y): place or move the simulated dot."""
         # Map clicked display coords back to original frame coords
         fx, fy = self._map_display_to_frame(x, y)
-        # If an actual black dot is detected near the click, don't simulate.
+        # If an actual target dot is detected near the click, don't simulate.
         for t in self.targets_current:
             dx = t.center[0] - fx
             dy = t.center[1] - fy
