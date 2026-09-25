@@ -88,7 +88,7 @@ private:
     static constexpr uint32_t POLL_MS      = 20; // 50 Hz button poll
     static constexpr uint8_t  RENDER_EVERY = 5;  // -> 100 ms OLED refresh
     static constexpr uint8_t  BLINK_TICKS  = 8;  // 160 ms per LED blink phase
-    static constexpr uint32_t PERF_PERIOD_MS = 1000; // CPU% / stack report period
+    static constexpr uint32_t PERF_PERIOD_MS = config::SYS_STATS_PERIOD_MS; // CPU% / stack report period
     static constexpr int      LOAD_TASK_COUNT = 5;    // safety, ctrl, link_uart, logger, ui
     static constexpr int      MAX_SYSTEM_TASKS = 16;  // headroom over 5 app + 2 idle + system tasks
 

@@ -1,0 +1,91 @@
+Serial: probing COM6 (CH340/CH9102) for the Q/G handshake (up to 2.5s, covers a reboot) ...
+Serial: auto-detected COM6 (CH340/CH9102) -- confirmed by handshake
+Serial: COM6 @ 115200 8N1, frames capped at 50 Hz
+Press 'q' to quit, 'f' or the FIRE button to flash the laser, 's' or Save image to save the current frame, 'm' to toggle keyboard MANUAL drive (arrow keys).
+OAK pipeline started: 60 fps, queue 1.
+-> T 1
+-> E 0.0000 0.0000 0
+  esp32 | {"t":"tlm","up":451373261,"st":"DISARMED","ch":"AUTO_VELOCITYEQUATION","ex":0.000,"ey":0.000,"vp":0.00,"vt":0.00,"pan":75.0,"tilt":100.0}*3C
+  esp32 | {"t":"tlm.sys","up":451373924,"link":{"bad_crc":0,"overlong":0,"unparsed":1,"oor":0,"drop_inact":0,"uart_err":3},"pid_hz":0.0,"heap":0,"cpu":{"ctrl":0,"logger":0,"ui":0,"idle":0},"stack_min":0,"wdt":0}*EE
+  esp32 | {"t":"tlm.perf","up":451376572,"pid":{"min":67,"max":343,"ema":207},"parse":{"min":46,"max":495,"ema":123},"render":{"min":24285,"max":24763,"ema":24399}}*3E
+  esp32 | {"t":"tlm.sd","up":451393280,"pres":1,"mnt":1,"full":0,"free":3635085312,"werr":0,"drop":0,"qd":0,"bps":4157,"lmax":86841,"lp95":65536}*BE
+-> E 0.0000 0.0000 0
+  esp32 | {"t":"tlm","up":451473681,"st":"DISARMED","ch":"AUTO_VELOCITYEQUATION","ex":0.000,"ey":0.000,"vp":0.00,"vt":0.00,"pan":75.0,"tilt":100.0}*8C
+-> E 0.0000 0.0000 0
+-> E 0.0000 0.0000 0
+  esp32 | {"t":"tlm","up":451576316,"st":"DISARMED","ch":"AUTO_VELOCITYEQUATION","ex":0.000,"ey":0.000,"vp":0.00,"vt":0.00,"pan":75.0,"tilt":100.0}*19
+-> E 0.0000 0.0000 0
+-> E 0.0000 0.0000 0
+-> E 0.0000 0.0000 0
+  esp32 | {"t":"tlm","up":451676645,"st":"DISARMED","ch":"AUTO_VELOCITYEQUATION","ex":0.000,"ey":0.000,"vp":0.00,"vt":0.00,"pan":75.0,"tilt":100.0}*F1
+-> E 0.0000 0.0000 0
+-> E 0.0000 0.0000 0
+-> E 0.0000 0.0000 0
+-> E 0.0000 0.0000 0
+  esp32 | {"t":"tlm","up":451782640,"st":"DISARMED","ch":"AUTO_VELOCITYEQUATION","ex":0.000,"ey":0.000,"vp":0.00,"vt":0.00,"pan":75.0,"tilt":100.0}*32
+-> E 0.0000 0.0000 0
+-> E 0.0000 0.0000 0
+  esp32 | {"t":"tlm","up":451888709,"st":"DISARMED","ch":"AUTO_VELOCITYEQUATION","ex":0.000,"ey":0.000,"vp":0.00,"vt":0.00,"pan":75.0,"tilt":100.0}*20
+-> E 0.0000 0.0000 0
+-> E 0.0000 0.0000 0
+[... 264 lines elided: steady DISARMED state, E frames at 0,0 and periodic tlm/tlm.sys/tlm.perf/tlm.sd -- same shapes as above ...]
+-> E 0.0000 0.0000 0
+  esp32 | {"t":"tlm","up":458165647,"st":"DISARMED","ch":"AUTO_VELOCITYEQUATION","ex":0.000,"ey":0.000,"vp":0.00,"vt":0.00,"pan":60.0,"tilt":85.5}*F2
+-> E 0.0000 0.0000 0
+-> E 0.0000 0.0000 0
+-> {"t":"arm","id":5}*BB
+-> E 0.0000 0.0000 0
+  esp32 | {"t":"tlm","up":458268227,"st":"DISARMED","ch":"AUTO_VELOCITYEQUATION","ex":0.000,"ey":0.000,"vp":0.00,"vt":0.00,"pan":60.0,"tilt":85.5}*DA
+  esp32 | {"t":"evt","e":"state","up":458286239,"from":"DISARMED","to":"ARMED","why":"btn.control"}*4B
+-> E 0.0000 0.0000 0
+-> E 0.0000 0.0000 0
+-> E 0.0000 0.0000 0
+-> E 0.0000 0.0000 0
+  esp32 | {"t":"tlm","up":458375693,"st":"ARMED","ch":"AUTO_VELOCITYEQUATION","ex":0.000,"ey":0.000,"vp":0.00,"vt":0.00,"pan":60.0,"tilt":85.5}*72
+  esp32 | {"t":"tlm.sys","up":458395698,"link":{"bad_crc":0,"overlong":0,"unparsed":1,"oor":0,"drop_inact":0,"uart_err":3},"pid_hz":0.0,"heap":0,"cpu":{"ctrl":0,"logger":0,"ui":0,"idle":0},"stack_min":0,"wdt":0}*AA
+  esp32 | {"t":"tlm.perf","up":458396147,"pid":{"min":67,"max":980,"ema":271},"parse":{"min":46,"max":1162,"ema":140},"render":{"min":24285,"max":25670,"ema":24688}}*1F
+  esp32 | {"t":"tlm.sd","up":458396467,"pres":1,"mnt":1,"full":0,"free":3635052544,"werr":0,"drop":0,"qd":0,"bps":4074,"lmax":86841,"lp95":65536}*BE
+-> E 0.0000 0.0000 0
+-> E 0.0000 0.0000 0
+  esp32 | {"t":"tlm","up":458479639,"st":"ARMED","ch":"AUTO_VELOCITYEQUATION","ex":0.000,"ey":0.000,"vp":0.00,"vt":0.00,"pan":60.0,"tilt":85.5}*E3
+-> E 0.0000 0.0000 0
+-> E 0.0000 0.0000 0
+-> E 0.0000 0.0000 0
+-> E 0.0000 0.0000 0
+  esp32 | {"t":"tlm","up":458582650,"st":"ARMED","ch":"AUTO_VELOCITYEQUATION","ex":0.000,"ey":0.000,"vp":0.00,"vt":0.00,"pan":60.0,"tilt":85.5}*76
+-> E 0.0000 0.0000 0
+-> E 0.0000 0.0000 0
+[... 1589 lines elided: steady ARMED/AUTO_VELOCITYEQUATION tracking, then a return to DISARMED and back to ARMED -- same shapes as above ...]
+  esp32 | {"t":"tlm","up":494684637,"st":"ARMED","ch":"AUTO_VELOCITYEQUATION","ex":-0.000,"ey":-0.003,"vp":0.00,"vt":0.00,"pan":70.2,"tilt":95.1}*B2
+-> E 0.0001 -0.0027 1
+-> E 0.0001 -0.0027 1
+-> E 0.0001 -0.0027 1
+-> {"t":"cfg.set","k":"input.channel","v":"MANUAL","id":22}*AF
+keyboard MANUAL drive ON -- arrow keys pan/tilt
+-> M 0.000 0.000
+-> E 0.0001 -0.0027 1
+  esp32 | {"t":"tlm","up":494791669,"st":"ARMED","ch":"AUTO_VELOCITYEQUATION","ex":-0.000,"ey":-0.003,"vp":0.00,"vt":0.00,"pan":70.2,"tilt":95.1}*61
+-> E 0.0001 -0.0027 1
+  esp32 | {"t":"cfg.state","k":"input.channel","v":"MANUAL","id":22,"ok":true,"err":null,"src":"uart","ver":4}*B1
+-> E 0.0001 -0.0027 1
+-> E 0.0001 -0.0027 1
+-> E 0.0001 -0.0027 1
+  esp32 | {"t":"tlm","up":494895672,"st":"ARMED","ch":"MANUAL","ex":0.000,"ey":0.000,"vp":0.00,"vt":0.00,"pan":70.2,"tilt":95.1}*22
+-> E 0.0001 -0.0027 1
+-> M 0.000 0.000
+[... 1207 lines elided: steady ARMED/MANUAL state, no keys held (E/M frames stay at 0) ...]
+-> E 0.0470 -0.1249 1
+-> E 0.0470 -0.1249 1
+-> E 0.0470 -0.1221 1
+  esp32 | {"t":"tlm","up":519283645,"st":"ARMED","ch":"MANUAL","ex":0.000,"ey":0.000,"vp":0.00,"vt":0.00,"pan":75.0,"tilt":100.0}*F6
+-> E 0.0470 -0.1249 1
+-> E 0.0470 -0.1221 1
+-> E 0.0470 -0.1249 1
+  esp32 | {"t":"tlm","up":519387681,"st":"ARMED","ch":"MANUAL","ex":0.000,"ey":0.000,"vp":0.00,"vt":0.00,"pan":75.0,"tilt":100.0}*0E
+-> M 0.000 0.000
+-> E 0.0470 -0.1249 1
+-> E 0.0470 -0.1249 1
+  esp32 | {"t":"tlm","up":519494672,"st":"ARMED","ch":"MANUAL","ex":0.000,"ey":0.000,"vp":0.00,"vt":0.00,"pan":75.0,"tilt":100.0}*25
+-> E 0.0000 0.0000 0
+-> M 0.000 0.000
+2199 frames sent.

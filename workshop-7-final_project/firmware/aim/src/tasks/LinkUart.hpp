@@ -404,7 +404,7 @@ private:
         _lastPidUs   = nowUs;
         _lastPidRuns = runs;
 
-        // Lossy read of ui's 1 Hz report - see Ipc::TaskLoad.
+        // Lossy read of ui's periodic report - see Ipc::TaskLoad.
         const Ipc::TaskLoad &load = _ipc.taskLoad;
 
         char line[256];

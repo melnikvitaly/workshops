@@ -234,9 +234,9 @@ extern "C" void app_main(void)
         &CtrlTask::entry, "ctrl", config::STACK_CTRL, &ctrlTask,
         config::PRIO_CTRL, s_ctrlStack, &s_ctrlTcb, config::CORE_CTRL);
 
-    // Published for ui's 1 Hz CPU% / stack high-water report. Set once,
-    // after every task exists - ui's report guards against a null handle so
-    // it can never race this assignment.
+    // Published for ui's periodic (config::SYS_STATS_PERIOD_MS) CPU% / stack
+    // high-water report. Set once, after every task exists - ui's report
+    // guards against a null handle so it can never race this assignment.
     ipc.ctrlTask   = s_hCtrl;
     ipc.linkTask   = s_hLink;
     ipc.loggerTask = s_hLogger;
@@ -247,5 +247,5 @@ extern "C" void app_main(void)
              config::CORE_IO);
 
     vTaskDelay(pdMS_TO_TICKS(3000)); // let the tasks reach steady state
-    dumpStackHighWater();             // one-shot early read; ui repeats this at 1 Hz
+    dumpStackHighWater();             // one-shot early read; ui repeats this periodically
 }

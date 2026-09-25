@@ -359,13 +359,19 @@ namespace config
 
     // --- Diagnostics ---------------------------------------------------------
     // Per-task CPU% / stack high-water and free-heap are always collected -
-    // ui's 1 Hz reportTaskLoad() and main.cpp's boot-time dump feed
-    // ipc.taskLoad and tlm.sys either way, and that collection is cheap next
-    // to the console traffic it produces. This flag gates ONLY the console
-    // ESP_LOGI spam (the "cpu ctrl 1.7% stack free ..." lines and the boot
-    // stack-high-water line) - off by default so a stock build's UART/console
-    // isn't drowned in it. Flip on for bring-up / soak testing.
-    constexpr bool ENABLE_SYS_STATS = false;
+    // ui's reportTaskLoad() and main.cpp's boot-time dump feed ipc.taskLoad
+    // and tlm.sys either way, and that collection is cheap next to the
+    // console traffic it produces. This flag gates ONLY the console ESP_LOGI
+    // spam (the "cpu ctrl 1.7% stack free ..." lines and the boot
+    // stack-high-water line) - flip off again once bring-up / soak testing is
+    // done so a stock build's UART/console isn't drowned in it.
+    constexpr bool ENABLE_SYS_STATS = true;
+
+    // How often ui's reportTaskLoad() refreshes ipc.taskLoad/tlm.sys AND (when
+    // ENABLE_SYS_STATS is on) prints the "cpu ..." lines. Was a fixed 1 Hz;
+    // widened so the console stats spam does not crowd out everything else
+    // while ENABLE_SYS_STATS is on.
+    constexpr uint32_t SYS_STATS_PERIOD_MS = 5000;
 
     // --- Config plane ------------------------------------------------------
     // Exactly one input channel is processed at a time. Named after the PID

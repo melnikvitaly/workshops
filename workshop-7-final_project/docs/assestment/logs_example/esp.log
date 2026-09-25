@@ -1,0 +1,53 @@
+--- Terminal on COM10 | 115200 8-N-1
+--- Available filters and text transformations: debug, default, direct, esp32_exception_decoder, hexlify, log2file, nocontrol, printable, send_on_enter, time
+--- More details at https://bit.ly/pio-monitor-filters
+--- Quit: Ctrl+C | Menu: Ctrl+T | Help: Ctrl+T followed by Ctrl+H
+[... ~5270 lines elided here: "cpu idle 86.5%" and "cpu safety/ctrl ..." repeated verbatim, some with a
+     duplicated "I (I (...) " prefix -- a pio device monitor / Tee-Object redirection artifact (no real
+     TTY on the receiving end), not real device output. See README.md. First clean block kept below. ...]
+I (20317) UI: cpu safety      0.0%  stack free 1908 words
+I (20317) UI: cpu ctrl        1.6%  stack free 2484 words
+I (20317) UI: cpu link_uart   3.4%  stack free 2260 words
+I (20321) UI: cpu logger      6.1%  stack free 3796 words
+I (20327) UI: cpu ui          2.9%  stack free 2628 words
+I (20332) UI: cpu idle       86.1%
+I (22862) FSM: DISARMED -> ARMED (btn.control)
+I (22863) LOG: EVT -> ARMED (btn.control)
+I (25317) UI: cpu safety      0.0%  stack free 1908 words
+I (25317) UI: cpu ctrl        1.6%  stack free 2420 words
+I (25317) UI: cpu link_uart   3.1%  stack free 2260 words
+I (25321) UI: cpu logger      6.4%  stack free 3796 words
+I (25326) UI: cpu ui          2.9%  stack free 2500 words
+I (25332) UI: cpu idle       85.9%
+I (26202) FSM: ARMED -> DISARMED (btn.control)
+I (26203) LOG: EVT -> DISARMED (btn.control)
+I (29255) LINK: cfg.set input.channel -> "AUTO_VELOCITYEQUATION"
+I (30317) UI: cpu safety      0.0%  stack free 1908 words
+I (30317) UI: cpu ctrl        1.6%  stack free 2420 words
+I (30317) UI: cpu link_uart   3.9%  stack free 1748 words
+I (30321) UI: cpu logger      6.6%  stack free 3796 words
+I (30326) UI: cpu ui          2.9%  stack free 2500 words
+I (30331) UI: cpu idle       85.0%
+I (32222) FSM: DISARMED -> ARMED (btn.control)
+I (32223) LOG: EVT -> ARMED (btn.control)
+I (35316) UI: cpu safety      0.0%  stack free 1908 words
+I (35317) UI: cpu ctrl        1.8%  stack free 2420 words
+I (35317) UI: cpu link_uart   3.8%  stack free 1748 words
+I (35321) UI: cpu logger      6.0%  stack free 3796 words
+I (35326) UI: cpu ui          2.9%  stack free 2500 words
+I (35331) UI: cpu idle       85.5%
+I (36427) LINK: cfg.set input.channel -> "MANUAL"
+I (40317) UI: cpu safety      0.0%  stack free 1908 words
+I (40317) UI: cpu ctrl        1.6%  stack free 2420 words
+I (40317) UI: cpu link_uart   4.0%  stack free 1636 words
+I (40321) UI: cpu logger      6.5%  stack free 3796 words
+I (40326) UI: cpu ui          2.9%  stack free 2500 words
+I (40331) UI: cpu idle       85.0%
+I (45318) UI: cpu safety      0.0%  stack free 1908 words
+I (45319) UI: cpu ctrl        1.6%  stack free 2420 words
+I (45319) UI: cpu link_uart   4.2%  stack free 1636 words
+I (45323) UI: cpu logger      4.8%  stack free 3796 words
+I (45328) UI: cpu ui          2.9%  stack free 2500 words
+I (45333) UI: cpu idle       86.5%
+I (47282) FSM: ARMED -> LINK_LOST (link.stale)
+I (47283) LOG: EVT -> LINK_LOST (link.stale)

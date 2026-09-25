@@ -24,8 +24,8 @@ struct Ipc
     TaskHandle_t      safetyTask = nullptr; // target of the E-stop notification
 
     // Set once in app_main as each task is created. ui reads all five for the
-    // 1 Hz CPU% / stack high-water report - nullptr until app_main finishes
-    // creating them.
+    // periodic (config::SYS_STATS_PERIOD_MS) CPU% / stack high-water report -
+    // nullptr until app_main finishes creating them.
     TaskHandle_t ctrlTask   = nullptr;
     TaskHandle_t linkTask   = nullptr;
     TaskHandle_t loggerTask = nullptr;
@@ -93,8 +93,9 @@ struct Ipc
 
     // Per-task CPU% (uxTaskGetSystemState) and the tightest stack
     // high-water mark (uxTaskGetStackHighWaterMark) across the five tasks,
-    // refreshed at 1 Hz. Single writer (ui, the only task with every task
-    // handle - see below), lossy reader (link_uart, for tlm.sys).
+    // refreshed every config::SYS_STATS_PERIOD_MS. Single writer (ui, the
+    // only task with every task handle - see below), lossy reader
+    // (link_uart, for tlm.sys).
     struct TaskLoad
     {
         float    cpuCtrl = 0, cpuLogger = 0, cpuUi = 0, cpuIdle = 0;
