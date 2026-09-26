@@ -50,7 +50,7 @@ Every path runs inside a task from the table in
 - **DON'T** call `malloc` or `new` after initialisation, and never in an ISR.
 - **DO** install `vApplicationMallocFailedHook` and
   `vApplicationStackOverflowHook`. A silent overflow is worse than a reboot.
-- **DO** check `uxTaskGetStackHighWaterMark` per task and log it at 1 Hz.
+- **DO** check `uxTaskGetStackHighWaterMark` per task and log it every 5 s.
 
 ## Error handling
 

@@ -93,7 +93,7 @@ Nodes: `EYE` + `AIM`. Ends on a fixed date (**still unset — decide this first*
 
 - [x] `esp_timer_get_time()` around the PID step, frame parse and render; min / max / EWMA ⟦6.1⟧
 - [x] `CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS` + `uxTaskGetSystemState()` → per-task CPU % ⟦6.4⟧
-- [x] `uxTaskGetStackHighWaterMark()` per task, logged at 1 Hz
+- [x] `uxTaskGetStackHighWaterMark()` per task, logged every `SYS_STATS_PERIOD_MS` (5 s)
 - [ ] Toggle a spare GPIO across the control step; capture on the logic analyser, put the screenshot in the README ⟦6.1⟧ — toggle done in code, capture still pending bench access
 - [x] Write the "data path" paragraph — every copy from camera pixel to servo angle ⟦6.3⟧
 - [x] State the timer/hardware-event configuration explicitly (LEDC, `esp_timer`) ⟦2.5⟧

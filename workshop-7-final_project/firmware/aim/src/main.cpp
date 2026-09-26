@@ -140,18 +140,6 @@ static void emitBootEvent(bool usedDefaults, uint32_t wdtResets)
              (unsigned)config::SCHEMA_VERSION, usedDefaults ? "defaults" : "nvs");
 }
 
-static void dumpStackHighWater(void)
-{
-    const unsigned safety = (unsigned)uxTaskGetStackHighWaterMark(ipc.safetyTask);
-    const unsigned ctrl   = (unsigned)uxTaskGetStackHighWaterMark(s_hCtrl);
-    const unsigned link   = (unsigned)uxTaskGetStackHighWaterMark(s_hLink);
-    const unsigned ui     = (unsigned)uxTaskGetStackHighWaterMark(s_hUi);
-    const unsigned logger = (unsigned)uxTaskGetStackHighWaterMark(s_hLogger);
-    if constexpr (config::ENABLE_SYS_STATS)
-        ESP_LOGI(TAG, "stack high-water (words free): safety=%u ctrl=%u link_uart=%u ui=%u logger=%u",
-                 safety, ctrl, link, ui, logger);
-}
-
 extern "C" void app_main(void)
 {
     ESP_LOGI(TAG, "AIM starting");
@@ -245,7 +233,4 @@ extern "C" void app_main(void)
     ESP_LOGI(TAG, "tasks up - ctrl@c%d/p%d, safety@c%d/p%d, io tasks@c%d",
              config::CORE_CTRL, config::PRIO_CTRL, config::CORE_SAFETY, config::PRIO_SAFETY,
              config::CORE_IO);
-
-    vTaskDelay(pdMS_TO_TICKS(3000)); // let the tasks reach steady state
-    dumpStackHighWater();             // one-shot early read; ui repeats this periodically
 }

@@ -538,16 +538,17 @@ the 256-byte line cap
 ### 8.2 Per-task CPU% and stack high-water
 
 `ui` — the one task `Ipc` collects every task handle into — calls
-`uxTaskGetSystemState()` once a second, requiring
+`uxTaskGetSystemState()` every `SYS_STATS_PERIOD_MS` (5 s), requiring
 `CONFIG_FREERTOS_USE_TRACE_FACILITY` and
 `CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS` (`sdkconfig.defaults`). For each of
 the five tasks it computes that task's share of the runtime-counter delta
-since the previous second — summed across both cores, so busy time across
+since the previous period — summed across both cores, so busy time across
 every task (both idle tasks included) always totals to ~100% regardless of
 core count — and reads `uxTaskGetStackHighWaterMark()` for the same five.
 
 All five tasks' CPU% and stack high-water are logged locally with `ESP_LOGI`
-every second, per [`coding.md`](./coding.md#memory). Only `ctrl`, `logger`,
+every `SYS_STATS_PERIOD_MS` (5 s), per
+[`coding.md`](./coding.md#memory). Only `ctrl`, `logger`,
 `ui` and the idle remainder go out over the wire in `tlm.sys.cpu` — `safety`
 and `link_uart` sit near 0% in normal operation and are left off the wire
 message to keep its byte budget for the rest of it — alongside
