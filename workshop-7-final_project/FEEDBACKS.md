@@ -18,3 +18,7 @@
     that mis-stated the report cadence as "1 Hz" — the actual period is
     `SYS_STATS_PERIOD_MS` (5 s).
 - (Presentation) Make large fonts more firendly for demonstration slides
+- Resiliency can be improved: 
+  - auto detection of port sometime do not connect
+  - reconnection to ESP should be improved
+  - wiring is terrible
